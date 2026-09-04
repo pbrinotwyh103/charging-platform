@@ -13,6 +13,8 @@ enum class MessageType : quint16 {
     UserLoginResponse = 1002,
     UserProfileRequest = 1010,
     UserProfileResponse = 1011,
+    LogoutRequest = 1090,
+    LogoutResponse = 1091,
 
     StationListRequest = 2001,
     StationListResponse = 2002,

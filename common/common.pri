@@ -14,5 +14,6 @@ HEADERS += \
     $$PWD/network/clientconnection.h
 
 SOURCES += \
+    $$PWD/protocol/errorcodes.cpp \
     $$PWD/protocol/packetcodec.cpp \
     $$PWD/network/clientconnection.cpp

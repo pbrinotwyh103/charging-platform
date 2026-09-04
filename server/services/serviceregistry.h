@@ -22,7 +22,7 @@ class ServiceRegistry final : public QObject
 
 public:
     explicit ServiceRegistry(QObject *parent = nullptr);
-    void initialize(DatabaseManager *database);
+    bool initialize(DatabaseManager *database, QString *error);
     bool isInitialized() const;
 
     AuthService *auth() { return &m_auth; }

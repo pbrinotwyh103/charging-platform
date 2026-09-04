@@ -1,6 +1,8 @@
 [server]
 host=127.0.0.1
 port=8888
+heartbeat_interval_seconds=10
+heartbeat_timeout_seconds=45
 
 [database]
 path=data/charging.db

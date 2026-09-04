@@ -12,10 +12,20 @@ int main(int argc, char *argv[])
 
     AdminController controller;
     AdminMainWindow window;
-    QObject::connect(&window, &AdminMainWindow::connectionRequested,
-                     &controller, &AdminController::connectToServer);
+    QObject::connect(&window, &AdminMainWindow::loginRequested,
+                     &controller, &AdminController::login);
+    QObject::connect(&window, &AdminMainWindow::logoutRequested,
+                     &controller, &AdminController::logout);
     QObject::connect(&controller, &AdminController::statusTextChanged,
                      &window, &AdminMainWindow::setConnectionStatus);
+    QObject::connect(&controller, &AdminController::loginBusyChanged,
+                     &window, &AdminMainWindow::setLoginBusy);
+    QObject::connect(&controller, &AdminController::loginSucceeded,
+                     &window, &AdminMainWindow::showAdminHome);
+    QObject::connect(&controller, &AdminController::loginFailed,
+                     &window, &AdminMainWindow::showLoginError);
+    QObject::connect(&controller, &AdminController::loggedOut,
+                     &window, &AdminMainWindow::showLoginPage);
     window.show();
     return application.exec();
 }

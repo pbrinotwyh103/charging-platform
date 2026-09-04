@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS admins (
     username TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     password_salt TEXT NOT NULL,
+    permissions TEXT NOT NULL DEFAULT 'all',
     status TEXT NOT NULL DEFAULT 'normal' CHECK (status IN ('normal', 'disabled')),
     last_login_at TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -151,3 +152,4 @@ CREATE INDEX IF NOT EXISTS idx_orders_status ON charging_orders(status);
 CREATE INDEX IF NOT EXISTS idx_alarms_status_time ON alarms(status, occurred_at DESC);
 
 INSERT OR IGNORE INTO schema_version(version) VALUES (1);
+INSERT OR IGNORE INTO schema_version(version) VALUES (2);

@@ -15,6 +15,7 @@ class ServerApplication final : public QObject
 public:
     explicit ServerApplication(QObject *parent = nullptr);
     bool start(quint16 port, const QString &databasePath, QString *error);
+    quint16 listeningPort() const;
 
 private:
     DatabaseManager m_database;

@@ -7,7 +7,7 @@ ServiceRegistry::ServiceRegistry(QObject *parent)
 {
 }
 
-void ServiceRegistry::initialize(DatabaseManager *database)
+bool ServiceRegistry::initialize(DatabaseManager *database, QString *error)
 {
     m_database = database;
     m_auth.setDatabase(database);
@@ -21,6 +21,7 @@ void ServiceRegistry::initialize(DatabaseManager *database)
     m_alarms.setDatabase(database);
     m_statistics.setDatabase(database);
     m_admin.setDatabase(database);
+    return m_auth.initialize(error);
 }
 
 bool ServiceRegistry::isInitialized() const

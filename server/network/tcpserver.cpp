@@ -1,6 +1,7 @@
 #include "network/tcpserver.h"
 
 #include <QDebug>
+#include <QDateTime>
 
 TcpServer::TcpServer(QObject *parent)
     : QObject(parent)
@@ -20,6 +21,24 @@ bool TcpServer::listen(quint16 port, QString *error)
 int TcpServer::connectionCount() const
 {
     return m_sessions.size();
+}
+
+quint16 TcpServer::listeningPort() const
+{
+    return m_server.serverPort();
+}
+
+void TcpServer::closeExpiredSessions(qint64 timeoutMilliseconds)
+{
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    const auto sessions = m_sessions;
+    for (ClientSession *session : sessions) {
+        if (now - session->lastActivityAt() > timeoutMilliseconds) {
+            qWarning().noquote() << QStringLiteral("心跳超时，关闭连接：%1")
+                                    .arg(session->peerDescription());
+            session->close();
+        }
+    }
 }
 
 void TcpServer::onNewConnection()

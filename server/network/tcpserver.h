@@ -14,6 +14,8 @@ public:
     explicit TcpServer(QObject *parent = nullptr);
     bool listen(quint16 port, QString *error);
     int connectionCount() const;
+    quint16 listeningPort() const;
+    void closeExpiredSessions(qint64 timeoutMilliseconds);
 
 signals:
     void messageReceived(ClientSession *session, const Charging::Message &message);

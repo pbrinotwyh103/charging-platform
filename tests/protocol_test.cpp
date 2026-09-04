@@ -12,6 +12,9 @@ private slots:
     void splitPacket();
     void stickyPackets();
     void invalidMagic();
+    void unsupportedVersion();
+    void oversizedPayload();
+    void invalidJsonPayload();
 };
 
 void ProtocolTest::roundTrip()
@@ -58,6 +61,35 @@ void ProtocolTest::invalidMagic()
     const Charging::DecodeResult result = Charging::PacketCodec::tryDecode(buffer);
     QCOMPARE(result.status, Charging::DecodeStatus::Invalid);
     QVERIFY(!result.error.isEmpty());
+}
+
+void ProtocolTest::unsupportedVersion()
+{
+    QByteArray buffer = Charging::PacketCodec::encode(Charging::MessageType::Ping, 1);
+    buffer[4] = '\0';
+    buffer[5] = '\2';
+    const Charging::DecodeResult result = Charging::PacketCodec::tryDecode(buffer);
+    QCOMPARE(result.status, Charging::DecodeStatus::Invalid);
+    QVERIFY(result.error.contains(QStringLiteral("版本")));
+}
+
+void ProtocolTest::oversizedPayload()
+{
+    QByteArray buffer = Charging::PacketCodec::encode(Charging::MessageType::Ping, 1);
+    for (int i = 12; i < 16; ++i) buffer[i] = static_cast<char>(0xff);
+    const Charging::DecodeResult result = Charging::PacketCodec::tryDecode(buffer);
+    QCOMPARE(result.status, Charging::DecodeStatus::Invalid);
+    QVERIFY(result.error.contains(QStringLiteral("长度")));
+}
+
+void ProtocolTest::invalidJsonPayload()
+{
+    QByteArray buffer = Charging::PacketCodec::encode(
+        Charging::MessageType::Ping, 1, {{QStringLiteral("ok"), true}});
+    buffer[Charging::MessageHeader::SerializedSize] = '[';
+    const Charging::DecodeResult result = Charging::PacketCodec::tryDecode(buffer);
+    QCOMPARE(result.status, Charging::DecodeStatus::Invalid);
+    QVERIFY(result.error.contains(QStringLiteral("JSON")));
 }
 
 QTEST_APPLESS_MAIN(ProtocolTest)
