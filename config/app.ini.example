@@ -1,0 +1,14 @@
+[server]
+host=127.0.0.1
+port=8888
+
+[database]
+path=data/charging.db
+
+[map]
+# 腾讯地图Web API密钥由开发者在本地配置，不提交真实密钥。
+tencent_key=
+
+[logging]
+level=info
+directory=logs
