@@ -4,6 +4,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QMutexLocker>
+#include <QSaveFile>
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QThread>
@@ -11,16 +12,7 @@
 
 DatabaseManager::~DatabaseManager()
 {
-    if (m_mainConnectionName.isEmpty()) {
-        return;
-    }
-    {
-        QSqlDatabase db = QSqlDatabase::database(m_mainConnectionName, false);
-        if (db.isValid()) {
-            db.close();
-        }
-    }
-    QSqlDatabase::removeDatabase(m_mainConnectionName);
+    closeAllConnections();
 }
 
 bool DatabaseManager::open(const QString &path, QString *error)
@@ -38,6 +30,9 @@ bool DatabaseManager::open(const QString &path, QString *error)
     QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), m_mainConnectionName);
     db.setDatabaseName(m_databasePath);
     if (!configureConnection(db, error)) {
+        db = {};
+        QSqlDatabase::removeDatabase(m_mainConnectionName);
+        m_mainConnectionName.clear();
         return false;
     }
     return initializeSchema(error);
@@ -50,6 +45,7 @@ bool DatabaseManager::initializeSchema(QString *error)
         return false;
     }
     if (!executeScript(db, QStringLiteral(":/database/schema.sql"), error)
+        || !applyMigrations(db, error)
         || !executeScript(db, QStringLiteral(":/database/seed.sql"), error)) {
         return false;
     }
@@ -75,7 +71,7 @@ bool DatabaseManager::initializeSchema(QString *error)
             return false;
         }
     }
-    return true;
+    return checkIntegrity(db, error);
 }
 
 QSqlDatabase DatabaseManager::database(QString *error) const
@@ -115,6 +111,121 @@ void DatabaseManager::releaseCurrentThreadConnection()
         }
         QSqlDatabase::removeDatabase(name);
     }
+}
+
+bool DatabaseManager::checkIntegrity(QString *error) const
+{
+    QSqlDatabase db = database(error);
+    return db.isValid() && db.isOpen() && checkIntegrity(db, error);
+}
+
+bool DatabaseManager::backupTo(const QString &backupPath, QString *error) const
+{
+    const QFileInfo destination(backupPath);
+    if (destination.absoluteFilePath() == QFileInfo(m_databasePath).absoluteFilePath()) {
+        if (error) *error = QStringLiteral("备份路径不能与当前数据库相同");
+        return false;
+    }
+    if (!QDir().mkpath(destination.absolutePath())) {
+        if (error) *error = QStringLiteral("无法创建备份目录：%1").arg(destination.absolutePath());
+        return false;
+    }
+
+    QSqlDatabase db = database(error);
+    if (!db.isValid() || !db.isOpen() || !checkIntegrity(db, error)) {
+        return false;
+    }
+    QSqlQuery checkpoint(db);
+    if (!checkpoint.exec(QStringLiteral("PRAGMA wal_checkpoint(FULL)"))) {
+        if (error) *error = checkpoint.lastError().text();
+        return false;
+    }
+    while (checkpoint.next()) {}
+    checkpoint.finish();
+
+    if (QFile::exists(destination.absoluteFilePath())
+        && !QFile::remove(destination.absoluteFilePath())) {
+        if (error) *error = QStringLiteral("无法覆盖已有备份：%1").arg(destination.absoluteFilePath());
+        return false;
+    }
+    QString escaped = destination.absoluteFilePath();
+    escaped.replace(QLatin1Char('\''), QStringLiteral("''"));
+    QSqlQuery backup(db);
+    if (!backup.exec(QStringLiteral("VACUUM INTO '%1'").arg(escaped))) {
+        if (error) *error = backup.lastError().text();
+        return false;
+    }
+    return QFileInfo(destination.absoluteFilePath()).size() > 0;
+}
+
+bool DatabaseManager::restoreFrom(const QString &backupPath, QString *error)
+{
+    const QFileInfo source(backupPath);
+    if (!source.isFile()) {
+        if (error) *error = QStringLiteral("备份文件不存在：%1").arg(backupPath);
+        return false;
+    }
+
+    const QString verificationName = QStringLiteral("charging_restore_verify_%1")
+        .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    bool validBackup = false;
+    {
+        QSqlDatabase verification = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                                               verificationName);
+        verification.setDatabaseName(source.absoluteFilePath());
+        if (verification.open()) {
+            validBackup = checkIntegrity(verification, error);
+            verification.close();
+        } else if (error) {
+            *error = verification.lastError().text();
+        }
+    }
+    QSqlDatabase::removeDatabase(verificationName);
+    if (!validBackup) {
+        return false;
+    }
+
+    QFile input(source.absoluteFilePath());
+    if (!input.open(QIODevice::ReadOnly)) {
+        if (error) *error = input.errorString();
+        return false;
+    }
+    const QByteArray bytes = input.readAll();
+    input.close();
+    if (bytes.isEmpty()) {
+        if (error) *error = QStringLiteral("备份文件为空");
+        return false;
+    }
+
+    closeAllConnections();
+    QSaveFile output(m_databasePath);
+    if (!output.open(QIODevice::WriteOnly) || output.write(bytes) != bytes.size()
+        || !output.commit()) {
+        if (error) *error = output.errorString();
+        return false;
+    }
+    QFile::remove(m_databasePath + QStringLiteral("-wal"));
+    QFile::remove(m_databasePath + QStringLiteral("-shm"));
+
+    m_mainThreadId = reinterpret_cast<quintptr>(QThread::currentThreadId());
+    m_mainConnectionName = QStringLiteral("charging_server_main_%1")
+        .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), m_mainConnectionName);
+    db.setDatabaseName(m_databasePath);
+    return configureConnection(db, error) && initializeSchema(error);
+}
+
+int DatabaseManager::schemaVersion(QString *error) const
+{
+    QSqlDatabase db = database(error);
+    if (!db.isValid() || !db.isOpen()) return -1;
+    QSqlQuery query(db);
+    if (!query.exec(QStringLiteral("SELECT COALESCE(MAX(version), 0) FROM schema_version"))
+        || !query.next()) {
+        if (error) *error = query.lastError().text();
+        return -1;
+    }
+    return query.value(0).toInt();
 }
 
 bool DatabaseManager::configureConnection(QSqlDatabase &db, QString *error) const
@@ -175,6 +286,78 @@ bool DatabaseManager::executeScript(QSqlDatabase &db,
         return false;
     }
     return true;
+}
+
+bool DatabaseManager::applyMigrations(QSqlDatabase &db, QString *error) const
+{
+    struct Migration { int version; const char *resource; };
+    const Migration migrations[] = {
+        {3, ":/database/migrations/003_repository_indexes.sql"}
+    };
+
+    QSqlQuery versionQuery(db);
+    if (!versionQuery.exec(QStringLiteral("SELECT COALESCE(MAX(version), 0) FROM schema_version"))
+        || !versionQuery.next()) {
+        if (error) *error = versionQuery.lastError().text();
+        return false;
+    }
+    int currentVersion = versionQuery.value(0).toInt();
+    for (const Migration &migration : migrations) {
+        if (migration.version <= currentVersion) continue;
+        if (!executeScript(db, QString::fromLatin1(migration.resource), error)) {
+            return false;
+        }
+        QSqlQuery record(db);
+        record.prepare(QStringLiteral("INSERT INTO schema_version(version) VALUES(?)"));
+        record.addBindValue(migration.version);
+        if (!record.exec()) {
+            if (error) *error = record.lastError().text();
+            return false;
+        }
+        currentVersion = migration.version;
+    }
+    return true;
+}
+
+bool DatabaseManager::checkIntegrity(QSqlDatabase &db, QString *error) const
+{
+    QSqlQuery query(db);
+    if (!query.exec(QStringLiteral("PRAGMA quick_check"))) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    QStringList failures;
+    while (query.next()) {
+        const QString result = query.value(0).toString();
+        if (result.compare(QStringLiteral("ok"), Qt::CaseInsensitive) != 0) {
+            failures.append(result);
+        }
+    }
+    if (!failures.isEmpty()) {
+        if (error) *error = QStringLiteral("数据库完整性检查失败：%1").arg(failures.join(QStringLiteral("；")));
+        return false;
+    }
+    return true;
+}
+
+void DatabaseManager::closeAllConnections()
+{
+    QStringList names;
+    {
+        QMutexLocker locker(&m_connectionMutex);
+        names = m_workerConnections.values();
+        m_workerConnections.clear();
+    }
+    if (!m_mainConnectionName.isEmpty()) names.append(m_mainConnectionName);
+    for (const QString &name : names) {
+        if (!QSqlDatabase::contains(name)) continue;
+        {
+            QSqlDatabase db = QSqlDatabase::database(name, false);
+            if (db.isValid()) db.close();
+        }
+        QSqlDatabase::removeDatabase(name);
+    }
+    m_mainConnectionName.clear();
 }
 
 QString DatabaseManager::currentConnectionName() const

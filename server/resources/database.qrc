@@ -2,5 +2,6 @@
     <qresource prefix="/database">
         <file alias="schema.sql">../../database/schema.sql</file>
         <file alias="seed.sql">../../database/seed.sql</file>
+        <file alias="migrations/003_repository_indexes.sql">../../database/migrations/003_repository_indexes.sql</file>
     </qresource>
 </RCC>
