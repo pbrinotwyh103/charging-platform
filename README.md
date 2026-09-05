@@ -47,7 +47,7 @@ make -j$(nproc)
 也可以直接执行：
 
 ```bash
-./scripts/build.sh
+bash ./scripts/build.sh
 ```
 
 编译结果位于 `build/bin/`。
@@ -60,7 +60,7 @@ cd ~/charging-platform/build
 ./bin/phase1_tests -v1
 ```
 
-或在项目根目录执行 `./scripts/run-tests.sh`。
+或在项目根目录执行 `bash ./scripts/run-tests.sh`。
 
 ## 启动服务器
 
@@ -82,6 +82,15 @@ cd ~/charging-platform/build
 cd ~/charging-platform/build
 ./bin/charging_admin_client
 ```
+
+管理员端也提供不依赖服务端业务接口的只读验收模式：
+
+```bash
+./bin/charging_admin_client --demo
+```
+
+该模式使用样例 JSON 展示运营概览、实时充电、告警、站点、电桩、用户和订单页面，
+不会提交远程控制或数据修改。
 
 同一虚拟机联调时，两个客户端均连接 `127.0.0.1:8888`。
 
