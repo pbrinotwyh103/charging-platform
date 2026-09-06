@@ -48,7 +48,7 @@ bool ReservationRepository::create(qint64 userId, qint64 pileId, const QString &
 
     QSqlQuery reservePile(db);
     reservePile.prepare(QStringLiteral(
-        "UPDATE charging_piles SET status='reserved',updated_at=CURRENT_TIMESTAMP "
+        "UPDATE charging_piles SET status='reserved',updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') "
         "WHERE id=? AND status='idle'"));
     reservePile.addBindValue(pileId);
     if (!reservePile.exec() || reservePile.numRowsAffected() != 1) {
@@ -58,7 +58,8 @@ bool ReservationRepository::create(qint64 userId, qint64 pileId, const QString &
 
     QSqlQuery insert(db);
     insert.prepare(QStringLiteral(
-        "INSERT INTO reservations(user_id,pile_id,expires_at) VALUES(?,?,?)"));
+        "INSERT INTO reservations(user_id,pile_id,expires_at,reserved_at) "
+        "VALUES(?,?,strftime('%Y-%m-%dT%H:%M:%SZ',?),strftime('%Y-%m-%dT%H:%M:%SZ','now'))"));
     insert.addBindValue(userId);
     insert.addBindValue(pileId);
     insert.addBindValue(expiresAt);
@@ -139,7 +140,7 @@ bool ReservationRepository::cancel(qint64 reservationId, qint64 userId, QString 
     if (!update.exec()) return rollback(db, update.lastError().text(), error);
     QSqlQuery release(db);
     release.prepare(QStringLiteral(
-        "UPDATE charging_piles SET status='idle',updated_at=CURRENT_TIMESTAMP "
+        "UPDATE charging_piles SET status='idle',updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') "
         "WHERE id=? AND status='reserved'"));
     release.addBindValue(pileId);
     if (!release.exec()) return rollback(db, release.lastError().text(), error);
@@ -156,7 +157,7 @@ bool ReservationRepository::markUsed(qint64 reservationId, QString *error) const
     if (!db.isValid() || !db.isOpen()) return false;
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
-        "UPDATE reservations SET status='used',used_at=CURRENT_TIMESTAMP "
+        "UPDATE reservations SET status='used',used_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') "
         "WHERE id=? AND status='active'"));
     query.addBindValue(reservationId);
     if (!query.exec() || query.numRowsAffected() != 1) {
@@ -184,7 +185,7 @@ bool ReservationRepository::expireDue(const QString &now, int *expiredCount,
     const int count = update.numRowsAffected();
     QSqlQuery release(db);
     if (!release.exec(QStringLiteral(
-        "UPDATE charging_piles SET status='idle',updated_at=CURRENT_TIMESTAMP "
+        "UPDATE charging_piles SET status='idle',updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') "
         "WHERE status='reserved' AND NOT EXISTS(SELECT 1 FROM reservations r "
         "WHERE r.pile_id=charging_piles.id AND r.status='active')"))) {
         return rollback(db, release.lastError().text(), error);

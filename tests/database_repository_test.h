@@ -23,11 +23,14 @@ private slots:
     void isoExpiredReservationCannotStart();
     void repositoryUtcTimestamps();
     void mixedFormatPagination();
+    void freshTimestampWrites_data();
+    void freshTimestampWrites();
     void alarmControlAndPushRecords();
     void backupAndRestore();
 
 private:
     qint64 createUser(const QString &phone);
+    qint64 insertLegacyReservation(qint64 userId, const QString &expiresAt);
 
     QTemporaryDir m_temporaryDirectory;
     DatabaseManager m_database;

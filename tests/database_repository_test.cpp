@@ -15,6 +15,7 @@
 #include <QDateTime>
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QSqlRecord>
 #include <QtTest>
 
 void DatabaseRepositoryTest::initTestCase()
@@ -354,6 +355,26 @@ void DatabaseRepositoryTest::faultSettlementAndLegacyReplay()
     QCOMPARE(pile.status, QStringLiteral("idle"));
 }
 
+qint64 DatabaseRepositoryTest::insertLegacyReservation(qint64 userId, const QString &expiresAt)
+{
+    QSqlQuery fixture(m_database.database());
+    fixture.prepare(QStringLiteral("INSERT INTO reservations(user_id,pile_id,reserved_at,expires_at) "
+        "VALUES(?,1,'2026-09-06 04:05:06',?)"));
+    fixture.addBindValue(userId);
+    fixture.addBindValue(expiresAt);
+    if (!fixture.exec()) {
+        QTest::qFail(qPrintable(fixture.lastError().text()), __FILE__, __LINE__);
+        return 0;
+    }
+    const qint64 id = fixture.lastInsertId().toLongLong();
+    if (!fixture.exec(QStringLiteral("UPDATE charging_piles SET status='reserved',"
+        "updated_at='2026-09-06 04:05:06' WHERE id=1"))) {
+        QTest::qFail(qPrintable(fixture.lastError().text()), __FILE__, __LINE__);
+        return 0;
+    }
+    return id;
+}
+
 void DatabaseRepositoryTest::mixedFormatReservationExpiry()
 {
     const qint64 userId = createUser(QStringLiteral("13800138024"));
@@ -369,7 +390,8 @@ void DatabaseRepositoryTest::mixedFormatReservationExpiry()
         {"2098-06-01 10:00:00", "2098-06-01T10:00:00Z", 1}
     };
     for (const Case &entry : cases) {
-        QVERIFY(reservations.create(userId, 1, QString::fromLatin1(entry.expiry), &reservationId, &error));
+        reservationId = insertLegacyReservation(userId, QString::fromLatin1(entry.expiry));
+        QVERIFY(reservationId > 0);
         QVERIFY(reservations.expireDue(QString::fromLatin1(entry.now), &expired, &error));
         QCOMPARE(expired, entry.expected);
         ReservationRecord reservation;
@@ -398,8 +420,8 @@ void DatabaseRepositoryTest::isoExpiredReservationCannotStart()
     QCOMPARE(reservation.status, QStringLiteral("active"));
     QVERIFY(reservations.cancel(reservationId, userId, &error));
     // Legacy SQL timestamps remain valid for a future reservation.
-    QVERIFY(reservations.create(userId, 1, now.addSecs(600).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")),
-                                &reservationId, &error));
+    reservationId = insertLegacyReservation(userId, now.addSecs(600).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")));
+    QVERIFY(reservationId > 0);
     QVERIFY(orders.createChargingOrder(QStringLiteral("O-LEGACY-FUTURE"), userId, 1,
                                        reservationId, &orderId, &error));
     QVERIFY(orders.stopAndSettle(orderId, 0, 0, 0, QStringLiteral("completed"),
@@ -408,13 +430,11 @@ void DatabaseRepositoryTest::isoExpiredReservationCannotStart()
 
 void DatabaseRepositoryTest::repositoryUtcTimestamps()
 {
-    const qint64 userId = createUser(QStringLiteral("13800138026"));
     QString error;
     QSqlQuery fixture(m_database.database(&error));
-    fixture.prepare(QStringLiteral("UPDATE users SET created_at='2026-09-06 04:05:06', "
-        "updated_at='2026-09-06T12:05:06+08:00' WHERE id=?"));
-    fixture.addBindValue(userId);
-    QVERIFY(fixture.exec());
+    QVERIFY(fixture.exec(QStringLiteral("INSERT INTO users(phone,nickname,created_at,updated_at) "
+        "VALUES('13800138026','legacy','2026-09-06 04:05:06','2026-09-06T12:05:06+08:00')")));
+    const qint64 userId = fixture.lastInsertId().toLongLong();
     UserRecord user;
     QVERIFY(UserRepository(&m_database).findById(userId, &user, &error));
     QCOMPARE(user.createdAt, QStringLiteral("2026-09-06T04:05:06Z"));
@@ -479,18 +499,20 @@ void DatabaseRepositoryTest::mixedFormatPagination()
     qint64 ids[2] = {};
     const QString dates[] = {QStringLiteral("2098-06-01 11:00:00"), QStringLiteral("2098-06-01T09:00:00Z")};
     for (int index = 0; index < 2; ++index) {
-        QVERIFY(orders.createChargingOrder(QStringLiteral("O-TIME-PAGE-%1").arg(index), userId, 1, 0,
-                                           &ids[index], &error));
-        QVERIFY(orders.stopAndSettle(ids[index], 0, 0, 0, QStringLiteral("completed"),
-                                    QStringLiteral("test_stop"), nullptr, &error));
         QSqlQuery fixture(m_database.database(&error));
-        fixture.prepare(QStringLiteral("UPDATE charging_orders SET created_at=? WHERE id=?"));
+        fixture.prepare(QStringLiteral("INSERT INTO charging_orders(order_no,user_id,station_id,pile_id,status,"
+            "started_at,unit_price_cents,created_at) VALUES(?,?,1,1,'completed','2098-06-01 08:00:00',100,?)"));
+        fixture.addBindValue(QStringLiteral("O-TIME-PAGE-%1").arg(index));
+        fixture.addBindValue(userId);
         fixture.addBindValue(dates[index]);
-        fixture.addBindValue(ids[index]);
         QVERIFY(fixture.exec());
-        fixture.prepare(QStringLiteral("UPDATE wallet_records SET created_at=? WHERE order_id=?"));
-        fixture.addBindValue(dates[index]);
+        ids[index] = fixture.lastInsertId().toLongLong();
+        fixture.prepare(QStringLiteral("INSERT INTO wallet_records(record_no,user_id,order_id,record_type,"
+            "amount_cents,balance_after_cents,created_at) VALUES(?,?,?,'charge_payment',0,0,?)"));
+        fixture.addBindValue(QStringLiteral("W-TIME-PAGE-%1").arg(index));
+        fixture.addBindValue(userId);
         fixture.addBindValue(ids[index]);
+        fixture.addBindValue(dates[index]);
         QVERIFY(fixture.exec());
     }
     QList<OrderRecord> page;
@@ -504,6 +526,176 @@ void DatabaseRepositoryTest::mixedFormatPagination()
     QVERIFY(wallet.listByUser(userId, 1, 0, &ledger, &error));
     QCOMPARE(ledger.size(), 1);
     QCOMPARE(ledger.first().orderId, ids[0]);
+}
+
+void DatabaseRepositoryTest::freshTimestampWrites_data()
+{
+    QTest::addColumn<QString>("operation");
+    const QStringList operations = {
+        "user_create", "user_profile", "user_status", "station_create", "station_update",
+        "pile_create", "pile_status", "pile_heartbeat", "wallet_recharge",
+        "reservation_create", "reservation_cancel", "reservation_expire", "reservation_use",
+        "order_create", "order_reserved_start", "order_progress", "order_settle"
+    };
+    for (const QString &operation : operations) QTest::newRow(qPrintable(operation)) << operation;
+}
+
+void DatabaseRepositoryTest::freshTimestampWrites()
+{
+    QFETCH(QString, operation);
+    const QDateTime earliest = QDateTime::currentDateTimeUtc().addSecs(-1);
+    QString error;
+    QSqlQuery raw(m_database.database(&error));
+    // Setup is deliberately legacy SQL data so each row checks its own write path.
+    raw.prepare(QStringLiteral("INSERT INTO users(phone,nickname,balance_cents,created_at,updated_at) "
+        "VALUES(?,?,1000,'2026-09-06 04:05:06','2026-09-06 04:05:06')"));
+    raw.addBindValue(QStringLiteral("fixture-%1").arg(operation));
+    raw.addBindValue(QStringLiteral("fixture"));
+    QVERIFY(raw.exec());
+    qint64 userId = raw.lastInsertId().toLongLong();
+    QVERIFY(raw.exec(QStringLiteral("INSERT INTO stations(name,address,longitude,latitude,price_cents_per_kwh,"
+        "created_at,updated_at) VALUES('fixture','fixture',1,1,100,'2026-09-06 04:05:06','2026-09-06 04:05:06')")));
+    qint64 stationId = raw.lastInsertId().toLongLong();
+    raw.prepare(QStringLiteral("INSERT INTO charging_piles(station_id,pile_code,charge_type,power_kw,updated_at) "
+        "VALUES(?,?,'fast',60,'2026-09-06 04:05:06')"));
+    raw.addBindValue(stationId);
+    raw.addBindValue(operation);
+    QVERIFY(raw.exec());
+    qint64 pileId = raw.lastInsertId().toLongLong();
+    UserRepository users(&m_database);
+    StationRepository stations(&m_database);
+    PileRepository piles(&m_database);
+    WalletRepository wallet(&m_database);
+    ReservationRepository reservations(&m_database);
+    OrderRepository orders(&m_database);
+    QString sql;
+    qint64 targetId = 0;
+
+    if (operation.startsWith(QStringLiteral("user_"))) {
+        if (operation == QStringLiteral("user_create")) {
+            UserRecord user;
+            bool created = false;
+            QVERIFY(users.findOrCreate(QStringLiteral("fresh-utc-user"), &user, &created, &error));
+            QVERIFY(created);
+            userId = user.id;
+            sql = QStringLiteral("SELECT created_at,updated_at FROM users WHERE id=?");
+        } else {
+            if (operation == QStringLiteral("user_profile"))
+                QVERIFY(users.updateProfile(userId, QStringLiteral("updated"), QStringLiteral("avatar"), &error));
+            else QVERIFY(users.setStatus(userId, QStringLiteral("frozen"), &error));
+            sql = QStringLiteral("SELECT updated_at FROM users WHERE id=?");
+        }
+        targetId = userId;
+    } else if (operation.startsWith(QStringLiteral("station_"))) {
+        StationRecord station;
+        QVERIFY(stations.findById(stationId, &station, &error));
+        if (operation == QStringLiteral("station_create")) {
+            QVERIFY(stations.insert(station, &stationId, &error));
+            sql = QStringLiteral("SELECT created_at,updated_at FROM stations WHERE id=?");
+        } else {
+            QVERIFY(stations.update(station, &error));
+            sql = QStringLiteral("SELECT updated_at FROM stations WHERE id=?");
+        }
+        targetId = stationId;
+    } else if (operation.startsWith(QStringLiteral("pile_"))) {
+        if (operation == QStringLiteral("pile_create")) {
+            PileRecord pile;
+            QVERIFY(piles.findById(pileId, &pile, &error));
+            pile.pileCode = QStringLiteral("fresh-utc-pile");
+            QVERIFY(piles.insert(pile, &pileId, &error));
+            sql = QStringLiteral("SELECT updated_at FROM charging_piles WHERE id=?");
+        } else if (operation == QStringLiteral("pile_heartbeat")) {
+            QVERIFY(piles.updateHeartbeat(pileId, &error));
+            sql = QStringLiteral("SELECT last_heartbeat_at,updated_at FROM charging_piles WHERE id=?");
+        } else {
+            QVERIFY(piles.updateStatus(pileId, QStringLiteral("idle"), QStringLiteral("offline"), &error));
+            sql = QStringLiteral("SELECT updated_at FROM charging_piles WHERE id=?");
+        }
+        targetId = pileId;
+    } else if (operation == QStringLiteral("wallet_recharge")) {
+        QVERIFY(wallet.recharge(QStringLiteral("R-RAW-UTC"), userId, 100, nullptr, &error));
+        sql = QStringLiteral("SELECT w.created_at,u.updated_at FROM wallet_records w "
+            "JOIN users u ON u.id=w.user_id WHERE w.user_id=?");
+        targetId = userId;
+    } else {
+        qint64 reservationId = 0, orderId = 0;
+        if (operation.startsWith(QStringLiteral("reservation_")) || operation == QStringLiteral("order_reserved_start")) {
+            if (operation == QStringLiteral("reservation_create")) {
+                QVERIFY(reservations.create(userId, pileId, QStringLiteral("2099-01-01T20:00:00+08:00"),
+                                            &reservationId, &error));
+                raw.prepare(QStringLiteral("SELECT expires_at FROM reservations WHERE id=?"));
+                raw.addBindValue(reservationId);
+                QVERIFY(raw.exec()); QVERIFY(raw.next());
+                QCOMPARE(raw.value(0).toString(), QStringLiteral("2099-01-01T12:00:00Z"));
+                sql = QStringLiteral("SELECT r.reserved_at,r.expires_at,p.updated_at FROM reservations r "
+                    "JOIN charging_piles p ON p.id=r.pile_id WHERE r.id=?");
+            } else {
+                raw.prepare(QStringLiteral("INSERT INTO reservations(user_id,pile_id,reserved_at,expires_at) "
+                    "VALUES(?,?,'2026-09-06 04:05:06','2099-01-01 12:00:00')"));
+                raw.addBindValue(userId); raw.addBindValue(pileId);
+                QVERIFY(raw.exec());
+                reservationId = raw.lastInsertId().toLongLong();
+                raw.prepare(QStringLiteral("UPDATE charging_piles SET status='reserved' WHERE id=?"));
+                raw.addBindValue(pileId); QVERIFY(raw.exec());
+                if (operation == QStringLiteral("reservation_cancel")) {
+                    QVERIFY(reservations.cancel(reservationId, userId, &error));
+                } else if (operation == QStringLiteral("reservation_expire")) {
+                    int expired = 0;
+                    QVERIFY(reservations.expireDue(QStringLiteral("2100-01-01T00:00:00Z"), &expired, &error));
+                    QVERIFY(expired > 0);
+                } else if (operation == QStringLiteral("reservation_use")) {
+                    QVERIFY(reservations.markUsed(reservationId, &error));
+                }
+                sql = operation == QStringLiteral("reservation_use")
+                    ? QStringLiteral("SELECT used_at FROM reservations WHERE id=?")
+                    : QStringLiteral("SELECT p.updated_at FROM reservations r JOIN charging_piles p ON p.id=r.pile_id WHERE r.id=?");
+            }
+            targetId = reservationId;
+        }
+        if (operation.startsWith(QStringLiteral("order_"))) {
+            QVERIFY(orders.createChargingOrder(operation, userId, pileId, reservationId, &orderId, &error));
+            if (operation == QStringLiteral("order_progress")) {
+                raw.prepare(QStringLiteral("UPDATE charging_orders SET updated_at='2026-09-06 04:05:06' WHERE id=?"));
+                raw.addBindValue(orderId); QVERIFY(raw.exec());
+                QVERIFY(orders.updateProgress(orderId, 10, 100, 10, &error));
+                sql = QStringLiteral("SELECT updated_at FROM charging_orders WHERE id=?");
+            } else if (operation == QStringLiteral("order_settle")) {
+                QVERIFY(orders.stopAndSettle(orderId, 10, 100, 10, QStringLiteral("completed"),
+                                            QStringLiteral("test_stop"), nullptr, &error));
+                sql = QStringLiteral("SELECT o.stopped_at,o.updated_at,w.created_at,u.updated_at,p.updated_at "
+                    "FROM charging_orders o JOIN wallet_records w ON w.order_id=o.id "
+                    "JOIN users u ON u.id=o.user_id JOIN charging_piles p ON p.id=o.pile_id WHERE o.id=?");
+            } else {
+                sql = QStringLiteral("SELECT o.started_at,o.created_at,o.updated_at,p.updated_at "
+                    "FROM charging_orders o JOIN charging_piles p ON p.id=o.pile_id WHERE o.id=?");
+                if (reservationId) {
+                    raw.prepare(QStringLiteral("SELECT used_at FROM reservations WHERE id=?"));
+                    raw.addBindValue(reservationId); QVERIFY(raw.exec()); QVERIFY(raw.next());
+                    const QString used = raw.value(0).toString();
+                    QCOMPARE(used, QDateTime::fromString(used, Qt::ISODate).toUTC().toString(Qt::ISODate));
+                    QCOMPARE(used.size(), 20);
+                    QVERIFY(QDateTime::fromString(used, Qt::ISODate) >= earliest);
+                    QVERIFY(QDateTime::fromString(used, Qt::ISODate) <= QDateTime::currentDateTimeUtc());
+                }
+            }
+            targetId = orderId;
+        }
+    }
+    QVERIFY(!sql.isEmpty());
+    raw.prepare(sql); raw.addBindValue(targetId);
+    QVERIFY2(raw.exec(), qPrintable(raw.lastError().text()));
+    QVERIFY(raw.next());
+    for (int column = 0; column < raw.record().count(); ++column) {
+        const QString timestamp = raw.value(column).toString();
+        const QDateTime parsed = QDateTime::fromString(timestamp, Qt::ISODate);
+        QVERIFY2(parsed.isValid(), qPrintable(timestamp));
+        QCOMPARE(timestamp, parsed.toUTC().toString(Qt::ISODate));
+        QCOMPARE(timestamp.size(), 20);
+        if (!(operation == QStringLiteral("reservation_create") && column == 1)) {
+            QVERIFY(parsed >= earliest);
+            QVERIFY(parsed <= QDateTime::currentDateTimeUtc());
+        }
+    }
 }
 
 void DatabaseRepositoryTest::alarmControlAndPushRecords()

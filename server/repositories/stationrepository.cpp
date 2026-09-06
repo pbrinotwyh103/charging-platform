@@ -99,8 +99,8 @@ bool StationRepository::insert(const StationRecord &record, qint64 *stationId,
     if (!db.isValid() || !db.isOpen()) return false;
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
-        "INSERT INTO stations(name,address,longitude,latitude,price_cents_per_kwh,status) "
-        "VALUES(?,?,?,?,?,?)"));
+        "INSERT INTO stations(name,address,longitude,latitude,price_cents_per_kwh,status,created_at,updated_at) "
+        "VALUES(?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%SZ','now'),strftime('%Y-%m-%dT%H:%M:%SZ','now'))"));
     query.addBindValue(record.name.trimmed());
     query.addBindValue(record.address.trimmed());
     query.addBindValue(record.longitude);
@@ -149,7 +149,7 @@ bool StationRepository::update(const StationRecord &record, QString *error) cons
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
         "UPDATE stations SET name=?,address=?,longitude=?,latitude=?,"
-        "price_cents_per_kwh=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?"));
+        "price_cents_per_kwh=?,status=?,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?"));
     query.addBindValue(record.name.trimmed());
     query.addBindValue(record.address.trimmed());
     query.addBindValue(record.longitude);

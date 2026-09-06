@@ -88,7 +88,7 @@ bool WalletRepository::recharge(const QString &recordNo, qint64 userId,
     }
     QSqlQuery update(db);
     update.prepare(QStringLiteral(
-        "UPDATE users SET balance_cents=balance_cents+?,updated_at=CURRENT_TIMESTAMP "
+        "UPDATE users SET balance_cents=balance_cents+?,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') "
         "WHERE id=? AND status='normal'"));
     update.addBindValue(amountCents);
     update.addBindValue(userId);
@@ -103,8 +103,8 @@ bool WalletRepository::recharge(const QString &recordNo, qint64 userId,
     const qint64 after = balance.value(0).toLongLong();
     QSqlQuery record(db);
     record.prepare(QStringLiteral(
-        "INSERT INTO wallet_records(record_no,user_id,record_type,amount_cents,balance_after_cents) "
-        "VALUES(?,?,'recharge',?,?)"));
+        "INSERT INTO wallet_records(record_no,user_id,record_type,amount_cents,balance_after_cents,created_at) "
+        "VALUES(?,?,'recharge',?,?,strftime('%Y-%m-%dT%H:%M:%SZ','now'))"));
     record.addBindValue(recordNo);
     record.addBindValue(userId);
     record.addBindValue(amountCents);

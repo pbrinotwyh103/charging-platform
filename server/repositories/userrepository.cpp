@@ -94,8 +94,9 @@ bool UserRepository::findOrCreate(const QString &phone, UserRecord *record, bool
     }
     QSqlQuery insert(db);
     insert.prepare(QStringLiteral(
-        "INSERT OR IGNORE INTO users(phone, nickname, avatar_path, balance_cents, status) "
-        "VALUES(?, ?, 'default://gray-avatar', 0, 'normal')"));
+        "INSERT OR IGNORE INTO users(phone, nickname, avatar_path, balance_cents, status,created_at,updated_at) "
+        "VALUES(?, ?, 'default://gray-avatar', 0, 'normal',"
+        "strftime('%Y-%m-%dT%H:%M:%SZ','now'),strftime('%Y-%m-%dT%H:%M:%SZ','now'))"));
     insert.addBindValue(phone);
     insert.addBindValue(QStringLiteral("用户%1").arg(phone.right(4)));
     if (!insert.exec()) {
@@ -122,7 +123,7 @@ bool UserRepository::updateProfile(qint64 userId, const QString &nickname,
     if (!db.isValid() || !db.isOpen()) return false;
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
-        "UPDATE users SET nickname=?, avatar_path=?, updated_at=CURRENT_TIMESTAMP WHERE id=?"));
+        "UPDATE users SET nickname=?, avatar_path=?, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?"));
     query.addBindValue(nickname.trimmed());
     query.addBindValue(avatarPath);
     query.addBindValue(userId);
@@ -144,7 +145,7 @@ bool UserRepository::setStatus(qint64 userId, const QString &status, QString *er
     if (!db.isValid() || !db.isOpen()) return false;
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
-        "UPDATE users SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?"));
+        "UPDATE users SET status=?, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?"));
     query.addBindValue(status);
     query.addBindValue(userId);
     if (!query.exec() || query.numRowsAffected() != 1) {

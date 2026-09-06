@@ -124,3 +124,46 @@ New tests cover both same-day format directions, expiry equality, timezone offse
 - Exposed timestamps use seconds precision, consistent with existing SQLite timestamp generation and charging duration fields.
 - Normalized ORDER BY expressions may need an expression index for much larger datasets; adding a schema/index migration is outside this review fix.
 - Full top-level Qt WebEngine build limitation remains unchanged. No other review blockers remain identified in this scope.
+
+## Review fix round 2 — canonical raw storage on every write
+
+### Changes
+
+- All fresh timestamps written by the six Task 2 repositories now use raw UTC YYYY-MM-DDTHH:MM:SSZ values.
+- User/station/pile/order/reservation/recharge INSERT statements explicitly supply their timestamp columns instead of relying on legacy schema defaults.
+- User profile/status, station update, pile status/heartbeat, reservation reserve/use/cancel/expire, order start/progress, and wallet recharge writes all use the same UTC expression as settlement.
+- Reservation create normalizes caller-supplied expiresAt through SQLite strftime before persistence, including timezone offsets. For example, 2099-01-01T20:00:00+08:00 is stored as 2099-01-01T12:00:00Z.
+- Legacy user, reservation, order, and ledger compatibility fixtures are now inserted directly with SQL. They no longer rely on create() preserving a legacy input string.
+
+### RED evidence
+
+Added freshTimestampWrites_data/freshTimestampWrites before production changes, with separate rows for:
+
+    user_create, user_profile, user_status, station_create, station_update,
+    pile_create, pile_status, pile_heartbeat, wallet_recharge,
+    reservation_create, reservation_cancel, reservation_expire, reservation_use,
+    order_create, order_reserved_start, order_progress, order_settle
+
+Ran make -s -j4 and ../bin/database_repository_tests freshTimestampWrites -v1 from build/task-2-review.
+
+Result: 3 passed, 16 failed (the passing entries were init/cleanup and the already-correct settlement row). Fifteen write paths exposed space-format raw timestamps; reservation_create exposed the unnormalized +08:00 expiry. An initial missing QSqlRecord test include was corrected before collecting this behavioral RED evidence.
+
+### GREEN evidence
+
+After canonicalizing writes and strengthening the direct legacy fixtures:
+
+    make -s -j4
+    ../bin/database_repository_tests -v1
+    git diff --check
+
+Result: 33 passed, 0 failed, 0 skipped, 30 ms; diff whitespace check passed.
+
+Every data row asserts raw SQL timestamp values, exact 20-character canonical UTC serialization, and that generated timestamps fall within the operation's UTC execution interval. Reservation expiry also asserts an independently specified expected UTC instant. Updates start from legacy raw timestamps, so a missing update cannot accidentally pass. Existing transactional, replay, restart, mixed-format comparison, pagination, and backup tests remain green.
+
+### Self-review
+
+- Reviewed all INSERT and UPDATE paths in user, wallet, reservation, order, station, and pile repositories; no CURRENT_TIMESTAMP remains in these six implementations.
+- Reservation cancellation/expiry have no separate timestamp columns in the existing schema. Their only newly written timestamp is the released pile's updated_at, which is asserted directly. Historical reservation timestamps remain intact.
+- Null optional timestamps such as an unused used_at or active stopped_at remain null; no fictitious event times are introduced.
+- Existing schema defaults/seed data remain backward compatible. Repository writes explicitly override old defaults; no migration or unrelated repository change was introduced.
+- Legacy reading, timezone-aware comparison, and mixed-format sorting remain supported. The scoped raw-storage review issue is resolved; the previously reported full-build Qt WebEngine limitation remains.

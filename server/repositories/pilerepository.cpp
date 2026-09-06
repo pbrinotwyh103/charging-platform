@@ -122,8 +122,8 @@ bool PileRepository::insert(const PileRecord &record, qint64 *pileId, QString *e
     if (!db.isValid() || !db.isOpen()) return false;
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
-        "INSERT INTO charging_piles(station_id,pile_code,charge_type,power_kw,status) "
-        "VALUES(?,?,?,?,?)"));
+        "INSERT INTO charging_piles(station_id,pile_code,charge_type,power_kw,status,updated_at) "
+        "VALUES(?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%SZ','now'))"));
     query.addBindValue(record.stationId);
     query.addBindValue(record.pileCode.trimmed());
     query.addBindValue(record.chargeType);
@@ -144,7 +144,7 @@ bool PileRepository::updateStatus(qint64 pileId, const QString &expectedStatus,
     if (!db.isValid() || !db.isOpen()) return false;
     QSqlQuery query(db);
     QString sql = QStringLiteral(
-        "UPDATE charging_piles SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?");
+        "UPDATE charging_piles SET status=?,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?");
     if (!expectedStatus.isEmpty()) sql += QStringLiteral(" AND status=?");
     query.prepare(sql);
     query.addBindValue(newStatus);
@@ -164,8 +164,8 @@ bool PileRepository::updateHeartbeat(qint64 pileId, QString *error) const
     if (!db.isValid() || !db.isOpen()) return false;
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
-        "UPDATE charging_piles SET last_heartbeat_at=CURRENT_TIMESTAMP,"
-        "updated_at=CURRENT_TIMESTAMP WHERE id=?"));
+        "UPDATE charging_piles SET last_heartbeat_at=strftime('%Y-%m-%dT%H:%M:%SZ','now'),"
+        "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?"));
     query.addBindValue(pileId);
     if (!query.exec() || query.numRowsAffected() != 1) {
         if (error) *error = query.lastError().isValid()

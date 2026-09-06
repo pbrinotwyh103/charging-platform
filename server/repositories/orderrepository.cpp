@@ -90,9 +90,9 @@ bool OrderRepository::createChargingOrder(const QString &orderNo, qint64 userId,
     if (reservationId > 0) {
         QSqlQuery reservation(db);
         reservation.prepare(QStringLiteral(
-            "UPDATE reservations SET status='used',used_at=CURRENT_TIMESTAMP "
+            "UPDATE reservations SET status='used',used_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') "
             "WHERE id=? AND user_id=? AND pile_id=? AND status='active' "
-        "AND julianday(expires_at)>julianday('now')"));
+            "AND julianday(expires_at)>julianday('now')"));
         reservation.addBindValue(reservationId);
         reservation.addBindValue(userId);
         reservation.addBindValue(pileId);
@@ -103,7 +103,7 @@ bool OrderRepository::createChargingOrder(const QString &orderNo, qint64 userId,
     }
     QSqlQuery occupy(db);
     occupy.prepare(QStringLiteral(
-        "UPDATE charging_piles SET status='charging',updated_at=CURRENT_TIMESTAMP "
+        "UPDATE charging_piles SET status='charging',updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') "
         "WHERE id=? AND status=?"));
     occupy.addBindValue(pileId);
     occupy.addBindValue(expectedPileStatus);
@@ -114,7 +114,9 @@ bool OrderRepository::createChargingOrder(const QString &orderNo, qint64 userId,
     QSqlQuery insert(db);
     insert.prepare(QStringLiteral(
         "INSERT INTO charging_orders(order_no,user_id,station_id,pile_id,reservation_id,"
-        "status,started_at,unit_price_cents) VALUES(?,?,?,?,?,'charging',CURRENT_TIMESTAMP,?)"));
+        "status,started_at,unit_price_cents,created_at,updated_at) "
+        "VALUES(?,?,?,?,?,'charging',strftime('%Y-%m-%dT%H:%M:%SZ','now'),?,"
+        "strftime('%Y-%m-%dT%H:%M:%SZ','now'),strftime('%Y-%m-%dT%H:%M:%SZ','now'))"));
     insert.addBindValue(orderNo);
     insert.addBindValue(userId);
     insert.addBindValue(context.value(0));
@@ -268,7 +270,7 @@ bool OrderRepository::updateProgress(qint64 orderId, qint64 durationSeconds,
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
         "UPDATE charging_orders SET duration_seconds=?,energy_wh=?,fee_cents=?,"
-        "updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='charging'"));
+        "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=? AND status='charging'"));
     query.addBindValue(qMax<qint64>(0, durationSeconds));
     query.addBindValue(qMax<qint64>(0, energyWh));
     query.addBindValue(qMax<qint64>(0, feeCents));
