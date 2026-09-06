@@ -8,7 +8,8 @@ heartbeat_timeout_seconds=45
 path=data/charging.db
 
 [map]
-# 腾讯地图Web API密钥由开发者在本地配置，不提交真实密钥。
+# 腾讯位置服务Key需开启WebService API；仅由服务端读取，不提交真实密钥。
+# 环境变量TENCENT_MAP_KEY的优先级高于此配置。
 tencent_key=
 
 [logging]

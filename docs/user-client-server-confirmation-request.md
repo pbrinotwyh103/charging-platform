@@ -26,7 +26,9 @@
 | 资料更新 | `UserProfileUpdateRequest` | `UserProfileUpdateResponse` |  |
 | 钱包充值 | `WalletRechargeRequest` | `WalletRechargeResponse` |  |
 | 充值记录 | `WalletLedgerRequest` | `WalletLedgerResponse` |  |
-| 收藏切换 | `FavoriteToggleRequest` | `FavoriteToggleResponse` |  |
+| 收藏切换 | `FavoriteToggleRequest` | `FavoriteToggleResponse` | 已落地：2020 / 2021 |
+| 收藏列表 | `FavoriteListRequest` | `FavoriteListResponse` | 已落地：2022 / 2023 |
+| 地址解析 | `MapGeocodeRequest` | `MapGeocodeResponse` | 已落地：2030 / 2031 |
 | 活动订单 | `ActiveOrderRequest` | `ActiveOrderResponse` |  |
 | 预约取消 | `ReservationCancelRequest` | `ReservationCancelResponse` |  |
 
@@ -75,6 +77,8 @@
 
 请确认：半径上限、无坐标时的处理、坐标系、排序是否由服务端完成，以及空结果是否返回成功+空 `items`。
 
+地址解析已经按概要设计落地：服务端从认证会话接收 `address`、`region`，通过腾讯地图 WebService 返回 `coordinate` 和 `formattedAddress`。Key 只从服务端环境变量或配置读取，不再需要确认客户端直连方式。
+
 ### 4. 电桩详情（现有 2010/2011）
 
 请求：`stationId`。
@@ -87,7 +91,7 @@
 
 请求：`stationId`、目标状态 `favorited`。
 
-响应：最终状态、`updatedAt`。请确认重复请求是否幂等，以及站点被删除/下线时的错误码。
+响应：最终状态、`updatedAt`。当前实现按目标状态幂等；不存在的站点返回 `NotFound`，同一用户同一站点的重复目标状态不会重复写入。收藏列表从已认证会话取得用户 ID，并只返回该用户收藏的在线站点。
 
 ### 6. 预约
 
