@@ -16,4 +16,5 @@ private slots:
   void paginationHonorsBoundaries();
   void emptyListsShowStableEmptyState();
   void sessionExpiryReturnsToLoginWithReason();
+  void dashboardVisualShellIsPresent();
 };

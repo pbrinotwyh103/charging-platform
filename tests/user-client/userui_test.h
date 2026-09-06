@@ -11,4 +11,5 @@ private slots:
     void reservationCanEnterChargingAndSettle();
     void demoRechargeUpdatesBalanceAndLedger();
     void mapUrlCarriesTravelModeAndCoordinates();
+    void compactAppVisualShellIsPresent();
 };
