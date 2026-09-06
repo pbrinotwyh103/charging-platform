@@ -558,4 +558,176 @@ void ServiceTest::expiryPreservesUnavailablePiles()
     QVERIFY(PileRepository(&m_database).updateStatus(2, "fault", "idle", &error));
 }
 
+void ServiceTest::stationChangeAfterPrecheckRejectsReservation()
+{
+    const auto id = createUser("13800138211");
+    QVERIFY(UserService(&m_database).recharge(id, {{"amountCents", 100}, {"transactionId", "reserve-station-race"}}).succeeded());
+    QSqlQuery query(m_database.database());
+    // The service has already read the online station before it updates the pile.
+    // A real SQLite trigger deterministically changes that state at the write boundary.
+    QVERIFY(query.exec("CREATE TRIGGER station_offline_at_reserve AFTER UPDATE OF status ON charging_piles "
+                       "WHEN NEW.id=2 AND NEW.status='reserved' BEGIN UPDATE stations SET status='offline' WHERE id=NEW.station_id; END"));
+    const auto result = ReservationService(&m_database).create(id, {{"stationId", 1}, {"pileId", 2}});
+    QVERIFY(query.exec("DROP TRIGGER station_offline_at_reserve"));
+    QCOMPARE(result.error, ErrorCode::Conflict);
+    QCOMPARE(result.reason, QString("pile_unavailable"));
+    ReservationRecord reservation;
+    PileRecord pile;
+    QString error;
+    QVERIFY(ReservationRepository(&m_database).findActiveByUser(id, &reservation, &error));
+    QCOMPARE(reservation.id, qint64(0));
+    QVERIFY(PileRepository(&m_database).findById(2, &pile, &error));
+    QCOMPARE(pile.status, QString("idle"));
+}
+
+void ServiceTest::simultaneousReservations()
+{
+    const auto firstId = createUser("13800138212");
+    const auto secondId = createUser("13800138213");
+    QVERIFY(UserService(&m_database).recharge(firstId, {{"amountCents", 100}, {"transactionId", "reserve-parallel-1"}}).succeeded());
+    QVERIFY(UserService(&m_database).recharge(secondId, {{"amountCents", 100}, {"transactionId", "reserve-parallel-2"}}).succeeded());
+    // Same pile/different users, different piles/same user, then automatic selection.
+    for (int scenario = 0; scenario < 3; ++scenario) {
+        for (int iteration = 0; iteration < 32; ++iteration) {
+            QSemaphore ready, start;
+            auto request = [&](qint64 userId, QJsonObject payload) {
+                m_database.database();
+                ready.release();
+                start.acquire();
+                return ReservationService(&m_database).create(userId, payload);
+            };
+            const auto otherId = scenario == 1 ? firstId : secondId;
+            const QJsonObject firstPayload = scenario == 2 ? QJsonObject{{"stationId", 1}}
+                : QJsonObject{{"stationId", 1}, {"pileId", 1}};
+            const QJsonObject secondPayload = scenario == 2 ? QJsonObject{{"stationId", 1}}
+                : QJsonObject{{"stationId", 1}, {"pileId", scenario == 1 ? 2 : 1}};
+            auto firstRequest = std::async(std::launch::async, request, firstId, firstPayload);
+            auto secondRequest = std::async(std::launch::async, request, otherId, secondPayload);
+            ready.acquire(2);
+            start.release(2);
+            const auto first = firstRequest.get();
+            const auto second = secondRequest.get();
+            if (first.succeeded())
+                QVERIFY(ReservationService(&m_database).cancel(firstId, {{"reservationId", first.payload.value("reservationId")}}).succeeded());
+            if (second.succeeded())
+                QVERIFY(ReservationService(&m_database).cancel(otherId, {{"reservationId", second.payload.value("reservationId")}}).succeeded());
+            if (scenario == 2) {
+                QVERIFY2(first.succeeded(), qPrintable(QString("first automatic: %1 %2").arg(int(first.error)).arg(first.reason)));
+                QVERIFY2(second.succeeded(), qPrintable(QString("second automatic: %1 %2").arg(int(second.error)).arg(second.reason)));
+                QVERIFY(first.payload.value("pileId") != second.payload.value("pileId"));
+            } else {
+                QCOMPARE(int(first.succeeded()) + int(second.succeeded()), 1);
+                const auto rejected = first.succeeded() ? second : first;
+                QCOMPARE(rejected.error, ErrorCode::Conflict);
+                QCOMPARE(rejected.reason, scenario == 0 ? QString("pile_unavailable") : QString("reservation_conflict"));
+            }
+        }
+    }
+}
+
+void ServiceTest::directOrderCannotBypassActiveReservation()
+{
+    const auto id = createUser("13800138214");
+    QVERIFY(UserService(&m_database).recharge(id, {{"amountCents", 100}, {"transactionId", "order-reservation-guard"}}).succeeded());
+    const auto result = ReservationService(&m_database).create(id, {{"stationId", 1}, {"pileId", 2}});
+    QVERIFY(result.succeeded());
+    const auto reservationId = qint64(result.payload.value("reservationId").toDouble());
+    OrderRepository orders(&m_database);
+    qint64 orderId = 0;
+    QString error;
+    QVERIFY(!orders.createChargingOrder("direct-while-reserved", id, 1, 0, &orderId, &error));
+    QCOMPARE(error, QString("reservation_conflict"));
+    OrderRecord active;
+    QVERIFY(orders.findActiveByUser(id, &active, &error));
+    QCOMPARE(active.id, qint64(0));
+    PileRecord pile;
+    QVERIFY(PileRepository(&m_database).findById(1, &pile, &error));
+    QCOMPARE(pile.status, QString("idle"));
+    ReservationRecord reservation;
+    QVERIFY(ReservationRepository(&m_database).findById(reservationId, &reservation, &error));
+    QCOMPARE(reservation.status, QString("active"));
+    QVERIFY(orders.createChargingOrder("start-matching-reservation", id, 2, reservationId, &orderId, &error));
+    QVERIFY(BillingService(&m_database).settle(orderId, 0, 0, "completed", "user_stop").succeeded());
+}
+
+void ServiceTest::reservationContentionWaitsBeforeReading()
+{
+    const auto firstId = createUser("13800138215");
+    const auto secondId = createUser("13800138216");
+    QVERIFY(UserService(&m_database).recharge(firstId, {{"amountCents", 100}, {"transactionId", "reserve-lock-1"}}).succeeded());
+    QVERIFY(UserService(&m_database).recharge(secondId, {{"amountCents", 100}, {"transactionId", "reserve-lock-2"}}).succeeded());
+    QSemaphore ready, start;
+    auto request = [&](qint64 userId) {
+        m_database.database();
+        ready.release();
+        start.acquire();
+        QString error;
+        qint64 id = 0;
+        const bool succeeded = ReservationRepository(&m_database).create(userId, 1,
+            QDateTime::currentDateTimeUtc().addSecs(900).toString(Qt::ISODate), &id, &error);
+        m_database.releaseCurrentThreadConnection();
+        return std::make_pair(succeeded, error);
+    };
+    // Preopen worker connections so initialization is outside the contended section.
+    auto firstRequest = std::async(std::launch::async, request, firstId);
+    auto secondRequest = std::async(std::launch::async, request, secondId);
+    ready.acquire(2);
+    QSqlQuery blocker(m_database.database());
+    const bool acquired = blocker.exec("BEGIN IMMEDIATE");
+    start.release(2);
+    // Deferred transactions can read here but fail immediately when upgrading to writes.
+    // An immediate transaction must wait, without starting a stale read snapshot.
+    firstRequest.wait_for(std::chrono::milliseconds(100));
+    secondRequest.wait_for(std::chrono::milliseconds(100));
+    const bool released = blocker.exec("COMMIT");
+    const auto first = firstRequest.get();
+    const auto second = secondRequest.get();
+    QVERIFY(acquired);
+    QVERIFY(released);
+    QCOMPARE(int(first.first) + int(second.first), 1);
+    const auto rejected = first.first ? second : first;
+    QCOMPARE(rejected.second, QString("pile_unavailable"));
+    const auto winner = first.first ? firstId : secondId;
+    ReservationRecord reservation;
+    QString error;
+    QVERIFY(ReservationRepository(&m_database).findActiveByUser(winner, &reservation, &error));
+    QVERIFY(ReservationService(&m_database).cancel(winner, {{"reservationId", double(reservation.id)}}).succeeded());
+}
+
+void ServiceTest::simultaneousDirectOrderAndReservation()
+{
+    const auto userId = createUser("13800138217");
+    QVERIFY(UserService(&m_database).recharge(userId, {{"amountCents", 100}, {"transactionId", "reserve-order-parallel"}}).succeeded());
+    for (int iteration = 0; iteration < 32; ++iteration) {
+        QSemaphore ready, start;
+        auto request = [&](bool order) {
+            m_database.database();
+            ready.release();
+            start.acquire();
+            qint64 id = 0;
+            QString error;
+            const bool succeeded = order
+                ? OrderRepository(&m_database).createChargingOrder(QString("parallel-order-%1").arg(iteration), userId, 1, 0, &id, &error)
+                : ReservationRepository(&m_database).create(userId, 2, QDateTime::currentDateTimeUtc().addSecs(900).toString(Qt::ISODate), &id, &error);
+            m_database.releaseCurrentThreadConnection();
+            return std::make_pair(succeeded ? id : qint64(0), error);
+        };
+        auto orderRequest = std::async(std::launch::async, request, true);
+        auto reservationRequest = std::async(std::launch::async, request, false);
+        ready.acquire(2);
+        start.release(2);
+        const auto order = orderRequest.get();
+        const auto reservation = reservationRequest.get();
+        const bool bothSucceeded = order.first && reservation.first;
+        if (order.first)
+            QVERIFY(BillingService(&m_database).settle(order.first, 0, 0, "completed", "user_stop").succeeded());
+        if (reservation.first)
+            QVERIFY(ReservationService(&m_database).cancel(userId, {{"reservationId", double(reservation.first)}}).succeeded());
+        QVERIFY(!bothSucceeded);
+        QVERIFY(order.first || reservation.first);
+        QCOMPARE(order.first ? reservation.second : order.second,
+                 order.first ? QString("order_conflict") : QString("reservation_conflict"));
+    }
+}
+
 QTEST_GUILESS_MAIN(ServiceTest)

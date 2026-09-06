@@ -83,7 +83,13 @@ ServiceResult ReservationService::create(qint64 userId, const QJsonObject &paylo
             result.payload = snapshot(reservation, stationId);
             return result;
         }
-        // A competing transaction may have won after validation; report its business state.
+        // Preserve the decision made under write ownership, even if state changes
+        // again before any follow-up read. Automatic selection can try the next pile.
+        if (error == "station_unavailable") return conflict("pile_unavailable");
+        if (error == "pile_unavailable") continue;
+        if (error == "user_frozen" || error == "insufficient_balance"
+            || error == "order_conflict" || error == "reservation_conflict") return conflict(error);
+        // Legacy constraints still protect the write; classify their committed state.
         const auto raced = userConflict(database(), userId);
         if (!raced.succeeded()) return raced;
         PileRecord current;

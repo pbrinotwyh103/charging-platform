@@ -50,8 +50,9 @@ bool OrderRepository::createChargingOrder(const QString &orderNo, qint64 userId,
 {
     QSqlDatabase db = database()->database(error);
     if (!db.isValid() || !db.isOpen()) return false;
-    if (!db.transaction()) {
-        if (error) *error = db.lastError().text();
+    QSqlQuery begin(db);
+    if (!begin.exec(QStringLiteral("BEGIN IMMEDIATE"))) {
+        if (error) *error = begin.lastError().text();
         return false;
     }
     QSqlQuery context(db);
@@ -82,6 +83,13 @@ bool OrderRepository::createChargingOrder(const QString &orderNo, qint64 userId,
     if (context.value(3).toString() != QStringLiteral("normal")) {
         return rollback(db, QStringLiteral("冻结用户不能开始充电"), error);
     }
+    QSqlQuery activeReservation(db);
+    activeReservation.prepare(QStringLiteral(
+        "SELECT id FROM reservations WHERE user_id=? AND status='active' AND id<>? LIMIT 1"));
+    activeReservation.addBindValue(userId);
+    activeReservation.addBindValue(reservationId);
+    if (!activeReservation.exec()) return rollback(db, activeReservation.lastError().text(), error);
+    if (activeReservation.next()) return rollback(db, QStringLiteral("reservation_conflict"), error);
     const QString expectedPileStatus = reservationId > 0
         ? QStringLiteral("reserved") : QStringLiteral("idle");
     if (context.value(1).toString() != expectedPileStatus) {

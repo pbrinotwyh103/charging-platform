@@ -30,27 +30,34 @@ bool ReservationRepository::create(qint64 userId, qint64 pileId, const QString &
 {
     QSqlDatabase db = database()->database(error);
     if (!db.isValid() || !db.isOpen()) return false;
-    if (!db.transaction()) {
-        if (error) *error = db.lastError().text();
+    // Acquire write ownership before any eligibility read. The configured bounded
+    // busy timeout can wait here; upgrading a deferred read snapshot cannot wait.
+    QSqlQuery begin(db);
+    if (!begin.exec(QStringLiteral("BEGIN IMMEDIATE"))) {
+        if (error) *error = begin.lastError().text();
         return false;
     }
 
     QSqlQuery user(db);
     user.prepare(QStringLiteral(
         "SELECT status,balance_cents,EXISTS(SELECT 1 FROM charging_orders o "
-        "WHERE o.user_id=users.id AND o.status='charging') FROM users WHERE id=?"));
+        "WHERE o.user_id=users.id AND o.status='charging'),"
+        "EXISTS(SELECT 1 FROM reservations r WHERE r.user_id=users.id AND r.status='active') "
+        "FROM users WHERE id=?"));
     user.addBindValue(userId);
     if (!user.exec() || !user.next()) {
         return rollback(db, user.lastError().isValid() ? user.lastError().text()
                                                        : QStringLiteral("用户不存在"), error);
     }
     if (user.value(0).toString() != QStringLiteral("normal")) {
-        return rollback(db, QStringLiteral("冻结用户不能创建预约"), error);
+        return rollback(db, QStringLiteral("user_frozen"), error);
     }
     if (user.value(1).toLongLong() <= 0)
-        return rollback(db, QStringLiteral("钱包余额不足"), error);
+        return rollback(db, QStringLiteral("insufficient_balance"), error);
     if (user.value(2).toBool())
-        return rollback(db, QStringLiteral("用户已有充电订单"), error);
+        return rollback(db, QStringLiteral("order_conflict"), error);
+    if (user.value(3).toBool())
+        return rollback(db, QStringLiteral("reservation_conflict"), error);
 
     QSqlQuery reservePile(db);
     reservePile.prepare(QStringLiteral(
@@ -59,17 +66,22 @@ bool ReservationRepository::create(qint64 userId, qint64 pileId, const QString &
     reservePile.addBindValue(pileId);
     if (!reservePile.exec() || reservePile.numRowsAffected() != 1) {
         return rollback(db, reservePile.lastError().isValid() ? reservePile.lastError().text()
-                : QStringLiteral("电桩不是空闲状态"), error);
+                : QStringLiteral("pile_unavailable"), error);
     }
 
     QSqlQuery insert(db);
     insert.prepare(QStringLiteral(
         "INSERT INTO reservations(user_id,pile_id,expires_at,reserved_at) "
-        "VALUES(?,?,strftime('%Y-%m-%dT%H:%M:%SZ',?),strftime('%Y-%m-%dT%H:%M:%SZ','now'))"));
+        "SELECT ?,?,strftime('%Y-%m-%dT%H:%M:%SZ',?),strftime('%Y-%m-%dT%H:%M:%SZ','now') "
+        "FROM charging_piles p JOIN stations s ON s.id=p.station_id "
+        "WHERE p.id=? AND s.status='online'"));
     insert.addBindValue(userId);
     insert.addBindValue(pileId);
     insert.addBindValue(expiresAt);
+    insert.addBindValue(pileId);
     if (!insert.exec()) return rollback(db, insert.lastError().text(), error);
+    if (insert.numRowsAffected() != 1)
+        return rollback(db, QStringLiteral("station_unavailable"), error);
     const qint64 id = insert.lastInsertId().toLongLong();
     if (!db.commit()) {
         if (error) *error = db.lastError().text();

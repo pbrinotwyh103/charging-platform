@@ -21,6 +21,8 @@ public:
     using RepositoryBase::RepositoryBase;
     bool findById(qint64 reservationId, ReservationRecord *record, QString *error) const;
 
+    // Business rejection error values: user_frozen, insufficient_balance,
+    // order_conflict, reservation_conflict, pile_unavailable, station_unavailable.
     bool create(qint64 userId, qint64 pileId, const QString &expiresAt,
                 qint64 *reservationId, QString *error) const;
     bool findActiveByUser(qint64 userId, ReservationRecord *record, QString *error) const;
