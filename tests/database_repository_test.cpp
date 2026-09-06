@@ -42,7 +42,7 @@ qint64 DatabaseRepositoryTest::createUser(const QString &phone)
 void DatabaseRepositoryTest::schemaAndIntegrity()
 {
     QString error;
-    QCOMPARE(m_database.schemaVersion(&error), 4);
+    QCOMPARE(m_database.schemaVersion(&error), 5);
     QVERIFY2(m_database.checkIntegrity(&error), qPrintable(error));
     QSqlQuery query(m_database.database(&error));
     QVERIFY2(query.exec(QStringLiteral("PRAGMA foreign_keys")), qPrintable(query.lastError().text()));
@@ -97,7 +97,7 @@ void DatabaseRepositoryTest::upgradeLegacyChargingSequence()
     QCOMPARE(upgraded.schemaVersion(&error), 3);
     QVERIFY(query.exec("DROP TRIGGER fail_version_four"));
     QVERIFY2(upgraded.initializeSchema(&error), qPrintable(error));
-    QCOMPARE(upgraded.schemaVersion(&error), 4);
+    QCOMPARE(upgraded.schemaVersion(&error), 5);
     QVERIFY(query.exec("SELECT push_seq,duration_seconds,energy_wh,fee_cents FROM charging_orders WHERE id=1001"));
     QVERIFY(query.next());
     QCOMPARE(query.value(0).toInt(), 0);
@@ -246,14 +246,117 @@ void DatabaseRepositoryTest::rechargeIdempotency()
     QVERIFY(UserRepository(&m_database).findById(userId, &user, &error));
     QCOMPARE(user.balanceCents, 6000);
     WalletRecord record;
-    QVERIFY(wallet.findByRecordNo(QStringLiteral("R-IDEMPOTENT"), &record, &error));
+    QVERIFY(wallet.findByRecordNo(QStringLiteral("R-IDEMPOTENT"), "recharge", &record, &error));
     QCOMPARE(record.amountCents, 5000);
     QCOMPARE(record.balanceAfterCents, 5000);
     int count = -1;
     QVERIFY(wallet.countByUser(userId, &count, &error));
     QCOMPARE(count, 2);
-    QVERIFY(wallet.findByRecordNo(QStringLiteral("missing"), &record, &error));
+    QVERIFY(wallet.findByRecordNo(QStringLiteral("missing"), "recharge", &record, &error));
     QCOMPARE(record.id, 0);
+}
+
+void DatabaseRepositoryTest::rechargeAndSettlementUseIndependentNamespaces()
+{
+    DatabaseManager database;
+    QString error;
+    QVERIFY(database.open(m_temporaryDirectory.filePath("wallet-namespaces.db"), &error));
+    UserRecord user;
+    bool created;
+    QVERIFY(UserRepository(&database).findOrCreate("13800138776", &user, &created, &error));
+    WalletRepository wallet(&database);
+    qint64 balance, orderId;
+    QVERIFY(wallet.recharge("ORDER-PAYMENT-1", user.id, 1000, &balance, &error));
+    OrderRepository orders(&database);
+    QVERIFY(orders.createChargingOrder("namespace-order", user.id, 1, 0, &orderId, &error));
+    QCOMPARE(orderId, 1);
+    QVERIFY2(orders.stopAndSettle(orderId, 60, 1000, 120, "completed", "user_stop", &balance, &error), qPrintable(error));
+    QCOMPARE(balance, 880);
+    QVERIFY(wallet.recharge("ORDER-PAYMENT-1", user.id, 1000, &balance, &error));
+    QCOMPARE(balance, 1000);
+    QVERIFY(orders.stopAndSettle(orderId, 90, 2000, 240, "completed", "user_stop", &balance, &error));
+    QCOMPARE(balance, 880);
+    QList<WalletRecord> records;
+    QVERIFY(wallet.listByUser(user.id, 20, 0, &records, &error));
+    QCOMPARE(records.size(), 2);
+    QVERIFY(UserRepository(&database).findById(user.id, &user, &error));
+    QCOMPARE(user.balanceCents, 880);
+    // The type namespace must also protect a later recharge after settlement.
+    QVERIFY(orders.createChargingOrder("namespace-order-2", user.id, 1, 0, &orderId, &error));
+    QVERIFY(orders.stopAndSettle(orderId, 0, 0, 0, "completed", "user_stop", &balance, &error));
+    QVERIFY(wallet.recharge("ORDER-PAYMENT-2", user.id, 100, &balance, &error));
+    QCOMPARE(balance, 980);
+    QVERIFY(wallet.recharge("ORDER-PAYMENT-2", user.id, 100, &balance, &error));
+    QCOMPARE(balance, 980);
+}
+
+void DatabaseRepositoryTest::legacyWalletNamespaceMigration()
+{
+    const auto path = m_temporaryDirectory.filePath("legacy-wallet.db");
+    const QString connection = "legacy-wallet-fixture";
+    {
+        auto legacy = QSqlDatabase::addDatabase("QSQLITE", connection);
+        legacy.setDatabaseName(path);
+        QVERIFY(legacy.open());
+        QSqlQuery query(legacy);
+        for (const auto &resource : {":/database/schema.sql", ":/database/seed.sql",
+                 ":/database/migrations/003_repository_indexes.sql", ":/database/migrations/004_charging_push_sequence.sql"}) {
+            QFile file(resource);
+            QVERIFY(file.open(QIODevice::ReadOnly));
+            QString script;
+            for (QString line : QString::fromUtf8(file.readAll()).split('\n')) {
+                const int comment = line.indexOf("--");
+                if (comment >= 0) line.truncate(comment);
+                script += line + '\n';
+            }
+            for (const auto &statement : script.split(';', Qt::SkipEmptyParts)) {
+                if (!statement.trimmed().isEmpty())
+                    QVERIFY2(query.exec(statement), qPrintable(query.lastError().text()));
+            }
+        }
+        QVERIFY(query.exec("INSERT INTO schema_version(version) VALUES(4)"));
+        QVERIFY(query.exec("INSERT INTO users(id,phone,nickname,balance_cents) VALUES(1,'13800138775','legacy',1000)"));
+        QVERIFY(query.exec("INSERT INTO wallet_records(id,record_no,user_id,record_type,amount_cents,balance_after_cents,created_at) VALUES(41,'ORDER-PAYMENT-1',1,'recharge',1000,1000,'2026-09-06T00:00:00Z')"));
+        QVERIFY(query.exec("UPDATE sqlite_sequence SET seq=99 WHERE name='wallet_records'"));
+        QVERIFY(query.exec("UPDATE charging_piles SET status='charging' WHERE id=1"));
+        QVERIFY(query.exec("INSERT INTO charging_orders(id,order_no,user_id,station_id,pile_id,status,started_at,unit_price_cents) VALUES(1,'legacy-collision',1,1,1,'charging','2026-09-06T00:00:00Z',120)"));
+        QVERIFY(query.exec("CREATE TRIGGER fail_version_five BEFORE INSERT ON schema_version WHEN NEW.version=5 BEGIN SELECT RAISE(ABORT,'migration interrupted'); END"));
+    }
+    QSqlDatabase::removeDatabase(connection);
+    DatabaseManager database;
+    QString error;
+    QVERIFY(!database.open(path, &error));
+    QCOMPARE(database.schemaVersion(&error), 4);
+    QSqlQuery query(database.database());
+    QVERIFY(query.exec("SELECT id,record_no,amount_cents FROM wallet_records"));
+    QVERIFY(query.next());
+    QCOMPARE(query.value(0).toInt(), 41);
+    QCOMPARE(query.value(1).toString(), QString("ORDER-PAYMENT-1"));
+    QCOMPARE(query.value(2).toInt(), 1000);
+    query.finish();
+    QVERIFY(!query.exec("INSERT INTO wallet_records(record_no,user_id,order_id,record_type,amount_cents,balance_after_cents) VALUES('ORDER-PAYMENT-1',1,1,'charge_payment',0,1000)"));
+    QVERIFY(query.exec("DROP TRIGGER fail_version_five"));
+    QVERIFY2(database.initializeSchema(&error), qPrintable(error));
+    QCOMPARE(database.schemaVersion(&error), 5);
+    qint64 balance;
+    WalletRepository wallet(&database);
+    QVERIFY(wallet.recharge("ORDER-PAYMENT-1", 1, 1000, &balance, &error));
+    QCOMPARE(balance, 1000);
+    OrderRepository orders(&database);
+    QVERIFY2(orders.stopAndSettle(1, 60, 1000, 120, "completed", "user_stop", &balance, &error), qPrintable(error));
+    QCOMPARE(balance, 880);
+    QVERIFY(database.initializeSchema(&error));
+    QVERIFY(wallet.recharge("ORDER-PAYMENT-1", 1, 1000, &balance, &error));
+    QCOMPARE(balance, 1000);
+    QVERIFY(orders.stopAndSettle(1, 99, 2000, 999, "completed", "user_stop", &balance, &error));
+    QCOMPARE(balance, 880);
+    QVERIFY(database.checkIntegrity(&error));
+    QList<WalletRecord> records;
+    QVERIFY(wallet.listByUser(1, 20, 0, &records, &error));
+    QCOMPARE(records.size(), 2);
+    QCOMPARE(records.first().id, 100);
+    QCOMPARE(records.last().id, 41);
+    QCOMPARE(records.last().createdAt, QString("2026-09-06T00:00:00Z"));
 }
 
 void DatabaseRepositoryTest::atomicSettlementAndRecovery()

@@ -19,8 +19,10 @@
 | 超时 | 分发器默认 10 秒，返回 RequestTimeout(3002)。超时不取消后台事务；同一 requestId 在任务实际完成前仍占用，迟到结果不再次发送。客户端应查询活动订单/流水确认状态。 |
 
 连接中仍在执行的重复 requestId 返回 DuplicateRequest(1204)，完成后可复用，但客户端通常应递增。
-充值以全局 transactionId 幂等：同一用户、金额、类型重试返回原流水和当时余额，改变交易内容返回
-transaction_conflict。收藏重复设置目标状态成功；重复预约返回 reservation_conflict，不新增预约；
+充值在充值类型内以全局 transactionId 幂等：同一用户、金额重试返回原流水和当时余额，改变交易内容返回
+transaction_conflict。数据库以 `(record_type, record_no)` 区分充值与服务端结算命名空间；客户端始终收到
+原始 transactionId。即使充值使用 `ORDER-PAYMENT-1`，也不会占用订单 1 的支付流水；流水应以 recordId
+识别，不能假设不同类型的 transactionId 唯一。收藏重复设置目标状态成功；重复预约返回 reservation_conflict，不新增预约；
 重复取消已取消预约成功。开始充电先检查所传预约存在且属于本人，有活动订单时返回现有订单；
 重复停止已结算订单返回原最终结果及原结算余额，不重复扣费。
 管理员电桩控制按会话范围、操作者、requestId、action 和目标重放；不同连接不共享请求号命名空间。
@@ -128,8 +130,9 @@ type=fast/slow；status=available/reserved/charging/offline/fault/disabled（数
 不覆盖故障等不可用状态；订单结算的释放行为不同，见下文。
 
 订单快照字段为 orderId, orderNo, seq, userId, stationId, pileId, reservationId, status,
-startedAt, stoppedAt, durationSec, energyWh, energyKwh, priceCentsPerKwh, payableCents,
-feeCents, stopReason, createdAt, updatedAt。payableCents 是 feeCents 的兼容同值字段，
+startedAt, stoppedAt, durationSec, durationSeconds, energyWh, energyKwh, priceCentsPerKwh, payableCents,
+feeCents, stopReason, createdAt, updatedAt。durationSeconds 与 durationSec 均为整数秒且始终同值，
+包括活动订单、结算结果和 8001/8002 推送，以兼容管理端监控。payableCents 是 feeCents 的兼容同值字段，
 不是待付款标志；没有 pendingPayment 等字段。预约先使桩进入 reserved，此时尚未创建订单；
 开始充电才创建 status=charging 的订单并把桩改为 charging。
 订单运行时流转为 charging → 内存 stopping → completed/fault_stopped；
@@ -179,7 +182,7 @@ AlarmPush 字段为 alarmId, pileId, orderId, alarmType, severity, message, stat
 | station.list | keyword, status=online/offline，可选分页 | 管理站点列表 |
 | station.detail | stationId | 管理站点项 |
 | station.create | name, address, longitude, latitude, priceCentsPerKwh；可选 status | 创建后的管理站点项 |
-| station.update | stationId，加至少一个上述维护字段 | 更新后的管理站点项 |
+| station.update | stationId，加至少一个上述维护字段 | 原子更新明确提供的字段，返回更新后的管理站点项；并发修改不同字段互不覆盖 |
 | pile.list | stationId（0/不传表示全部）, status，可选分页 | 管理电桩列表 |
 | pile.detail | pileId | 管理电桩项 |
 | pile.stop | pileId 或 orderId，同时传时必须对应 | 最终订单快照及 balanceCents |
@@ -305,11 +308,11 @@ message（通常为“操作成功”；alarm.detail/handle 保留告警本身�
 进度和正常停止推送，payload 为节选；示例 60kW、120 cents/kWh 运行 60 秒产生 1kWh、120 cents：
 
 ```json
-{"header":{"messageType":8001,"requestId":0,"statusCode":0},"payload":{"orderId":1,"seq":60,"status":"charging","energyKwh":1,"powerKw":60,"durationSec":60,"feeCents":120,"updatedAt":"2026-09-06T08:01:00Z"}}
+{"header":{"messageType":8001,"requestId":0,"statusCode":0},"payload":{"orderId":1,"seq":60,"status":"charging","energyKwh":1,"powerKw":60,"durationSec":60,"durationSeconds":60,"feeCents":120,"updatedAt":"2026-09-06T08:01:00Z"}}
 ```
 
 ```json
-{"header":{"messageType":8002,"requestId":0,"statusCode":0},"payload":{"orderId":1,"seq":61,"status":"completed","energyWh":1000,"energyKwh":1,"durationSec":60,"feeCents":120,"payableCents":120,"balanceCents":9880,"stopReason":"user_stop","updatedAt":"2026-09-06T08:01:00Z"}}
+{"header":{"messageType":8002,"requestId":0,"statusCode":0},"payload":{"orderId":1,"seq":61,"status":"completed","energyWh":1000,"energyKwh":1,"durationSec":60,"durationSeconds":60,"feeCents":120,"payableCents":120,"balanceCents":9880,"stopReason":"user_stop","updatedAt":"2026-09-06T08:01:00Z"}}
 ```
 
 故障场景替代上述正常停止（不是同一订单第二次结算）；告警先于停止，8001/8002 不携带失败码：
@@ -319,7 +322,7 @@ message（通常为“操作成功”；alarm.detail/handle 保留告警本身�
 ```
 
 ```json
-{"header":{"messageType":8002,"requestId":0,"statusCode":0},"payload":{"orderId":1,"seq":61,"status":"fault_stopped","energyKwh":1,"durationSec":60,"feeCents":120,"balanceCents":9880,"stopReason":"device_fault","updatedAt":"2026-09-06T08:01:00Z"}}
+{"header":{"messageType":8002,"requestId":0,"statusCode":0},"payload":{"orderId":1,"seq":61,"status":"fault_stopped","energyKwh":1,"durationSec":60,"durationSeconds":60,"feeCents":120,"balanceCents":9880,"stopReason":"device_fault","updatedAt":"2026-09-06T08:01:00Z"}}
 ```
 
 ## 六、服务端负责人回复

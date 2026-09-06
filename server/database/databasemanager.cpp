@@ -305,7 +305,8 @@ bool DatabaseManager::applyMigrations(QSqlDatabase &db, QString *error) const
     struct Migration { int version; const char *resource; };
     const Migration migrations[] = {
         {3, ":/database/migrations/003_repository_indexes.sql"},
-        {4, ":/database/migrations/004_charging_push_sequence.sql"}
+        {4, ":/database/migrations/004_charging_push_sequence.sql"},
+        {5, ":/database/migrations/005_wallet_transaction_namespaces.sql"}
     };
 
     QSqlQuery versionQuery(db);
@@ -315,6 +316,8 @@ bool DatabaseManager::applyMigrations(QSqlDatabase &db, QString *error) const
         return false;
     }
     int currentVersion = versionQuery.value(0).toInt();
+    // Table-rebuilding migrations need every schema reader finalized first.
+    versionQuery.finish();
     for (const Migration &migration : migrations) {
         if (migration.version <= currentVersion) continue;
         if (!executeScript(db, QString::fromLatin1(migration.resource), error, migration.version)) {

@@ -17,6 +17,8 @@ private slots:
     void reservationRulesAndExpiry();
     void chargingSettlementAndRollback();
     void rechargeIdempotency();
+    void rechargeAndSettlementUseIndependentNamespaces();
+    void legacyWalletNamespaceMigration();
     void atomicSettlementAndRecovery();
     void repositoryPagination();
     void faultSettlementAndLegacyReplay();

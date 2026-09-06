@@ -15,6 +15,7 @@ private slots:
     void avatarValidationAndPersistence();
     void avatarDatabaseFailureKeepsOldFile();
     void rechargeBoundsAndIdempotency();
+    void rechargeCannotBlockOrderSettlement();
     void walletPaginationAndOrdering();
     void nearbyTextSearchAndCoordinates();
     void pileStatusAndFavoriteIdempotency();
@@ -45,6 +46,7 @@ private slots:
     void chargingNormalStopRetryAfterPileFailure();
     void adminQueriesStatisticsAndExport();
     void adminMaintenanceAndAliases();
+    void concurrentIndependentStationUpdates();
     void adminControlConflictsAndAudits();
     void adminRemoteStopAndFreeze();
     void adminValidationAndDatabaseFailures();

@@ -126,7 +126,7 @@ ServiceResult UserService::recharge(qint64 userId, const QJsonObject &payload)
     WalletRepository wallet(database());
     WalletRecord record;
     QString error;
-    if (!wallet.findByRecordNo(transactionId, &record, &error)) return databaseError();
+    if (!wallet.findByRecordNo(transactionId, "recharge", &record, &error)) return databaseError();
     if (record.id && (record.userId != userId || record.recordType != "recharge"
                       || record.amountCents != amount))
         return failure(Charging::ErrorCode::Conflict, QStringLiteral("交易号已用于其他交易"), "transaction_conflict");
@@ -138,7 +138,7 @@ ServiceResult UserService::recharge(qint64 userId, const QJsonObject &payload)
             return failure(Charging::ErrorCode::AccountDisabled, QStringLiteral("用户已冻结"));
         qint64 balance = 0;
         if (!wallet.recharge(transactionId, userId, amount, &balance, &error)) return databaseError();
-        if (!wallet.findByRecordNo(transactionId, &record, &error)) return databaseError();
+        if (!wallet.findByRecordNo(transactionId, "recharge", &record, &error)) return databaseError();
     }
     ServiceResult result;
     result.payload = walletItem(record);

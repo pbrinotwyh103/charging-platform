@@ -4,6 +4,7 @@
 
 #include <QList>
 #include <QString>
+#include <optional>
 
 struct StationRecord {
     qint64 id = 0;
@@ -20,6 +21,15 @@ struct StationRecord {
     QString updatedAt;
 };
 
+struct StationPatch {
+    std::optional<QString> name;
+    std::optional<QString> address;
+    std::optional<double> longitude;
+    std::optional<double> latitude;
+    std::optional<qint64> priceCentsPerKwh;
+    std::optional<QString> status;
+};
+
 class StationRepository final : public RepositoryBase
 {
 public:
@@ -32,4 +42,5 @@ public:
     bool list(const QString &status, QList<StationRecord> *records, QString *error) const;
     bool insert(const StationRecord &record, qint64 *stationId, QString *error) const;
     bool update(const StationRecord &record, QString *error) const;
+    bool updateFields(qint64 stationId, const StationPatch &patch, QString *error) const;
 };

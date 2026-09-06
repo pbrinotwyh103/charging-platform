@@ -22,6 +22,7 @@ private slots:
     void faultsReachOwnerAndAdministrators();
     void reservationExpiryJob();
     void duplicateRequestLifecycle();
+    void rechargeCannotBlockOrderSettlement();
     void adminScopeComesFromSession();
     void logoutDiscardsPendingProfile();
     void directRequestMappingsAndLifecycle();

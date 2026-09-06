@@ -27,7 +27,7 @@ void readWallet(QSqlQuery &query, WalletRecord *record)
 }
 }
 
-bool WalletRepository::findByRecordNo(const QString &recordNo, WalletRecord *record,
+bool WalletRepository::findByRecordNo(const QString &recordNo, const QString &recordType, WalletRecord *record,
                                      QString *error) const
 {
     QSqlDatabase db = database()->database(error);
@@ -35,8 +35,9 @@ bool WalletRepository::findByRecordNo(const QString &recordNo, WalletRecord *rec
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
         "SELECT id,record_no,user_id,order_id,record_type,amount_cents,balance_after_cents,"
-        "status,strftime('%Y-%m-%dT%H:%M:%SZ',created_at) FROM wallet_records WHERE record_no=?"));
+        "status,strftime('%Y-%m-%dT%H:%M:%SZ',created_at) FROM wallet_records WHERE record_no=? AND record_type=?"));
     query.addBindValue(recordNo);
+    query.addBindValue(recordType);
     if (!query.exec()) {
         if (error) *error = query.lastError().text();
         return false;
@@ -76,7 +77,7 @@ bool WalletRepository::recharge(const QString &recordNo, qint64 userId,
         return false;
     }
     WalletRecord existing;
-    if (!findByRecordNo(recordNo, &existing, error))
+    if (!findByRecordNo(recordNo, QStringLiteral("recharge"), &existing, error))
         return rollback(db, error ? *error : QString(), error);
     if (existing.id != 0) {
         if (existing.userId != userId || existing.recordType != QStringLiteral("recharge")
@@ -146,7 +147,7 @@ bool WalletRepository::settleOrder(const QString &recordNo, qint64 orderId,
     const qint64 userId = order.value(0).toLongLong();
     const qint64 pileId = order.value(1).toLongLong();
     WalletRecord existing;
-    if (!findByRecordNo(recordNo, &existing, error))
+    if (!findByRecordNo(recordNo, QStringLiteral("charge_payment"), &existing, error))
         return rollback(db, error ? *error : QString(), error);
     if (existing.id != 0 && (existing.orderId != orderId
         || existing.recordType != QStringLiteral("charge_payment"))) {

@@ -361,6 +361,8 @@ void BusinessIntegrationTest::userWorkflowAndPushes()
     QCOMPARE(progress.payload.value("orderId"), orderId);
     QVERIFY(progress.payload.value("seq").toInt() > 0);
     QVERIFY(progress.payload.value("durationSec").toInt() >= 1);
+    // MonitorPage in origin/admin-client reads this long-form field.
+    QCOMPARE(progress.payload.value("durationSeconds"), progress.payload.value("durationSec"));
     QVERIFY(progress.payload.value("powerKw").toDouble() > 0);
     const auto stopped = request(user, MessageType::ChargingStopRequest, MessageType::ChargingStopResponse, {{"orderId", orderId}}).payload;
     QCOMPARE(stopped.value("status").toString(), QString("completed"));
@@ -465,6 +467,27 @@ void BusinessIntegrationTest::duplicateRequestLifecycle()
                                 {}, ErrorCode::Success, 4545);
     QCOMPARE(ledger.payload.value("total").toInt(), 1);
     QCOMPARE(sql("SELECT balance_cents FROM users").toInt(), 1000);
+}
+
+void BusinessIntegrationTest::rechargeCannotBlockOrderSettlement()
+{
+    ClientConnection user;
+    login(user);
+    const QJsonObject payload{{"amountCents", 1000}, {"transactionId", "ORDER-PAYMENT-1"}};
+    const auto recharge = request(user, MessageType::WalletRechargeRequest, MessageType::WalletRechargeResponse, payload);
+    QCOMPARE(recharge.payload.value("transactionId").toString(), QString("ORDER-PAYMENT-1"));
+    const auto reservation = request(user, MessageType::ReservationCreateRequest, MessageType::ReservationCreateResponse,
+                                     {{"stationId", 1}, {"pileId", 1}});
+    const auto started = request(user, MessageType::ChargingStartRequest, MessageType::ChargingStartResponse,
+                                 {{"reservationId", reservation.payload.value("reservationId")}});
+    QCOMPARE(started.payload.value("orderId").toInt(), 1);
+    const auto stopped = request(user, MessageType::ChargingStopRequest, MessageType::ChargingStopResponse, {{"orderId", 1}});
+    QCOMPARE(stopped.payload.value("status").toString(), QString("completed"));
+    QCOMPARE(request(user, MessageType::WalletRechargeRequest, MessageType::WalletRechargeResponse, payload).payload, recharge.payload);
+    QCOMPARE(request(user, MessageType::ChargingStopRequest, MessageType::ChargingStopResponse, {{"orderId", 1}}).payload, stopped.payload);
+    QCOMPARE(sql("SELECT COUNT(*) FROM wallet_records").toInt(), 2);
+    QCOMPARE(sql("SELECT status FROM charging_piles WHERE id=1").toString(), QString("idle"));
+    QCOMPARE(sql("SELECT balance_cents FROM users WHERE id=1").toInt(), stopped.payload.value("balanceCents").toInt());
 }
 
 void BusinessIntegrationTest::adminScopeComesFromSession()

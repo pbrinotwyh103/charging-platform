@@ -232,6 +232,35 @@ void ServiceTest::walletPaginationAndOrdering()
         QCOMPARE(service.walletLedger(id, bad).error, ErrorCode::ValidationFailed);
 }
 
+void ServiceTest::rechargeCannotBlockOrderSettlement()
+{
+    QTemporaryDir directory;
+    DatabaseManager database;
+    QString error;
+    QVERIFY(database.open(directory.filePath("collision.db"), &error));
+    UserRecord user;
+    bool created;
+    QVERIFY(UserRepository(&database).findOrCreate("13800138777", &user, &created, &error));
+    UserService users(&database);
+    const QJsonObject payload{{"amountCents", 1000}, {"transactionId", "ORDER-PAYMENT-1"}};
+    const auto recharge = users.recharge(user.id, payload);
+    QVERIFY(recharge.succeeded());
+    QCOMPARE(recharge.payload.value("transactionId").toString(), QString("ORDER-PAYMENT-1"));
+    qint64 orderId;
+    QVERIFY(OrderRepository(&database).createChargingOrder("collision-order", user.id, 1, 0, &orderId, &error));
+    QCOMPARE(orderId, 1);
+    BillingService billing(&database);
+    const auto settled = billing.settle(orderId, 60, 1000, "completed", "user_stop");
+    QVERIFY2(settled.succeeded(), qPrintable(settled.message));
+    QCOMPARE(settled.payload.value("balanceCents").toInt(), 880);
+    QCOMPARE(users.recharge(user.id, payload).payload, recharge.payload);
+    QCOMPARE(billing.settle(orderId, 99, 2000, "completed", "user_stop").payload, settled.payload);
+    QVERIFY(UserRepository(&database).findById(user.id, &user, &error));
+    QCOMPARE(user.balanceCents, 880);
+    const auto ledger = users.walletLedger(user.id, {}).payload;
+    QCOMPARE(ledger.value("total").toInt(), 2);
+}
+
 void ServiceTest::nearbyTextSearchAndCoordinates()
 {
     const auto id = createUser("13800138107");
@@ -453,6 +482,7 @@ void ServiceTest::activeOrderAndSettlement()
     QCOMPARE(result.payload.value("payableCents").toInt(), 148);
     QCOMPARE(result.payload.value("energyKwh").toDouble(), 1.234);
     QCOMPARE(result.payload.value("durationSec").toInt(), 120);
+    QCOMPARE(result.payload.value("durationSeconds").toInt(), 120);
     QVERIFY(result.payload.value("startedAt").toString().endsWith('Z'));
     auto conflict = ReservationService(&m_database).create(id, {{"stationId", 2}});
     QCOMPARE(conflict.error, ErrorCode::Conflict);
@@ -754,6 +784,8 @@ void ServiceTest::chargingProgressAndIdempotentStop()
     QCOMPARE(events.first().type, Charging::MessageType::ChargingProgressPush);
     QCOMPARE(events.first().userId, user);
     QCOMPARE(events.first().payload.value("durationSec").toInt(), 61);
+    // origin/admin-client's MonitorPage consumes durationSeconds directly.
+    QCOMPARE(events.first().payload.value("durationSeconds").toInt(), 61);
     QCOMPARE(events.first().payload.value("energyWh").toInt(), 1016);
     QCOMPARE(events.first().payload.value("feeCents").toInt(), 121);
     QCOMPARE(events.first().payload.value("seq").toInt(), 1);
@@ -764,6 +796,7 @@ void ServiceTest::chargingProgressAndIdempotentStop()
     const auto stopped = service.stop(user, Charging::Role::User, stop);
     QVERIFY(stopped.succeeded());
     QCOMPARE(stopped.payload.value("durationSec").toInt(), 62);
+    QCOMPARE(stopped.payload.value("durationSeconds").toInt(), 62);
     QCOMPARE(stopped.payload.value("energyWh").toInt(), 1033);
     QCOMPARE(stopped.payload.value("feeCents").toInt(), 123);
     QCOMPARE(stopped.payload.value("balanceCents").toInt(), 9877);
@@ -1270,6 +1303,44 @@ void ServiceTest::adminControlConflictsAndAudits()
     QVERIFY(query.value(1).isNull());
     QCOMPARE(query.value(2).toInt(), 8);
     QVERIFY(query.value(3).toString().contains("99999"));
+}
+
+void ServiceTest::concurrentIndependentStationUpdates()
+{
+    AdminFixture fixture;
+    QVERIFY(fixture.open());
+    for (int iteration = 0; iteration < 32; ++iteration) {
+        QSemaphore ready, start;
+        const QString name = QString("station-%1").arg(iteration);
+        const QString address = QString("address-%1").arg(iteration);
+        const QString status = iteration % 2 ? "online" : "offline";
+        auto update = [&](QJsonObject payload) {
+            fixture.database.database();
+            ready.release();
+            start.acquire();
+            return AdminService(&fixture.database).execute(1, 1, payload, nullptr);
+        };
+        auto first = std::async(std::launch::async, update, QJsonObject{
+            {"action", "station.update"}, {"stationId", 1}, {"name", name},
+            {"latitude", iteration}, {"priceCentsPerKwh", 100 + iteration}});
+        auto second = std::async(std::launch::async, update, QJsonObject{
+            {"action", "stations.update"}, {"stationId", 1}, {"address", address},
+            {"longitude", -iteration}, {"status", status}});
+        ready.acquire(2);
+        start.release(2);
+        const auto firstResult = first.get();
+        const auto secondResult = second.get();
+        QVERIFY2(firstResult.succeeded(), qPrintable(firstResult.message));
+        QVERIFY2(secondResult.succeeded(), qPrintable(secondResult.message));
+        StationRecord saved;
+        QVERIFY(StationRepository(&fixture.database).findById(1, &saved, &fixture.error));
+        QCOMPARE(saved.name, name);
+        QCOMPARE(saved.address, address);
+        QCOMPARE(saved.latitude, double(iteration));
+        QCOMPARE(saved.longitude, double(-iteration));
+        QCOMPARE(saved.priceCentsPerKwh, 100 + iteration);
+        QCOMPARE(saved.status, status);
+    }
 }
 
 void ServiceTest::adminRemoteStopAndFreeze()

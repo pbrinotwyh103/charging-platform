@@ -286,8 +286,18 @@ ServiceResult AdminService::stations(qint64, quint32, const QJsonObject &payload
         if (!repository.insert(station, &station.id, &error))
             return databaseError();
     }
-    else if (!repository.update(station, &error))
-        return databaseError();
+    else
+    {
+        StationPatch patch;
+        if (payload.contains("name")) patch.name = station.name;
+        if (payload.contains("address")) patch.address = station.address;
+        if (payload.contains("longitude")) patch.longitude = station.longitude;
+        if (payload.contains("latitude")) patch.latitude = station.latitude;
+        if (payload.contains("priceCentsPerKwh")) patch.priceCentsPerKwh = station.priceCentsPerKwh;
+        if (payload.contains("status")) patch.status = station.status;
+        if (!repository.updateFields(station.id, patch, &error))
+            return databaseError();
+    }
     if (!repository.findById(station.id, &station, &error))
         return databaseError();
     ServiceResult result;

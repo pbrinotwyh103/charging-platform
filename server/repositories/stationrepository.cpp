@@ -164,3 +164,36 @@ bool StationRepository::update(const StationRecord &record, QString *error) cons
     }
     return true;
 }
+
+bool StationRepository::updateFields(qint64 stationId, const StationPatch &patch, QString *error) const
+{
+    QStringList assignments;
+    QVariantList values;
+    const auto add = [&](const QString &column, const QVariant &value) {
+        assignments.append(column + "=?");
+        values.append(value);
+    };
+    if (patch.name) add("name", patch.name->trimmed());
+    if (patch.address) add("address", patch.address->trimmed());
+    if (patch.longitude) add("longitude", *patch.longitude);
+    if (patch.latitude) add("latitude", *patch.latitude);
+    if (patch.priceCentsPerKwh) add("price_cents_per_kwh", *patch.priceCentsPerKwh);
+    if (patch.status) add("status", *patch.status);
+    if (assignments.isEmpty()) {
+        if (error) *error = QStringLiteral("未提供充电站更新字段");
+        return false;
+    }
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    query.prepare("UPDATE stations SET " + assignments.join(',')
+        + ",updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?");
+    for (const auto &value : values) query.addBindValue(value);
+    query.addBindValue(stationId);
+    if (!query.exec() || query.numRowsAffected() != 1) {
+        if (error) *error = query.lastError().isValid()
+            ? query.lastError().text() : QStringLiteral("充电站不存在");
+        return false;
+    }
+    return true;
+}
