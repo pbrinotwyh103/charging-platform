@@ -28,9 +28,25 @@ QString stationSelect()
         "SELECT s.id,s.name,s.address,s.longitude,s.latitude,s.price_cents_per_kwh,s.status,"
         "COUNT(p.id),COALESCE(SUM(CASE WHEN p.status='idle' THEN 1 ELSE 0 END),0),"
         "COALESCE(SUM(CASE WHEN p.status NOT IN ('offline','disabled') THEN 1 ELSE 0 END),0),"
-        "s.created_at,s.updated_at FROM stations s "
+        "strftime('%Y-%m-%dT%H:%M:%SZ',s.created_at),strftime('%Y-%m-%dT%H:%M:%SZ',s.updated_at) FROM stations s "
         "LEFT JOIN charging_piles p ON p.station_id=s.id ");
 }
+}
+
+bool StationRepository::count(const QString &status, int *total, QString *error) const
+{
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral("SELECT COUNT(*) FROM stations WHERE (?='' OR status=?)"));
+    query.addBindValue(status.isEmpty() ? QStringLiteral("") : status);
+    query.addBindValue(status);
+    if (!query.exec() || !query.next()) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    if (total) *total = query.value(0).toInt();
+    return true;
 }
 
 bool StationRepository::findById(qint64 stationId, StationRecord *record, QString *error) const
@@ -83,8 +99,8 @@ bool StationRepository::insert(const StationRecord &record, qint64 *stationId,
     if (!db.isValid() || !db.isOpen()) return false;
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
-        "INSERT INTO stations(name,address,longitude,latitude,price_cents_per_kwh,status) "
-        "VALUES(?,?,?,?,?,?)"));
+        "INSERT INTO stations(name,address,longitude,latitude,price_cents_per_kwh,status,created_at,updated_at) "
+        "VALUES(?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%SZ','now'),strftime('%Y-%m-%dT%H:%M:%SZ','now'))"));
     query.addBindValue(record.name.trimmed());
     query.addBindValue(record.address.trimmed());
     query.addBindValue(record.longitude);
@@ -99,6 +115,33 @@ bool StationRepository::insert(const StationRecord &record, qint64 *stationId,
     return true;
 }
 
+bool StationRepository::list(const QString &status, int limit, int offset,
+                             QList<StationRecord> *records,
+                               QString *error) const
+{
+    records->clear();
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    QString sql = stationSelect();
+    if (!status.isEmpty()) sql += QStringLiteral("WHERE s.status=? ");
+    sql += QStringLiteral("GROUP BY s.id ORDER BY s.id LIMIT ? OFFSET ?");
+    query.prepare(sql);
+    if (!status.isEmpty()) query.addBindValue(status);
+    query.addBindValue(qBound(1, limit, 200));
+    query.addBindValue(qMax(0, offset));
+    if (!query.exec()) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    while (query.next()) {
+        StationRecord record;
+        readStation(query, &record);
+        records->append(record);
+    }
+    return true;
+}
+
 bool StationRepository::update(const StationRecord &record, QString *error) const
 {
     QSqlDatabase db = database()->database(error);
@@ -106,7 +149,7 @@ bool StationRepository::update(const StationRecord &record, QString *error) cons
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
         "UPDATE stations SET name=?,address=?,longitude=?,latitude=?,"
-        "price_cents_per_kwh=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?"));
+        "price_cents_per_kwh=?,status=?,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?"));
     query.addBindValue(record.name.trimmed());
     query.addBindValue(record.address.trimmed());
     query.addBindValue(record.longitude);
@@ -114,6 +157,39 @@ bool StationRepository::update(const StationRecord &record, QString *error) cons
     query.addBindValue(record.priceCentsPerKwh);
     query.addBindValue(record.status);
     query.addBindValue(record.id);
+    if (!query.exec() || query.numRowsAffected() != 1) {
+        if (error) *error = query.lastError().isValid()
+            ? query.lastError().text() : QStringLiteral("充电站不存在");
+        return false;
+    }
+    return true;
+}
+
+bool StationRepository::updateFields(qint64 stationId, const StationPatch &patch, QString *error) const
+{
+    QStringList assignments;
+    QVariantList values;
+    const auto add = [&](const QString &column, const QVariant &value) {
+        assignments.append(column + "=?");
+        values.append(value);
+    };
+    if (patch.name) add("name", patch.name->trimmed());
+    if (patch.address) add("address", patch.address->trimmed());
+    if (patch.longitude) add("longitude", *patch.longitude);
+    if (patch.latitude) add("latitude", *patch.latitude);
+    if (patch.priceCentsPerKwh) add("price_cents_per_kwh", *patch.priceCentsPerKwh);
+    if (patch.status) add("status", *patch.status);
+    if (assignments.isEmpty()) {
+        if (error) *error = QStringLiteral("未提供充电站更新字段");
+        return false;
+    }
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    query.prepare("UPDATE stations SET " + assignments.join(',')
+        + ",updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?");
+    for (const auto &value : values) query.addBindValue(value);
+    query.addBindValue(stationId);
     if (!query.exec() || query.numRowsAffected() != 1) {
         if (error) *error = query.lastError().isValid()
             ? query.lastError().text() : QStringLiteral("充电站不存在");

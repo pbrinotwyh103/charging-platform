@@ -109,11 +109,67 @@ void AdminController::requestAdminCommand(const QString &action,
     return;
   }
 
+  // 页面仍使用早期原型中的动作名。这里统一翻译成服务端最终协议，
+  // 同时在 PendingRequest 中保留原动作名，保证页面的加载态和回调无需改写。
+  QString wireAction = normalizedAction;
+  QJsonObject payload = parameters;
+  if (normalizedAction == QStringLiteral("report.summary")) {
+    wireAction = QStringLiteral("dashboard.summary");
+  } else if (normalizedAction == QStringLiteral("report.pileStates")) {
+    wireAction = QStringLiteral("pile.status.summary");
+  } else if (normalizedAction == QStringLiteral("admin.monitor")) {
+    wireAction = QStringLiteral("charging.active.list");
+  } else if (normalizedAction == QStringLiteral("admin.alarms")) {
+    wireAction = QStringLiteral("alarm.list");
+    if (payload.value(QStringLiteral("recovered")).toBool())
+      payload.insert(QStringLiteral("status"), QStringLiteral("resolved"));
+    else if (payload.value(QStringLiteral("handled")).toBool())
+      payload.insert(QStringLiteral("status"), QStringLiteral("acknowledged"));
+    else if (payload.contains(QStringLiteral("handled")) ||
+             payload.contains(QStringLiteral("recovered")))
+      payload.insert(QStringLiteral("status"), QStringLiteral("open"));
+    payload.remove(QStringLiteral("handled"));
+    payload.remove(QStringLiteral("recovered"));
+  } else if (normalizedAction == QStringLiteral("admin.stations")) {
+    wireAction = QStringLiteral("station.list");
+  } else if (normalizedAction == QStringLiteral("admin.stationDetail")) {
+    wireAction = QStringLiteral("station.detail");
+  } else if (normalizedAction == QStringLiteral("admin.piles")) {
+    wireAction = QStringLiteral("pile.list");
+  } else if (normalizedAction == QStringLiteral("admin.users")) {
+    wireAction = QStringLiteral("user.list");
+    payload.insert(QStringLiteral("phoneKeyword"),
+                   payload.take(QStringLiteral("phoneContains")));
+  } else if (normalizedAction == QStringLiteral("orders.list")) {
+    wireAction = QStringLiteral("order.list");
+  } else if (normalizedAction == QStringLiteral("admin.pileControl")) {
+    wireAction = QStringLiteral("piles.control");
+    payload.insert(QStringLiteral("command"),
+                   payload.take(QStringLiteral("action"))
+                       .toString()
+                       .trimmed()
+                       .toLower());
+  } else if (normalizedAction == QStringLiteral("admin.saveStation")) {
+    const QJsonObject input = payload.take(QStringLiteral("input")).toObject();
+    for (auto it = input.constBegin(); it != input.constEnd(); ++it)
+      payload.insert(it.key(), it.value());
+    wireAction = payload.contains(QStringLiteral("stationId"))
+                     ? QStringLiteral("station.update")
+                     : QStringLiteral("station.create");
+  } else if (normalizedAction == QStringLiteral("admin.setUserStatus")) {
+    wireAction = QStringLiteral("users.freeze");
+    payload.insert(
+        QStringLiteral("frozen"),
+        payload.value(QStringLiteral("status"))
+                .toString()
+                .compare(QStringLiteral("FROZEN"), Qt::CaseInsensitive) == 0);
+    payload.remove(QStringLiteral("status"));
+  }
+
   const quint32 previousRequestId =
       m_latestRequestByAction.value(normalizedAction, 0);
   const quint32 requestId = m_connection.nextRequestId();
-  QJsonObject payload = parameters;
-  payload.insert(QStringLiteral("action"), normalizedAction);
+  payload.insert(QStringLiteral("action"), wireAction);
 
   if (previousRequestId != 0) {
     m_pendingRequests.remove(previousRequestId);

@@ -1,4 +1,4 @@
-QT += core network sql concurrent
+QT += core gui network sql concurrent
 CONFIG += console c++17
 CONFIG -= app_bundle
 TEMPLATE = app
@@ -27,6 +27,7 @@ HEADERS += \
     repositories/userrepository.h \
     repositories/walletrepository.h \
     services/adminservice.h \
+    services/adminservicehelpers.h \
     services/alarmservice.h \
     services/authservice.h \
     services/billingservice.h \
@@ -35,6 +36,8 @@ HEADERS += \
     services/pileservice.h \
     services/reservationservice.h \
     services/servicebase.h \
+    services/servicehelpers.h \
+    services/serviceresult.h \
     services/serviceregistry.h \
     services/stationservice.h \
     services/statisticsservice.h \
@@ -62,6 +65,16 @@ SOURCES += \
     repositories/walletrepository.cpp \
     security/passwordhasher.cpp \
     services/authservice.cpp \
+    services/userservice.cpp \
+    services/stationservice.cpp \
+    services/pileservice.cpp \
+    services/reservationservice.cpp \
+    services/orderservice.cpp \
+    services/billingservice.cpp \
+    services/chargingservice.cpp \
+    services/alarmservice.cpp \
+    services/adminservice.cpp \
+    services/statisticsservice.cpp \
     services/serviceregistry.cpp
 
 RESOURCES += resources/database.qrc

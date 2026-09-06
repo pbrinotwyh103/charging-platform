@@ -4,6 +4,7 @@
 
 #include <QList>
 #include <QString>
+#include <optional>
 
 struct UserRecord {
     qint64 id = 0;
@@ -20,6 +21,7 @@ class UserRepository final : public RepositoryBase
 {
 public:
     using RepositoryBase::RepositoryBase;
+    bool count(const QString &phoneKeyword, int *total, QString *error) const;
 
     bool findByPhone(const QString &phone, UserRecord *record, QString *error) const;
     bool findById(qint64 id, UserRecord *record, QString *error) const;
@@ -27,6 +29,8 @@ public:
                       QString *error) const;
     bool updateProfile(qint64 userId, const QString &nickname,
                        const QString &avatarPath, QString *error) const;
+    bool updateProfileFields(qint64 userId, const std::optional<QString> &nickname,
+                             const std::optional<QString> &avatarPath, QString *error) const;
     bool setStatus(qint64 userId, const QString &status, QString *error) const;
     bool search(const QString &phoneKeyword, int limit, int offset,
                 QList<UserRecord> *records, QString *error) const;

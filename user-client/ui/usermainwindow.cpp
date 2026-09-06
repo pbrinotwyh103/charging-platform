@@ -228,9 +228,18 @@ UserMainWindow::UserMainWindow(QWidget *parent)
     });
     connect(m_stationDetailPage, &StationDetailPage::reservationRequested, this,
             [this](const QJsonObject &station, const QJsonObject &pile) {
-        m_chargingPage->setReservation(station, pile);
-        m_pages->setCurrentWidget(m_chargingPage);
-        setConnectionStatus(QStringLiteral("预约成功，已为您锁定电桩15分钟"), true);
+        if (m_demoMode) {
+            m_chargingPage->setReservation(station, pile);
+            m_pages->setCurrentWidget(m_chargingPage);
+            setConnectionStatus(QStringLiteral("预约成功，已为您锁定电桩15分钟"), true);
+            return;
+        }
+        m_pendingStation = station;
+        m_pendingPile = pile;
+        emit reservationRequested(
+            station.value(QStringLiteral("stationId")).toInteger(),
+            pile.value(QStringLiteral("pileId")).toInteger());
+        setConnectionStatus(QStringLiteral("正在向服务端提交预约…"), true);
     });
     root->addWidget(title);
     root->addWidget(subtitle);
@@ -279,6 +288,30 @@ void UserMainWindow::showLoginPage()
 void UserMainWindow::showFeatureMessage(const QString &message)
 {
     m_statusLabel->setText(message);
+}
+
+void UserMainWindow::showReservationCreated(const QJsonObject &reservation)
+{
+    m_pendingPile.insert(QStringLiteral("reservationId"),
+                         reservation.value(QStringLiteral("reservationId")));
+    m_pendingPile.insert(QStringLiteral("expiresAt"),
+                         reservation.value(QStringLiteral("expiresAt")));
+    m_chargingPage->setReservation(m_pendingStation, m_pendingPile);
+    m_pages->setCurrentWidget(m_chargingPage);
+    setConnectionStatus(QStringLiteral("预约成功，电桩已锁定"), true);
+}
+
+void UserMainWindow::showChargingSnapshot(const QJsonObject &snapshot)
+{
+    m_chargingPage->setSnapshot(snapshot);
+    m_pages->setCurrentWidget(m_chargingPage);
+}
+
+void UserMainWindow::showChargingStopped(const QJsonObject &result)
+{
+    m_chargingPage->setSnapshot(result);
+    m_pages->setCurrentWidget(m_chargingPage);
+    setConnectionStatus(QStringLiteral("充电已停止，费用结算完成"), true);
 }
 
 void UserMainWindow::showDemoWorkspace()

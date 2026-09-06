@@ -23,8 +23,26 @@ void readPile(QSqlQuery &query, PileRecord *record)
 QString pileColumns()
 {
     return QStringLiteral("id,station_id,pile_code,charge_type,power_kw,status,"
-                          "total_charge_count,total_charge_seconds,last_heartbeat_at,updated_at");
+                          "total_charge_count,total_charge_seconds,"
+                          "strftime('%Y-%m-%dT%H:%M:%SZ',last_heartbeat_at),strftime('%Y-%m-%dT%H:%M:%SZ',updated_at)");
 }
+}
+
+bool PileRepository::countByStation(qint64 stationId, const QString &status, int *total, QString *error) const
+{
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral("SELECT COUNT(*) FROM charging_piles WHERE station_id=? AND (?='' OR status=?)"));
+    query.addBindValue(stationId);
+    query.addBindValue(status.isEmpty() ? QStringLiteral("") : status);
+    query.addBindValue(status);
+    if (!query.exec() || !query.next()) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    if (total) *total = query.value(0).toInt();
+    return true;
 }
 
 bool PileRepository::findById(qint64 pileId, PileRecord *record, QString *error) const
@@ -71,14 +89,41 @@ bool PileRepository::listByStation(qint64 stationId, const QString &status,
     return true;
 }
 
+bool PileRepository::listByStation(qint64 stationId, const QString &status, int limit, int offset,
+                                   QList<PileRecord> *records, QString *error) const
+{
+    records->clear();
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    QString sql = QStringLiteral("SELECT %1 FROM charging_piles WHERE station_id=?").arg(pileColumns());
+    if (!status.isEmpty()) sql += QStringLiteral(" AND status=?");
+    sql += QStringLiteral(" ORDER BY pile_code LIMIT ? OFFSET ?");
+    query.prepare(sql);
+    query.addBindValue(stationId);
+    if (!status.isEmpty()) query.addBindValue(status);
+    query.addBindValue(qBound(1, limit, 200));
+    query.addBindValue(qMax(0, offset));
+    if (!query.exec()) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    while (query.next()) {
+        PileRecord record;
+        readPile(query, &record);
+        records->append(record);
+    }
+    return true;
+}
+
 bool PileRepository::insert(const PileRecord &record, qint64 *pileId, QString *error) const
 {
     QSqlDatabase db = database()->database(error);
     if (!db.isValid() || !db.isOpen()) return false;
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
-        "INSERT INTO charging_piles(station_id,pile_code,charge_type,power_kw,status) "
-        "VALUES(?,?,?,?,?)"));
+        "INSERT INTO charging_piles(station_id,pile_code,charge_type,power_kw,status,updated_at) "
+        "VALUES(?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%SZ','now'))"));
     query.addBindValue(record.stationId);
     query.addBindValue(record.pileCode.trimmed());
     query.addBindValue(record.chargeType);
@@ -99,7 +144,7 @@ bool PileRepository::updateStatus(qint64 pileId, const QString &expectedStatus,
     if (!db.isValid() || !db.isOpen()) return false;
     QSqlQuery query(db);
     QString sql = QStringLiteral(
-        "UPDATE charging_piles SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?");
+        "UPDATE charging_piles SET status=?,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?");
     if (!expectedStatus.isEmpty()) sql += QStringLiteral(" AND status=?");
     query.prepare(sql);
     query.addBindValue(newStatus);
@@ -119,8 +164,8 @@ bool PileRepository::updateHeartbeat(qint64 pileId, QString *error) const
     if (!db.isValid() || !db.isOpen()) return false;
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
-        "UPDATE charging_piles SET last_heartbeat_at=CURRENT_TIMESTAMP,"
-        "updated_at=CURRENT_TIMESTAMP WHERE id=?"));
+        "UPDATE charging_piles SET last_heartbeat_at=strftime('%Y-%m-%dT%H:%M:%SZ','now'),"
+        "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?"));
     query.addBindValue(pileId);
     if (!query.exec() || query.numRowsAffected() != 1) {
         if (error) *error = query.lastError().isValid()

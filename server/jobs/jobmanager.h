@@ -14,8 +14,10 @@ public:
 signals:
     void heartbeatTick();
     void chargingTick();
+    void reservationExpiryTick();
 
 private:
     QTimer m_heartbeatTimer;
     QTimer m_chargingTimer;
+    QTimer m_reservationExpiryTimer;
 };

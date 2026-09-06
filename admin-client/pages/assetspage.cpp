@@ -552,24 +552,12 @@ void AssetsPage::requestStations(int page) {
 
 void AssetsPage::requestPiles(int page) {
   const QString selectedStatus = m_pileStatusFilter->currentData().toString();
-  QString state;
-  if (selectedStatus == QStringLiteral("charging") ||
-      selectedStatus == QStringLiteral("reserved")) {
-    state = QStringLiteral("IN_USE");
-  } else if (selectedStatus == QStringLiteral("fault") ||
-             selectedStatus == QStringLiteral("disabled")) {
-    state = QStringLiteral("FAULT");
-  } else if (selectedStatus == QStringLiteral("offline")) {
-    state = QStringLiteral("OFFLINE");
-  } else if (selectedStatus == QStringLiteral("idle")) {
-    state = QStringLiteral("IDLE");
-  }
   emit commandRequested(
       QStringLiteral("admin.piles"),
       {{QStringLiteral("page"), page},
        {QStringLiteral("pageSize"), 15},
        {QStringLiteral("stationId"), m_pileStationFilter->currentData().toInt()},
-       {QStringLiteral("state"), state}});
+       {QStringLiteral("status"), selectedStatus}});
 }
 
 void AssetsPage::updateStationSelection() {

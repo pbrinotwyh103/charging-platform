@@ -22,14 +22,36 @@ QString ClientSession::peerDescription() const
         .arg(m_socket->peerPort());
 }
 
-void ClientSession::send(Charging::MessageType type,
+bool ClientSession::send(Charging::MessageType type,
                          quint32 requestId,
                          const QJsonObject &payload,
                          Charging::ErrorCode status)
 {
     if (m_socket->state() == QAbstractSocket::ConnectedState) {
-        m_socket->write(Charging::PacketCodec::encode(type, requestId, payload, status));
+        auto packet = Charging::PacketCodec::encode(type, requestId, payload, status);
+        // Check the final UTF-8 envelope, including dispatcher-added fields and
+        // JSON escaping, at the common exit used by responses and all pushes.
+        if (packet.size() - Charging::MessageHeader::SerializedSize
+            > Charging::MessageHeader::MaxPayloadLength) {
+            switch (type) {
+            case Charging::MessageType::ChargingProgressPush:
+            case Charging::MessageType::ChargingStoppedPush:
+            case Charging::MessageType::AlarmPush:
+            case Charging::MessageType::DeviceStatusPush:
+                return false; // ServerApplication records this failed delivery.
+            default:
+                // Never echo any field from the oversized payload or recurse
+                // through send: this fixed error envelope is bounded itself.
+                packet = Charging::PacketCodec::encode(type, requestId,
+                    {{QStringLiteral("message"), QStringLiteral("响应内容超过通信限制")},
+                     {QStringLiteral("reason"), QStringLiteral("response_too_large")}},
+                    Charging::ErrorCode::InternalError);
+                break;
+            }
+        }
+        return m_socket->write(packet) == packet.size();
     }
+    return false;
 }
 
 void ClientSession::close()
@@ -75,9 +97,15 @@ QString ClientSession::sessionId() const
     return m_sessionId;
 }
 
+quint64 ClientSession::authenticationGeneration() const
+{
+    return m_authenticationGeneration;
+}
+
 void ClientSession::authenticate(Charging::Role role, qint64 principalId,
                                  const QString &identity)
 {
+    ++m_authenticationGeneration;
     m_role = role;
     m_principalId = principalId;
     m_identity = identity;
@@ -86,6 +114,8 @@ void ClientSession::authenticate(Charging::Role role, qint64 principalId,
 
 void ClientSession::clearAuthentication()
 {
+    // Even anonymous -> anonymous invalidates every earlier login attempt.
+    ++m_authenticationGeneration;
     m_role = Charging::Role::Anonymous;
     m_principalId = 0;
     m_identity.clear();

@@ -1,4 +1,5 @@
 #include "protocol/packetcodec.h"
+#include "../server/services/serviceresult.h"
 
 #include <QJsonObject>
 #include <QtTest>
@@ -15,6 +16,8 @@ private slots:
     void unsupportedVersion();
     void oversizedPayload();
     void invalidJsonPayload();
+    void businessProtocolRoundTrip();
+    void serviceResultSucceedsOnlyForSuccess();
 };
 
 void ProtocolTest::roundTrip()
@@ -90,6 +93,35 @@ void ProtocolTest::invalidJsonPayload()
     const Charging::DecodeResult result = Charging::PacketCodec::tryDecode(buffer);
     QCOMPARE(result.status, Charging::DecodeStatus::Invalid);
     QVERIFY(result.error.contains(QStringLiteral("JSON")));
+}
+
+void ProtocolTest::businessProtocolRoundTrip()
+{
+    QCOMPARE(static_cast<quint16>(Charging::MessageType::WalletRechargeRequest), quint16(1100));
+    QCOMPARE(static_cast<quint16>(Charging::MessageType::ReservationCancelResponse), quint16(3041));
+
+    QByteArray buffer = Charging::PacketCodec::encode(
+        Charging::MessageType::WalletRechargeResponse,
+        86,
+        {{QStringLiteral("reason"), QStringLiteral("insufficient_balance")}},
+        Charging::ErrorCode::Conflict);
+
+    const Charging::DecodeResult result = Charging::PacketCodec::tryDecode(buffer);
+    QCOMPARE(result.status, Charging::DecodeStatus::Complete);
+    QCOMPARE(result.message.header.requestId, quint32(86));
+    QCOMPARE(result.message.header.statusCode, Charging::ErrorCode::Conflict);
+    QCOMPARE(result.message.payload.value(QStringLiteral("reason")).toString(),
+             QStringLiteral("insufficient_balance"));
+    QVERIFY(buffer.isEmpty());
+}
+
+void ProtocolTest::serviceResultSucceedsOnlyForSuccess()
+{
+    ServiceResult result;
+    QVERIFY(result.succeeded());
+
+    result.error = Charging::ErrorCode::Conflict;
+    QVERIFY(!result.succeeded());
 }
 
 QTEST_APPLESS_MAIN(ProtocolTest)

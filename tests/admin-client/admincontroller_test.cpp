@@ -168,7 +168,7 @@ void AdminControllerTest::loginAndCommandRoundTrip() {
   QCOMPARE(server.commandCount(), 1);
   QCOMPARE(
       server.commandAt(0).payload.value(QStringLiteral("action")).toString(),
-      QStringLiteral("report.summary"));
+      QStringLiteral("dashboard.summary"));
   QCOMPARE(
       server.commandAt(0).payload.value(QStringLiteral("scope")).toString(),
       QStringLiteral("all"));
@@ -218,6 +218,12 @@ void AdminControllerTest::serviceErrorCodeIsPreserved() {
        {QStringLiteral("action"), QStringLiteral("RESTART")},
        {QStringLiteral("reason"), QStringLiteral("测试操作")}});
   QTRY_COMPARE_WITH_TIMEOUT(server.commandCount(), 1, 3'000);
+  QCOMPARE(
+      server.commandAt(0).payload.value(QStringLiteral("action")).toString(),
+      QStringLiteral("piles.control"));
+  QCOMPARE(
+      server.commandAt(0).payload.value(QStringLiteral("command")).toString(),
+      QStringLiteral("restart"));
   server.respondToCommand(
       0, {{QStringLiteral("message"), QStringLiteral("权限不足")}},
       Charging::ErrorCode::Forbidden);

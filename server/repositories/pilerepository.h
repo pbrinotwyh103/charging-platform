@@ -22,6 +22,9 @@ class PileRepository final : public RepositoryBase
 {
 public:
     using RepositoryBase::RepositoryBase;
+    bool listByStation(qint64 stationId, const QString &status, int limit, int offset,
+                       QList<PileRecord> *records, QString *error) const;
+    bool countByStation(qint64 stationId, const QString &status, int *total, QString *error) const;
 
     bool findById(qint64 pileId, PileRecord *record, QString *error) const;
     bool listByStation(qint64 stationId, const QString &status,

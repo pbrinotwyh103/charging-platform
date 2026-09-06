@@ -6,7 +6,14 @@
 #include <QSqlQuery>
 #include <QVariant>
 
-namespace {
+namespace
+{
+QString alarmColumns()
+{
+    return QStringLiteral("id,pile_id,order_id,alarm_type,severity,message,status,"
+                          "strftime('%Y-%m-%dT%H:%M:%SZ',occurred_at),strftime('%Y-%m-%dT%H:%M:%SZ',"
+                          "recovered_at),handled_by_admin_id");
+}
 void readAlarm(QSqlQuery &query, AlarmRecord *record)
 {
     record->id = query.value(0).toLongLong();
@@ -20,52 +27,97 @@ void readAlarm(QSqlQuery &query, AlarmRecord *record)
     record->recoveredAt = query.value(8).toString();
     record->handledByAdminId = query.value(9).toLongLong();
 }
-}
+} // namespace
 
-bool AlarmRepository::insert(const AlarmRecord &record, qint64 *alarmId,
-                             QString *error) const
+bool AlarmRepository::count(const QString &status, int *total, QString *error) const
 {
     QSqlDatabase db = database()->database(error);
-    if (!db.isValid() || !db.isOpen()) return false;
+    if (!db.isValid() || !db.isOpen())
+        return false;
     QSqlQuery query(db);
-    query.prepare(QStringLiteral(
-        "INSERT INTO alarms(pile_id,order_id,alarm_type,severity,message,status) "
-        "VALUES(?,?,?,?,?,?)"));
+    query.prepare(QStringLiteral("SELECT COUNT(*) FROM alarms WHERE (?='' OR status=?)"));
+    query.addBindValue(status.isEmpty() ? QStringLiteral("") : status);
+    query.addBindValue(status);
+    if (!query.exec() || !query.next())
+    {
+        if (error)
+            *error = query.lastError().text();
+        return false;
+    }
+    *total = query.value(0).toInt();
+    return true;
+}
+
+bool AlarmRepository::findById(qint64 alarmId, AlarmRecord *record, QString *error) const
+{
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen())
+        return false;
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral("SELECT %1 FROM alarms WHERE id=?").arg(alarmColumns()));
+    query.addBindValue(alarmId);
+    if (!query.exec())
+    {
+        if (error)
+            *error = query.lastError().text();
+        return false;
+    }
+    *record = {};
+    if (query.next())
+        readAlarm(query, record);
+    return true;
+}
+
+bool AlarmRepository::insert(const AlarmRecord &record, qint64 *alarmId, QString *error) const
+{
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen())
+        return false;
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral("INSERT INTO alarms(pile_id,order_id,alarm_type,severity,message,status) "
+                                 "VALUES(?,?,?,?,?,?)"));
     query.addBindValue(record.pileId > 0 ? QVariant(record.pileId) : QVariant());
     query.addBindValue(record.orderId > 0 ? QVariant(record.orderId) : QVariant());
     query.addBindValue(record.alarmType);
     query.addBindValue(record.severity);
     query.addBindValue(record.message);
     query.addBindValue(record.status.isEmpty() ? QStringLiteral("open") : record.status);
-    if (!query.exec()) {
-        if (error) *error = query.lastError().text();
+    if (!query.exec())
+    {
+        if (error)
+            *error = query.lastError().text();
         return false;
     }
-    if (alarmId) *alarmId = query.lastInsertId().toLongLong();
+    if (alarmId)
+        *alarmId = query.lastInsertId().toLongLong();
     return true;
 }
 
-bool AlarmRepository::list(const QString &status, int limit, int offset,
-                           QList<AlarmRecord> *records, QString *error) const
+bool AlarmRepository::list(const QString &status, int limit, int offset, QList<AlarmRecord> *records,
+                           QString *error) const
 {
     records->clear();
     QSqlDatabase db = database()->database(error);
-    if (!db.isValid() || !db.isOpen()) return false;
+    if (!db.isValid() || !db.isOpen())
+        return false;
     QSqlQuery query(db);
-    QString sql = QStringLiteral(
-        "SELECT id,pile_id,order_id,alarm_type,severity,message,status,occurred_at,"
-        "recovered_at,handled_by_admin_id FROM alarms");
-    if (!status.isEmpty()) sql += QStringLiteral(" WHERE status=?");
+    QString sql = QStringLiteral("SELECT %1 FROM alarms").arg(alarmColumns());
+    if (!status.isEmpty())
+        sql += QStringLiteral(" WHERE status=?");
     sql += QStringLiteral(" ORDER BY occurred_at DESC,id DESC LIMIT ? OFFSET ?");
     query.prepare(sql);
-    if (!status.isEmpty()) query.addBindValue(status);
+    if (!status.isEmpty())
+        query.addBindValue(status);
     query.addBindValue(qBound(1, limit, 200));
     query.addBindValue(qMax(0, offset));
-    if (!query.exec()) {
-        if (error) *error = query.lastError().text();
+    if (!query.exec())
+    {
+        if (error)
+            *error = query.lastError().text();
         return false;
     }
-    while (query.next()) {
+    while (query.next())
+    {
         AlarmRecord record;
         readAlarm(query, &record);
         records->append(record);
@@ -73,27 +125,74 @@ bool AlarmRepository::list(const QString &status, int limit, int offset,
     return true;
 }
 
-bool AlarmRepository::updateStatus(qint64 alarmId, const QString &status,
-                                   qint64 adminId, QString *error) const
+bool AlarmRepository::visitSnapshot(const QString &status,
+                                    const std::function<bool(const AlarmRecord &)> &visitor,
+                                    QString *error) const
 {
-    if (status != QStringLiteral("acknowledged") && status != QStringLiteral("resolved")) {
-        if (error) *error = QStringLiteral("无效的告警状态");
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen())
+        return false;
+    QSqlQuery query(db);
+    query.setForwardOnly(true);
+    QString sql = QStringLiteral("SELECT %1 FROM alarms").arg(alarmColumns());
+    if (!status.isEmpty())
+        sql += QStringLiteral(" WHERE status=?");
+    sql += QStringLiteral(" ORDER BY julianday(occurred_at) DESC,id DESC");
+    query.prepare(sql);
+    if (!status.isEmpty())
+        query.addBindValue(status);
+    if (!query.exec())
+    {
+        if (error)
+            *error = query.lastError().text();
+        return false;
+    }
+    while (query.next())
+    {
+        AlarmRecord record;
+        readAlarm(query, &record);
+        if (!visitor(record))
+        {
+            if (error)
+                *error = QStringLiteral("告警快照读取已中止");
+            return false;
+        }
+    }
+    if (query.lastError().isValid())
+    {
+        if (error)
+            *error = query.lastError().text();
+        return false;
+    }
+    return true;
+}
+
+bool AlarmRepository::updateStatus(qint64 alarmId, const QString &status, qint64 adminId,
+                                   QString *error) const
+{
+    if (status != QStringLiteral("acknowledged") && status != QStringLiteral("resolved"))
+    {
+        if (error)
+            *error = QStringLiteral("无效的告警状态");
         return false;
     }
     QSqlDatabase db = database()->database(error);
-    if (!db.isValid() || !db.isOpen()) return false;
+    if (!db.isValid() || !db.isOpen())
+        return false;
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
         "UPDATE alarms SET status=?,handled_by_admin_id=?,"
-        "recovered_at=CASE WHEN ?='resolved' THEN CURRENT_TIMESTAMP ELSE recovered_at END "
+        "recovered_at=CASE WHEN ?='resolved' THEN strftime('%Y-%m-%dT%H:%M:%SZ','now') ELSE recovered_at END "
         "WHERE id=? AND status!='resolved'"));
     query.addBindValue(status);
     query.addBindValue(adminId > 0 ? QVariant(adminId) : QVariant());
     query.addBindValue(status);
     query.addBindValue(alarmId);
-    if (!query.exec() || query.numRowsAffected() != 1) {
-        if (error) *error = query.lastError().isValid()
-            ? query.lastError().text() : QStringLiteral("告警不存在或已经关闭");
+    if (!query.exec() || query.numRowsAffected() != 1)
+    {
+        if (error)
+            *error = query.lastError().isValid() ? query.lastError().text()
+                                                 : QStringLiteral("告警不存在或已经关闭");
         return false;
     }
     return true;

@@ -21,7 +21,10 @@ bool ServiceRegistry::initialize(DatabaseManager *database, QString *error)
     m_alarms.setDatabase(database);
     m_statistics.setDatabase(database);
     m_admin.setDatabase(database);
-    return m_auth.initialize(error);
+    if (!m_auth.initialize(error)) return false;
+    const auto restored = m_charging.restore();
+    if (!restored.succeeded() && error) *error = restored.message;
+    return restored.succeeded();
 }
 
 bool ServiceRegistry::isInitialized() const

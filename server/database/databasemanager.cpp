@@ -247,7 +247,7 @@ bool DatabaseManager::configureConnection(QSqlDatabase &db, QString *error) cons
 
 bool DatabaseManager::executeScript(QSqlDatabase &db,
                                     const QString &resourcePath,
-                                    QString *error) const
+                                    QString *error, int migrationVersion) const
 {
     QFile file(resourcePath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
@@ -281,6 +281,18 @@ bool DatabaseManager::executeScript(QSqlDatabase &db,
             return false;
         }
     }
+    // Version recording shares the DDL transaction, so an interrupted migration
+    // cannot leave an added column behind with an old version number.
+    if (migrationVersion > 0) {
+        QSqlQuery record(db);
+        record.prepare(QStringLiteral("INSERT INTO schema_version(version) VALUES(?)"));
+        record.addBindValue(migrationVersion);
+        if (!record.exec()) {
+            db.rollback();
+            if (error) *error = record.lastError().text();
+            return false;
+        }
+    }
     if (!db.commit()) {
         if (error) *error = db.lastError().text();
         return false;
@@ -292,7 +304,9 @@ bool DatabaseManager::applyMigrations(QSqlDatabase &db, QString *error) const
 {
     struct Migration { int version; const char *resource; };
     const Migration migrations[] = {
-        {3, ":/database/migrations/003_repository_indexes.sql"}
+        {3, ":/database/migrations/003_repository_indexes.sql"},
+        {4, ":/database/migrations/004_charging_push_sequence.sql"},
+        {5, ":/database/migrations/005_wallet_transaction_namespaces.sql"}
     };
 
     QSqlQuery versionQuery(db);
@@ -302,16 +316,11 @@ bool DatabaseManager::applyMigrations(QSqlDatabase &db, QString *error) const
         return false;
     }
     int currentVersion = versionQuery.value(0).toInt();
+    // Table-rebuilding migrations need every schema reader finalized first.
+    versionQuery.finish();
     for (const Migration &migration : migrations) {
         if (migration.version <= currentVersion) continue;
-        if (!executeScript(db, QString::fromLatin1(migration.resource), error)) {
-            return false;
-        }
-        QSqlQuery record(db);
-        record.prepare(QStringLiteral("INSERT INTO schema_version(version) VALUES(?)"));
-        record.addBindValue(migration.version);
-        if (!record.exec()) {
-            if (error) *error = record.lastError().text();
+        if (!executeScript(db, QString::fromLatin1(migration.resource), error, migration.version)) {
             return false;
         }
         currentVersion = migration.version;
