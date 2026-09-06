@@ -98,14 +98,16 @@ void BusinessIntegrationTest::connectClient(ClientConnection &client)
 }
 
 Message BusinessIntegrationTest::take(QSignalSpy &spy, MessageType type,
-                                      quint32 requestId, int timeout)
+                                      quint32 requestId, int timeout,
+                                      const std::function<bool(const Message &)> &matches)
 {
     QElapsedTimer timer;
     timer.start();
     do {
         for (qsizetype i = 0; i < spy.size(); ++i) {
             const auto message = qvariant_cast<Message>(spy.at(i).at(0));
-            if (message.header.requestId == requestId && message.header.messageType == type) {
+            if (message.header.requestId == requestId && message.header.messageType == type
+                && (!matches || matches(message))) {
                 spy.removeAt(i);
                 return message;
             }
@@ -295,13 +297,31 @@ void BusinessIntegrationTest::userWorkflowAndPushes()
     QSignalSpy userPush(&user, &ClientConnection::messageReceived), secondPush(&secondSession, &ClientConnection::messageReceived),
         adminPush(&admin, &ClientConnection::messageReceived), otherPush(&otherUser, &ClientConnection::messageReceived),
         anonymousPush(&anonymous, &ClientConnection::messageReceived);
-    const auto progress = take(userPush, MessageType::ChargingProgressPush, 0);
+    // The server's global timer can first sample a newly started order at age
+    // zero. Wait for elapsed charging, then compare that same seq on each peer.
+    Message progress;
+    qint64 previousSequence = started.value("seq").toInteger();
+    QElapsedTimer progressDeadline;
+    progressDeadline.start();
+    do {
+        const int remaining = 3000 - int(progressDeadline.elapsed());
+        QVERIFY2(remaining > 0, "Charging progress did not reach one elapsed second");
+        progress = take(userPush, MessageType::ChargingProgressPush, 0, remaining,
+            [&](const Message &message) { return message.payload.value("orderId") == orderId; });
+        const auto sequence = progress.payload.value("seq").toInteger();
+        QVERIFY(sequence > previousSequence);
+        previousSequence = sequence;
+    } while (progress.payload.value("durationSec").toInt() < 1);
     QCOMPARE(progress.payload.value("orderId"), orderId);
     QVERIFY(progress.payload.value("seq").toInt() > 0);
     QVERIFY(progress.payload.value("durationSec").toInt() >= 1);
     QVERIFY(progress.payload.value("powerKw").toDouble() > 0);
-    QCOMPARE(take(adminPush, MessageType::ChargingProgressPush, 0).payload, progress.payload);
-    QCOMPARE(take(secondPush, MessageType::ChargingProgressPush, 0).payload, progress.payload);
+    const auto sameProgress = [&](const Message &message) {
+        return message.payload.value("orderId") == orderId
+            && message.payload.value("seq") == progress.payload.value("seq");
+    };
+    QCOMPARE(take(adminPush, MessageType::ChargingProgressPush, 0, 3000, sameProgress).payload, progress.payload);
+    QCOMPARE(take(secondPush, MessageType::ChargingProgressPush, 0, 3000, sameProgress).payload, progress.payload);
     const auto stopped = request(user, MessageType::ChargingStopRequest, MessageType::ChargingStopResponse, {{"orderId", orderId}}).payload;
     QCOMPARE(stopped.value("status").toString(), QString("completed"));
     QCOMPARE(stopped.value("stopReason").toString(), QString("user_stop"));

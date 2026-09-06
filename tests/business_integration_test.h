@@ -4,6 +4,7 @@
 #include "network/clientconnection.h"
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <functional>
 #include <memory>
 
 class BusinessIntegrationTest final : public QObject
@@ -46,7 +47,8 @@ private:
     Charging::Message login(Charging::ClientConnection &client, const QString &phone = "13800138801");
     Charging::Message loginAdmin(Charging::ClientConnection &client);
     Charging::Message take(QSignalSpy &spy, Charging::MessageType type,
-                           quint32 requestId, int timeout = 3000);
+                           quint32 requestId, int timeout = 3000,
+                           const std::function<bool(const Charging::Message &)> &matches = {});
     QVariant sql(const QString &statement);
     void triggerJob(const char *signal);
 
