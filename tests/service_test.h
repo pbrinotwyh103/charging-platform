@@ -33,6 +33,14 @@ private slots:
     void directOrderCannotBypassActiveReservation();
     void reservationContentionWaitsBeforeReading();
     void simultaneousDirectOrderAndReservation();
+    void chargingProgressAndIdempotentStop();
+    void chargingAutomaticStops();
+    void chargingSettlementRetryAndAlarmDeduplication();
+    void chargingRestoreAndPersistedProgress();
+    void chargingValidationAndOwnership();
+    void chargingStartRechecksEligibilityAtWrite();
+    void chargingRestoreUnavailablePile();
+    void chargingProgressFailureDoesNotPublish();
 private:
     qint64 createUser(const QString &phone);
     QTemporaryDir m_directory;

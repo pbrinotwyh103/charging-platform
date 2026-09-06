@@ -13,6 +13,9 @@ SOURCES += service_test.cpp \
     ../server/services/reservationservice.cpp \
     ../server/services/orderservice.cpp \
     ../server/services/billingservice.cpp \
+    ../server/services/chargingservice.cpp \
+    ../server/services/alarmservice.cpp \
+    ../server/repositories/alarmrepository.cpp \
     ../server/database/databasemanager.cpp \
     ../server/repositories/userrepository.cpp \
     ../server/repositories/walletrepository.cpp \

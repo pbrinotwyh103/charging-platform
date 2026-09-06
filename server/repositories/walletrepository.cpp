@@ -210,9 +210,10 @@ bool WalletRepository::settleOrder(const QString &recordNo, qint64 orderId,
     }
     QSqlQuery release(db);
     release.prepare(QStringLiteral(
-        "UPDATE charging_piles SET status='idle',total_charge_count=total_charge_count+1,"
+        "UPDATE charging_piles SET status=CASE WHEN status IN ('charging','fault','offline') "
+        "THEN 'idle' ELSE status END,total_charge_count=total_charge_count+1,"
         "total_charge_seconds=total_charge_seconds+?,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') "
-        "WHERE id=? AND (status='charging' OR (?='fault_stopped' AND status IN ('fault','offline')))"));
+        "WHERE id=? AND (status='charging' OR ?='fault_stopped')"));
     release.addBindValue(qMax<qint64>(0, durationSeconds));
     release.addBindValue(pileId);
     release.addBindValue(finalStatus);

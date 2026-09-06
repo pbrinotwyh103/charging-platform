@@ -120,6 +120,21 @@ bool OrderRepository::createChargingOrder(const QString &orderNo, qint64 userId,
                                                          : QStringLiteral("电桩状态已变化"), error);
     }
     QSqlQuery insert(db);
+    // Recheck eligibility under the transaction's write ownership, including
+    // state changed at the pile/reservation write boundary.
+    QSqlQuery eligibility(db);
+    eligibility.prepare(QStringLiteral(
+        "SELECT u.status,u.balance_cents,s.status FROM users u "
+        "JOIN charging_piles p ON p.id=? JOIN stations s ON s.id=p.station_id WHERE u.id=?"));
+    eligibility.addBindValue(pileId);
+    eligibility.addBindValue(userId);
+    if (!eligibility.exec() || !eligibility.next()) return rollback(db, eligibility.lastError().text(), error);
+    if (eligibility.value(0).toString() != QStringLiteral("normal"))
+        return rollback(db, QStringLiteral("user_frozen"), error);
+    if (eligibility.value(1).toLongLong() <= 0)
+        return rollback(db, QStringLiteral("insufficient_balance"), error);
+    if (eligibility.value(2).toString() != QStringLiteral("online"))
+        return rollback(db, QStringLiteral("station_unavailable"), error);
     insert.prepare(QStringLiteral(
         "INSERT INTO charging_orders(order_no,user_id,station_id,pile_id,reservation_id,"
         "status,started_at,unit_price_cents,created_at,updated_at) "

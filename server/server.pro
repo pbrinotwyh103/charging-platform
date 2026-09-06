@@ -70,6 +70,8 @@ SOURCES += \
     services/reservationservice.cpp \
     services/orderservice.cpp \
     services/billingservice.cpp \
+    services/chargingservice.cpp \
+    services/alarmservice.cpp \
     services/serviceregistry.cpp
 
 RESOURCES += resources/database.qrc
