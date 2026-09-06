@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QJsonArray>
 #include <QJsonObject>
 
 class QLabel;
@@ -28,6 +29,7 @@ public slots:
     void showProfile(const QJsonObject &profile);
     void showLoginPage();
     void showFeatureMessage(const QString &message);
+    void showDemoWorkspace();
 
 signals:
     void connectionRequested(const QString &host, quint16 port);
@@ -47,4 +49,6 @@ private:
     ChargingPage *m_chargingPage = nullptr;
     ProfilePage *m_profilePage = nullptr;
     StationDetailPage *m_stationDetailPage = nullptr;
+    bool m_demoMode = false;
+    QJsonArray m_demoStations;
 };

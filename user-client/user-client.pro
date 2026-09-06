@@ -15,7 +15,7 @@ HEADERS += \
     pages/chargingpage.h \
     pages/profilepage.h \
     pages/stationutils.h \
-    pages/stationdetailpage.h
+    pages/stationdetailpage.h \
     map/mapnavigator.h
 
 SOURCES += \
@@ -28,5 +28,5 @@ SOURCES += \
     pages/chargingpage.cpp \
     pages/profilepage.cpp \
     pages/stationutils.cpp \
-    pages/stationdetailpage.cpp
+    pages/stationdetailpage.cpp \
     map/mapnavigator.cpp

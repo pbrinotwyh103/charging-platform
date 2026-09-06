@@ -63,6 +63,9 @@ cd ~/charging-platform/build
 ./bin/protocol_tests -v1
 ./bin/phase1_tests -v1
 ./bin/database_repository_tests -v1
+QT_QPA_PLATFORM=offscreen ./bin/user_ui_tests -v1
+./bin/admin_controller_tests -v1
+QT_QPA_PLATFORM=offscreen ./bin/admin_ui_tests -v1
 ```
 
 或在项目根目录执行 `bash ./scripts/run-tests.sh`。
@@ -82,6 +85,17 @@ cd ~/charging-platform/build
 cd ~/charging-platform/build
 ./bin/charging_user_client
 ```
+
+明天演示时可直接启动用户端完整体验模式，不依赖尚未完成的业务接口：
+
+```bash
+./bin/charging_user_client --demo
+```
+
+演示顺序为“搜索附近站点 → 查看电桩 → 收藏或导航 → 预约 → 开始充电 →
+观察实时电量/功率/费用 → 停止并结算”。“我的”页面还可演示头像与昵称维护、
+钱包充值、充值记录和常用站点。页面会明确标注演示数据，服务端到位后仍沿用
+相同的页面和信号入口接入真实响应。
 
 ```bash
 cd ~/charging-platform/build

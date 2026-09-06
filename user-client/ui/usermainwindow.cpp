@@ -5,6 +5,7 @@
 #include "pages/chargingpage.h"
 #include "pages/profilepage.h"
 #include "pages/stationdetailpage.h"
+#include "map/mapnavigator.h"
 
 #include <QFormLayout>
 #include <QGroupBox>
@@ -19,12 +20,58 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+namespace {
+QJsonArray demoStations()
+{
+    return {
+        QJsonObject{{"stationId", 101}, {"name", QStringLiteral("人民广场超级充电站")},
+                    {"address", QStringLiteral("黄浦区西藏中路268号")}, {"latitude", 31.2323},
+                    {"longitude", 121.4751}, {"priceCentsPerKwh", 168}, {"totalPiles", 18},
+                    {"availablePiles", 7}, {"distanceKm", 0.8}, {"favorited", true}},
+        QJsonObject{{"stationId", 102}, {"name", QStringLiteral("静安大悦城充电站")},
+                    {"address", QStringLiteral("静安区西藏北路198号")}, {"latitude", 31.2487},
+                    {"longitude", 121.4692}, {"priceCentsPerKwh", 142}, {"totalPiles", 12},
+                    {"availablePiles", 4}, {"distanceKm", 2.4}, {"favorited", false}},
+        QJsonObject{{"stationId", 103}, {"name", QStringLiteral("陆家嘴中心充电站")},
+                    {"address", QStringLiteral("浦东新区浦东南路899号")}, {"latitude", 31.2397},
+                    {"longitude", 121.5056}, {"priceCentsPerKwh", 186}, {"totalPiles", 24},
+                    {"availablePiles", 11}, {"distanceKm", 3.6}, {"favorited", false}},
+        QJsonObject{{"stationId", 104}, {"name", QStringLiteral("徐家汇绿色能源站")},
+                    {"address", QStringLiteral("徐汇区虹桥路1号")}, {"latitude", 31.1952},
+                    {"longitude", 121.4368}, {"priceCentsPerKwh", 135}, {"totalPiles", 16},
+                    {"availablePiles", 2}, {"distanceKm", 5.7}, {"favorited", false}}
+    };
+}
+
+QJsonArray demoPiles(qint64 stationId)
+{
+    const QString prefix = QStringLiteral("SH-%1-").arg(stationId);
+    return {
+        QJsonObject{{"pileId", stationId * 100 + 1}, {"pileCode", prefix + QStringLiteral("01")},
+                    {"type", QStringLiteral("fast")}, {"powerKw", 60.0}, {"status", QStringLiteral("available")}},
+        QJsonObject{{"pileId", stationId * 100 + 2}, {"pileCode", prefix + QStringLiteral("02")},
+                    {"type", QStringLiteral("fast")}, {"powerKw", 120.0}, {"status", QStringLiteral("charging")}},
+        QJsonObject{{"pileId", stationId * 100 + 3}, {"pileCode", prefix + QStringLiteral("03")},
+                    {"type", QStringLiteral("slow")}, {"powerKw", 7.0}, {"status", QStringLiteral("available")}},
+        QJsonObject{{"pileId", stationId * 100 + 4}, {"pileCode", prefix + QStringLiteral("04")},
+                    {"type", QStringLiteral("fast")}, {"powerKw", 60.0}, {"status", QStringLiteral("fault")}}
+    };
+}
+}
+
 UserMainWindow::UserMainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
     setWindowTitle(QStringLiteral("充电用户端"));
     resize(390, 780);
     setMinimumSize(360, 640);
+    setStyleSheet(QStringLiteral(
+        "QMainWindow,QWidget{background:#f8fafc;color:#0f172a;}"
+        "QLineEdit,QSpinBox,QDoubleSpinBox,QComboBox,QListWidget,QTabWidget::pane{background:white;border:1px solid #dbe3ee;border-radius:8px;padding:6px;}"
+        "QPushButton{background:#e2e8f0;border:0;border-radius:8px;padding:9px 12px;font-weight:600;}"
+        "QPushButton:hover{background:#cbd5e1;}"
+        "QPushButton:disabled{color:#94a3b8;background:#f1f5f9;}"
+        "QTabBar::tab{padding:8px 14px;}QTabBar::tab:selected{color:#2563eb;font-weight:700;}"));
 
     auto *central = new QWidget(this);
     auto *root = new QVBoxLayout(central);
@@ -45,6 +92,7 @@ UserMainWindow::UserMainWindow(QWidget *parent)
         "padding:9px;background:#f1f5f9;color:#475569;border-radius:8px;"));
 
     m_pages = new QStackedWidget(central);
+    m_pages->setObjectName(QStringLiteral("userPages"));
     auto *loginPage = new QWidget(m_pages);
     auto *loginLayout = new QVBoxLayout(loginPage);
     loginLayout->setContentsMargins(0, 12, 0, 0);
@@ -109,11 +157,15 @@ UserMainWindow::UserMainWindow(QWidget *parent)
     m_stationDetailPage = new StationDetailPage(m_pages);
     connect(m_profilePage, &ProfilePage::logoutRequested, this, &UserMainWindow::logoutRequested);
     m_navWidget = new QWidget(central);
+    m_navWidget->setObjectName(QStringLiteral("userBottomNavigation"));
     auto *nav = new QHBoxLayout(m_navWidget);
     nav->setContentsMargins(0, 0, 0, 0);
     auto *homeButton = new QPushButton(QStringLiteral("首页"), m_navWidget);
     auto *chargingButton = new QPushButton(QStringLiteral("充电"), m_navWidget);
     auto *mineButton = new QPushButton(QStringLiteral("我的"), m_navWidget);
+    homeButton->setObjectName(QStringLiteral("homeNavigationButton"));
+    chargingButton->setObjectName(QStringLiteral("chargingNavigationButton"));
+    mineButton->setObjectName(QStringLiteral("profileNavigationButton"));
     nav->addWidget(homeButton); nav->addWidget(chargingButton); nav->addWidget(mineButton);
 
     m_pages->addWidget(loginPage);
@@ -122,10 +174,64 @@ UserMainWindow::UserMainWindow(QWidget *parent)
     m_pages->addWidget(m_profilePage);
     m_pages->addWidget(m_stationDetailPage);
     connect(homeButton, &QPushButton::clicked, this, [this] { m_pages->setCurrentWidget(m_homePage); });
-    connect(chargingButton, &QPushButton::clicked, this, [this] { m_pages->setCurrentWidget(m_chargingPage); });
+    connect(chargingButton, &QPushButton::clicked, this, [this] {
+        m_pages->setCurrentWidget(m_chargingPage);
+        if (m_demoMode && m_chargingPage->hasActiveOrder())
+            setConnectionStatus(QStringLiteral("检测到未完成订单，已进入充电状态页"), true);
+    });
     connect(mineButton, &QPushButton::clicked, this, [this] { m_pages->setCurrentWidget(m_profilePage); });
     connect(m_homePage, &HomePage::stationSelected, this, [this](const QJsonObject &s) { m_stationDetailPage->setStation(s); m_pages->setCurrentWidget(m_stationDetailPage); });
     connect(m_stationDetailPage, &StationDetailPage::backRequested, this, [this] { m_pages->setCurrentWidget(m_homePage); });
+    connect(m_homePage, &HomePage::stationsRequested, this,
+            [this](const QString &region, const QString &, double, double) {
+        if (!m_demoMode) return;
+        QJsonArray filtered;
+        for (const auto &value : m_demoStations) {
+            const QJsonObject station = value.toObject();
+            if (region == QStringLiteral("全部区域")
+                || station.value(QStringLiteral("address")).toString().contains(region.left(2)))
+                filtered.append(station);
+        }
+        m_homePage->setStations(filtered);
+        setConnectionStatus(QStringLiteral("演示数据已刷新 · 站点状态更新于刚刚"), true);
+    });
+    connect(m_stationDetailPage, &StationDetailPage::pilesRequested, this,
+            [this](qint64 stationId) {
+        if (m_demoMode) m_stationDetailPage->setPiles(demoPiles(stationId));
+    });
+    connect(m_stationDetailPage, &StationDetailPage::favoriteRequested, this,
+            [this](qint64 stationId, bool favorited) {
+        if (!m_demoMode) return;
+        for (qsizetype i = 0; i < m_demoStations.size(); ++i) {
+            QJsonObject station = m_demoStations.at(i).toObject();
+            if (station.value(QStringLiteral("stationId")).toInteger() != stationId) continue;
+            station.insert(QStringLiteral("favorited"), favorited);
+            m_demoStations.replace(i, station);
+            m_profilePage->setFavoriteStation(station.value(QStringLiteral("name")).toString(), favorited);
+            break;
+        }
+        setConnectionStatus(favorited ? QStringLiteral("已加入常用充电站")
+                                      : QStringLiteral("已取消收藏"), true);
+    });
+    connect(m_stationDetailPage, &StationDetailPage::navigationRequested, this,
+            [this](const QJsonObject &station, const QString &mode) {
+        if (MapNavigator::isConfigured()) {
+            setConnectionStatus(QStringLiteral("已在页面内加载腾讯地图%1路线")
+                                    .arg(mode == QStringLiteral("walking") ? QStringLiteral("步行")
+                                                                          : QStringLiteral("驾车")), true);
+        } else {
+            setConnectionStatus(QStringLiteral("%1路线已生成：人民广场 → %2（演示预览；配置地图Key后打开腾讯地图）")
+                                    .arg(mode == QStringLiteral("walking") ? QStringLiteral("步行")
+                                                                          : QStringLiteral("驾车"),
+                                         station.value(QStringLiteral("name")).toString()), true);
+        }
+    });
+    connect(m_stationDetailPage, &StationDetailPage::reservationRequested, this,
+            [this](const QJsonObject &station, const QJsonObject &pile) {
+        m_chargingPage->setReservation(station, pile);
+        m_pages->setCurrentWidget(m_chargingPage);
+        setConnectionStatus(QStringLiteral("预约成功，已为您锁定电桩15分钟"), true);
+    });
     root->addWidget(title);
     root->addWidget(subtitle);
     root->addWidget(m_statusLabel);
@@ -173,4 +279,22 @@ void UserMainWindow::showLoginPage()
 void UserMainWindow::showFeatureMessage(const QString &message)
 {
     m_statusLabel->setText(message);
+}
+
+void UserMainWindow::showDemoWorkspace()
+{
+    m_demoMode = true;
+    m_demoStations = demoStations();
+    m_profilePage->setDemoMode(true);
+    m_chargingPage->setDemoMode(true);
+    m_profilePage->setProfile({
+        {QStringLiteral("nickname"), QStringLiteral("绿色出行者")},
+        {QStringLiteral("phone"), QStringLiteral("138****2026")},
+        {QStringLiteral("balanceCents"), 28650},
+        {QStringLiteral("created"), false}});
+    m_profilePage->setFavoriteStation(QStringLiteral("人民广场超级充电站"), true);
+    m_homePage->setStations(m_demoStations);
+    m_navWidget->show();
+    m_pages->setCurrentWidget(m_homePage);
+    setConnectionStatus(QStringLiteral("演示模式 · 使用本地样例数据，不依赖服务端"), true);
 }

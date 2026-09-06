@@ -8,6 +8,7 @@ SUBDIRS += \
     protocol_tests \
     phase1_tests \
     database_repository_tests \
+    user_ui_tests \
     admin_controller_tests \
     admin_ui_tests
 
@@ -17,6 +18,7 @@ server_app.file = server/server.pro
 protocol_tests.file = tests/protocol-tests.pro
 phase1_tests.file = tests/phase1-tests.pro
 database_repository_tests.file = tests/database-repository-tests.pro
+user_ui_tests.file = tests/user-ui-tests.pro
 admin_controller_tests.file = tests/admin-controller-tests.pro
 admin_ui_tests.file = tests/admin-ui-tests.pro
 
@@ -25,5 +27,6 @@ server_app.depends = admin_client
 protocol_tests.depends = server_app
 phase1_tests.depends = protocol_tests
 database_repository_tests.depends = phase1_tests
-admin_controller_tests.depends = database_repository_tests
+user_ui_tests.depends = database_repository_tests
+admin_controller_tests.depends = user_ui_tests
 admin_ui_tests.depends = admin_controller_tests

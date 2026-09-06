@@ -1,0 +1,14 @@
+#pragma once
+
+#include <QObject>
+
+class UserUiTest final : public QObject
+{
+    Q_OBJECT
+
+private slots:
+    void demoWorkspaceShowsCoreFeatures();
+    void reservationCanEnterChargingAndSettle();
+    void demoRechargeUpdatesBalanceAndLedger();
+    void mapUrlCarriesTravelModeAndCoordinates();
+};
