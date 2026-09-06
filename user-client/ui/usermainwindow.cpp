@@ -1,9 +1,14 @@
 #include "ui/usermainwindow.h"
 
 #include "app/appinfo.h"
+#include "pages/homepage.h"
+#include "pages/chargingpage.h"
+#include "pages/profilepage.h"
+#include "pages/stationdetailpage.h"
 
 #include <QFormLayout>
 #include <QGroupBox>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
@@ -98,50 +103,35 @@ UserMainWindow::UserMainWindow(QWidget *parent)
     loginLayout->addWidget(m_loginErrorLabel);
     loginLayout->addStretch();
 
-    auto *profilePage = new QWidget(m_pages);
-    auto *profileLayout = new QVBoxLayout(profilePage);
-    profileLayout->setContentsMargins(0, 12, 0, 0);
-    profileLayout->setSpacing(13);
-    m_avatarLabel = new QLabel(QStringLiteral("用户"), profilePage);
-    m_avatarLabel->setFixedSize(72, 72);
-    m_avatarLabel->setAlignment(Qt::AlignCenter);
-    m_avatarLabel->setStyleSheet(QStringLiteral(
-        "background:#cbd5e1;color:#475569;border-radius:36px;font-weight:700;"));
-    m_nicknameLabel = new QLabel(profilePage);
-    QFont nameFont = m_nicknameLabel->font();
-    nameFont.setPointSize(17);
-    nameFont.setBold(true);
-    m_nicknameLabel->setFont(nameFont);
-    m_phoneLabel = new QLabel(profilePage);
-    m_balanceLabel = new QLabel(profilePage);
-    m_balanceLabel->setStyleSheet(QStringLiteral(
-        "padding:16px;background:#eff6ff;color:#1e3a8a;border-radius:10px;font-size:16px;"));
-    m_accountNoteLabel = new QLabel(profilePage);
-    m_accountNoteLabel->setWordWrap(true);
-    m_accountNoteLabel->setStyleSheet(QStringLiteral("color:#166534;"));
-    auto *phaseNote = new QLabel(
-        QStringLiteral("第一阶段已完成登录、账号建立与资料读取。\n找桩、预约和充电将在后续阶段开放。"),
-        profilePage);
-    phaseNote->setWordWrap(true);
-    phaseNote->setStyleSheet(QStringLiteral(
-        "padding:14px;border:1px dashed #94a3b8;border-radius:10px;color:#475569;"));
-    auto *logoutButton = new QPushButton(QStringLiteral("退出登录"), profilePage);
-    connect(logoutButton, &QPushButton::clicked, this, &UserMainWindow::logoutRequested);
-    profileLayout->addWidget(m_avatarLabel, 0, Qt::AlignHCenter);
-    profileLayout->addWidget(m_nicknameLabel, 0, Qt::AlignHCenter);
-    profileLayout->addWidget(m_phoneLabel, 0, Qt::AlignHCenter);
-    profileLayout->addWidget(m_balanceLabel);
-    profileLayout->addWidget(m_accountNoteLabel);
-    profileLayout->addWidget(phaseNote);
-    profileLayout->addStretch();
-    profileLayout->addWidget(logoutButton);
+    m_homePage = new HomePage(m_pages);
+    m_chargingPage = new ChargingPage(m_pages);
+    m_profilePage = new ProfilePage(m_pages);
+    m_stationDetailPage = new StationDetailPage(m_pages);
+    connect(m_profilePage, &ProfilePage::logoutRequested, this, &UserMainWindow::logoutRequested);
+    m_navWidget = new QWidget(central);
+    auto *nav = new QHBoxLayout(m_navWidget);
+    nav->setContentsMargins(0, 0, 0, 0);
+    auto *homeButton = new QPushButton(QStringLiteral("首页"), m_navWidget);
+    auto *chargingButton = new QPushButton(QStringLiteral("充电"), m_navWidget);
+    auto *mineButton = new QPushButton(QStringLiteral("我的"), m_navWidget);
+    nav->addWidget(homeButton); nav->addWidget(chargingButton); nav->addWidget(mineButton);
 
     m_pages->addWidget(loginPage);
-    m_pages->addWidget(profilePage);
+    m_pages->addWidget(m_homePage);
+    m_pages->addWidget(m_chargingPage);
+    m_pages->addWidget(m_profilePage);
+    m_pages->addWidget(m_stationDetailPage);
+    connect(homeButton, &QPushButton::clicked, this, [this] { m_pages->setCurrentWidget(m_homePage); });
+    connect(chargingButton, &QPushButton::clicked, this, [this] { m_pages->setCurrentWidget(m_chargingPage); });
+    connect(mineButton, &QPushButton::clicked, this, [this] { m_pages->setCurrentWidget(m_profilePage); });
+    connect(m_homePage, &HomePage::stationSelected, this, [this](const QJsonObject &s) { m_stationDetailPage->setStation(s); m_pages->setCurrentWidget(m_stationDetailPage); });
+    connect(m_stationDetailPage, &StationDetailPage::backRequested, this, [this] { m_pages->setCurrentWidget(m_homePage); });
     root->addWidget(title);
     root->addWidget(subtitle);
     root->addWidget(m_statusLabel);
     root->addWidget(m_pages, 1);
+    root->addWidget(m_navWidget);
+    m_navWidget->hide();
     setCentralWidget(central);
 }
 
@@ -167,20 +157,20 @@ void UserMainWindow::showLoginError(const QString &message)
 
 void UserMainWindow::showProfile(const QJsonObject &profile)
 {
-    m_nicknameLabel->setText(profile.value(QStringLiteral("nickname")).toString());
-    m_phoneLabel->setText(profile.value(QStringLiteral("phone")).toString());
-    const qint64 cents = static_cast<qint64>(
-        profile.value(QStringLiteral("balanceCents")).toDouble());
-    m_balanceLabel->setText(QStringLiteral("钱包余额：¥ %1").arg(cents / 100.0, 0, 'f', 2));
-    m_accountNoteLabel->setText(profile.value(QStringLiteral("created")).toBool()
-        ? QStringLiteral("首次登录成功，系统已自动创建账号和默认资料。")
-        : QStringLiteral("登录成功，用户资料已从服务端同步。"));
-    m_pages->setCurrentIndex(1);
+    m_profilePage->setProfile(profile);
+    m_navWidget->show();
+    m_pages->setCurrentWidget(m_profilePage);
 }
 
 void UserMainWindow::showLoginPage()
 {
     setLoginBusy(false);
     showLoginError({});
+    m_navWidget->hide();
     m_pages->setCurrentIndex(0);
+}
+
+void UserMainWindow::showFeatureMessage(const QString &message)
+{
+    m_statusLabel->setText(message);
 }
