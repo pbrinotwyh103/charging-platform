@@ -8,6 +8,11 @@ class QLineEdit;
 class QSpinBox;
 class QPushButton;
 class QStackedWidget;
+class QWidget;
+class HomePage;
+class ChargingPage;
+class ProfilePage;
+class StationDetailPage;
 
 class UserMainWindow final : public QMainWindow
 {
@@ -22,6 +27,7 @@ public slots:
     void showLoginError(const QString &message);
     void showProfile(const QJsonObject &profile);
     void showLoginPage();
+    void showFeatureMessage(const QString &message);
 
 signals:
     void connectionRequested(const QString &host, quint16 port);
@@ -36,9 +42,9 @@ private:
     QPushButton *m_loginButton = nullptr;
     QStackedWidget *m_pages = nullptr;
     QLabel *m_loginErrorLabel = nullptr;
-    QLabel *m_avatarLabel = nullptr;
-    QLabel *m_nicknameLabel = nullptr;
-    QLabel *m_phoneLabel = nullptr;
-    QLabel *m_balanceLabel = nullptr;
-    QLabel *m_accountNoteLabel = nullptr;
+    QWidget *m_navWidget = nullptr;
+    HomePage *m_homePage = nullptr;
+    ChargingPage *m_chargingPage = nullptr;
+    ProfilePage *m_profilePage = nullptr;
+    StationDetailPage *m_stationDetailPage = nullptr;
 };
