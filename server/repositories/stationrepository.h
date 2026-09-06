@@ -24,6 +24,9 @@ class StationRepository final : public RepositoryBase
 {
 public:
     using RepositoryBase::RepositoryBase;
+    bool list(const QString &status, int limit, int offset,
+              QList<StationRecord> *records, QString *error) const;
+    bool count(const QString &status, int *total, QString *error) const;
 
     bool findById(qint64 stationId, StationRecord *record, QString *error) const;
     bool list(const QString &status, QList<StationRecord> *records, QString *error) const;

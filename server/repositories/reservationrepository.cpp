@@ -72,6 +72,25 @@ bool ReservationRepository::create(qint64 userId, qint64 pileId, const QString &
     return true;
 }
 
+bool ReservationRepository::findById(qint64 reservationId, ReservationRecord *record,
+                                     QString *error) const
+{
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral(
+        "SELECT id,user_id,pile_id,status,reserved_at,expires_at,used_at "
+        "FROM reservations WHERE id=?"));
+    query.addBindValue(reservationId);
+    if (!query.exec()) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    *record = ReservationRecord();
+    if (query.next()) readReservation(query, record);
+    return true;
+}
+
 bool ReservationRepository::findActiveByUser(qint64 userId, ReservationRecord *record,
                                              QString *error) const
 {

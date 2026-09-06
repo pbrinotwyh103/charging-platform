@@ -27,6 +27,23 @@ QString pileColumns()
 }
 }
 
+bool PileRepository::countByStation(qint64 stationId, const QString &status, int *total, QString *error) const
+{
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral("SELECT COUNT(*) FROM charging_piles WHERE station_id=? AND (?='' OR status=?)"));
+    query.addBindValue(stationId);
+    query.addBindValue(status.isEmpty() ? QStringLiteral("") : status);
+    query.addBindValue(status);
+    if (!query.exec() || !query.next()) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    if (total) *total = query.value(0).toInt();
+    return true;
+}
+
 bool PileRepository::findById(qint64 pileId, PileRecord *record, QString *error) const
 {
     QSqlDatabase db = database()->database(error);
@@ -59,6 +76,33 @@ bool PileRepository::listByStation(qint64 stationId, const QString &status,
     query.prepare(sql);
     query.addBindValue(stationId);
     if (!status.isEmpty()) query.addBindValue(status);
+    if (!query.exec()) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    while (query.next()) {
+        PileRecord record;
+        readPile(query, &record);
+        records->append(record);
+    }
+    return true;
+}
+
+bool PileRepository::listByStation(qint64 stationId, const QString &status, int limit, int offset,
+                                   QList<PileRecord> *records, QString *error) const
+{
+    records->clear();
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    QString sql = QStringLiteral("SELECT %1 FROM charging_piles WHERE station_id=?").arg(pileColumns());
+    if (!status.isEmpty()) sql += QStringLiteral(" AND status=?");
+    sql += QStringLiteral(" ORDER BY pile_code LIMIT ? OFFSET ?");
+    query.prepare(sql);
+    query.addBindValue(stationId);
+    if (!status.isEmpty()) query.addBindValue(status);
+    query.addBindValue(qBound(1, limit, 200));
+    query.addBindValue(qMax(0, offset));
     if (!query.exec()) {
         if (error) *error = query.lastError().text();
         return false;

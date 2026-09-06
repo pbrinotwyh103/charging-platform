@@ -1,4 +1,5 @@
 #include "repositories/orderrepository.h"
+#include "repositories/walletrepository.h"
 
 #include "database/databasemanager.h"
 
@@ -53,6 +54,20 @@ bool OrderRepository::createChargingOrder(const QString &orderNo, qint64 userId,
         return false;
     }
     QSqlQuery context(db);
+    QSqlQuery existing(db);
+    existing.prepare(QStringLiteral(
+        "SELECT id,user_id,pile_id,COALESCE(reservation_id,0) FROM charging_orders WHERE order_no=?"));
+    existing.addBindValue(orderNo);
+    if (!existing.exec()) return rollback(db, existing.lastError().text(), error);
+    if (existing.next()) {
+        if (existing.value(1).toLongLong() != userId || existing.value(2).toLongLong() != pileId
+            || existing.value(3).toLongLong() != reservationId)
+            return rollback(db, QStringLiteral("订单号已用于其他订单"), error);
+        const qint64 id = existing.value(0).toLongLong();
+        db.rollback();
+        if (orderId) *orderId = id;
+        return true;
+    }
     context.prepare(QStringLiteral(
         "SELECT p.station_id,p.status,s.price_cents_per_kwh,u.status "
         "FROM charging_piles p JOIN stations s ON s.id=p.station_id "
@@ -113,6 +128,92 @@ bool OrderRepository::createChargingOrder(const QString &orderNo, qint64 userId,
         return false;
     }
     if (orderId) *orderId = id;
+    return true;
+}
+
+bool OrderRepository::stopAndSettle(qint64 orderId, qint64 durationSeconds, qint64 energyWh,
+                                    qint64 feeCents, const QString &finalStatus,
+                                    const QString &reason, qint64 *balanceAfterCents,
+                                    QString *error) const
+{
+    return WalletRepository(database()).settleOrder(
+        QStringLiteral("ORDER-PAYMENT-%1").arg(orderId), orderId, durationSeconds, energyWh,
+        feeCents, finalStatus, reason, balanceAfterCents, error);
+}
+
+bool OrderRepository::listActive(QList<OrderRecord> *records, QString *error) const
+{
+    records->clear();
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    if (!query.exec(QStringLiteral(
+        "SELECT %1 FROM charging_orders WHERE status='charging' ORDER BY id").arg(orderColumns()))) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    while (query.next()) {
+        OrderRecord record;
+        readOrder(query, &record);
+        records->append(record);
+    }
+    return true;
+}
+
+bool OrderRepository::list(const QString &status, int limit, int offset,
+                           QList<OrderRecord> *records, QString *error) const
+{
+    records->clear();
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    QString sql = QStringLiteral("SELECT %1 FROM charging_orders ").arg(orderColumns());
+    if (!status.isEmpty()) sql += QStringLiteral("WHERE status=? ");
+    sql += QStringLiteral("ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?");
+    query.prepare(sql);
+    if (!status.isEmpty()) query.addBindValue(status);
+    query.addBindValue(qBound(1, limit, 200));
+    query.addBindValue(qMax(0, offset));
+    if (!query.exec()) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    while (query.next()) {
+        OrderRecord record;
+        readOrder(query, &record);
+        records->append(record);
+    }
+    return true;
+}
+
+bool OrderRepository::countByUser(qint64 userId, int *total, QString *error) const
+{
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral("SELECT COUNT(*) FROM charging_orders WHERE user_id=?"));
+    query.addBindValue(userId);
+    if (!query.exec() || !query.next()) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    if (total) *total = query.value(0).toInt();
+    return true;
+}
+
+bool OrderRepository::count(const QString &status, int *total, QString *error) const
+{
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral("SELECT COUNT(*) FROM charging_orders WHERE (?='' OR status=?)"));
+    query.addBindValue(status.isEmpty() ? QStringLiteral("") : status);
+    query.addBindValue(status);
+    if (!query.exec() || !query.next()) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    if (total) *total = query.value(0).toInt();
     return true;
 }
 
@@ -187,7 +288,7 @@ bool OrderRepository::listByUser(qint64 userId, int limit, int offset,
     if (!db.isValid() || !db.isOpen()) return false;
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
-        "SELECT %1 FROM charging_orders WHERE user_id=? ORDER BY created_at DESC LIMIT ? OFFSET ?")
+        "SELECT %1 FROM charging_orders WHERE user_id=? ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?")
         .arg(orderColumns()));
     query.addBindValue(userId);
     query.addBindValue(qBound(1, limit, 200));

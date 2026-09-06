@@ -28,6 +28,14 @@ class OrderRepository final : public RepositoryBase
 {
 public:
     using RepositoryBase::RepositoryBase;
+    bool stopAndSettle(qint64 orderId, qint64 durationSeconds, qint64 energyWh,
+                       qint64 feeCents, const QString &finalStatus, const QString &reason,
+                       qint64 *balanceAfterCents, QString *error) const;
+    bool listActive(QList<OrderRecord> *records, QString *error) const;
+    bool countByUser(qint64 userId, int *total, QString *error) const;
+    bool list(const QString &status, int limit, int offset,
+              QList<OrderRecord> *records, QString *error) const;
+    bool count(const QString &status, int *total, QString *error) const;
 
     bool createChargingOrder(const QString &orderNo, qint64 userId, qint64 pileId,
                              qint64 reservationId, qint64 *orderId, QString *error) const;

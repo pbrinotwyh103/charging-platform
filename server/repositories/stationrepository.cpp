@@ -33,6 +33,22 @@ QString stationSelect()
 }
 }
 
+bool StationRepository::count(const QString &status, int *total, QString *error) const
+{
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral("SELECT COUNT(*) FROM stations WHERE (?='' OR status=?)"));
+    query.addBindValue(status.isEmpty() ? QStringLiteral("") : status);
+    query.addBindValue(status);
+    if (!query.exec() || !query.next()) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    if (total) *total = query.value(0).toInt();
+    return true;
+}
+
 bool StationRepository::findById(qint64 stationId, StationRecord *record, QString *error) const
 {
     QSqlDatabase db = database()->database(error);
@@ -96,6 +112,33 @@ bool StationRepository::insert(const StationRecord &record, qint64 *stationId,
         return false;
     }
     if (stationId) *stationId = query.lastInsertId().toLongLong();
+    return true;
+}
+
+bool StationRepository::list(const QString &status, int limit, int offset,
+                             QList<StationRecord> *records,
+                               QString *error) const
+{
+    records->clear();
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    QString sql = stationSelect();
+    if (!status.isEmpty()) sql += QStringLiteral("WHERE s.status=? ");
+    sql += QStringLiteral("GROUP BY s.id ORDER BY s.id LIMIT ? OFFSET ?");
+    query.prepare(sql);
+    if (!status.isEmpty()) query.addBindValue(status);
+    query.addBindValue(qBound(1, limit, 200));
+    query.addBindValue(qMax(0, offset));
+    if (!query.exec()) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    while (query.next()) {
+        StationRecord record;
+        readStation(query, &record);
+        records->append(record);
+    }
     return true;
 }
 

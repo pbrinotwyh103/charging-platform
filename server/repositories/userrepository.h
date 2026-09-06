@@ -20,6 +20,7 @@ class UserRepository final : public RepositoryBase
 {
 public:
     using RepositoryBase::RepositoryBase;
+    bool count(const QString &phoneKeyword, int *total, QString *error) const;
 
     bool findByPhone(const QString &phone, UserRecord *record, QString *error) const;
     bool findById(qint64 id, UserRecord *record, QString *error) const;

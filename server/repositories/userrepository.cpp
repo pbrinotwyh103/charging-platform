@@ -21,6 +21,21 @@ void readUser(QSqlQuery &query, UserRecord *record)
 
 } // namespace
 
+bool UserRepository::count(const QString &phoneKeyword, int *total, QString *error) const
+{
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral("SELECT COUNT(*) FROM users WHERE phone LIKE ?"));
+    query.addBindValue(QStringLiteral("%") + phoneKeyword + QStringLiteral("%"));
+    if (!query.exec() || !query.next()) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    if (total) *total = query.value(0).toInt();
+    return true;
+}
+
 bool UserRepository::findByPhone(const QString &phone, UserRecord *record, QString *error) const
 {
     QSqlDatabase db = database()->database(error);

@@ -15,6 +15,10 @@ private slots:
     void profileStationAndFavoriteOperations();
     void reservationRulesAndExpiry();
     void chargingSettlementAndRollback();
+    void rechargeIdempotency();
+    void atomicSettlementAndRecovery();
+    void repositoryPagination();
+    void faultSettlementAndLegacyReplay();
     void alarmControlAndPushRecords();
     void backupAndRestore();
 

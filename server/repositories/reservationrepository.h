@@ -19,6 +19,7 @@ class ReservationRepository final : public RepositoryBase
 {
 public:
     using RepositoryBase::RepositoryBase;
+    bool findById(qint64 reservationId, ReservationRecord *record, QString *error) const;
 
     bool create(qint64 userId, qint64 pileId, const QString &expiresAt,
                 qint64 *reservationId, QString *error) const;

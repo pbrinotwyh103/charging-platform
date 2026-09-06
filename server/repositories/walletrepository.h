@@ -21,6 +21,8 @@ class WalletRepository final : public RepositoryBase
 {
 public:
     using RepositoryBase::RepositoryBase;
+    bool findByRecordNo(const QString &recordNo, WalletRecord *record, QString *error) const;
+    bool countByUser(qint64 userId, int *total, QString *error) const;
 
     bool recharge(const QString &recordNo, qint64 userId, qint64 amountCents,
                   qint64 *balanceAfterCents, QString *error) const;

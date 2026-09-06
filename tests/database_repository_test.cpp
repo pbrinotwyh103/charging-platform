@@ -108,6 +108,12 @@ void DatabaseRepositoryTest::reservationRulesAndExpiry()
     QVERIFY(!reservations.create(secondUser, 1, QStringLiteral("2099-01-01 00:00:00"),
                                  nullptr, &error));
     QVERIFY2(reservations.cancel(reservationId, firstUser, &error), qPrintable(error));
+    ReservationRecord cancelled;
+    QVERIFY(reservations.findById(reservationId, &cancelled, &error));
+    QCOMPARE(cancelled.status, QStringLiteral("cancelled"));
+    PileRecord released;
+    QVERIFY(PileRepository(&m_database).findById(1, &released, &error));
+    QCOMPARE(released.status, QStringLiteral("idle"));
 
     QVERIFY2(reservations.create(firstUser, 2, QStringLiteral("2000-01-01 00:00:00"),
                                  &reservationId, &error), qPrintable(error));
@@ -115,6 +121,8 @@ void DatabaseRepositoryTest::reservationRulesAndExpiry()
     QVERIFY2(reservations.expireDue(QStringLiteral("2026-09-05 00:00:00"),
                                     &expired, &error), qPrintable(error));
     QCOMPARE(expired, 1);
+    QVERIFY(reservations.findById(reservationId, &cancelled, &error));
+    QCOMPARE(cancelled.status, QStringLiteral("expired"));
     PileRepository piles(&m_database);
     PileRecord pile;
     QVERIFY(piles.findById(2, &pile, &error));
@@ -158,6 +166,191 @@ void DatabaseRepositoryTest::chargingSettlementAndRollback()
     UserRepository users(&m_database);
     QVERIFY(users.findById(userId, &user, &error));
     QCOMPARE(user.balanceCents, 9750);
+}
+
+void DatabaseRepositoryTest::rechargeIdempotency()
+{
+    const qint64 userId = createUser(QStringLiteral("13800138020"));
+    const qint64 otherUser = createUser(QStringLiteral("13800138021"));
+    WalletRepository wallet(&m_database);
+    QString error;
+    qint64 balance = 0;
+    QVERIFY(wallet.recharge(QStringLiteral("R-IDEMPOTENT"), userId, 5000, &balance, &error));
+    QVERIFY(wallet.recharge(QStringLiteral("R-LATER"), userId, 1000, &balance, &error));
+    QVERIFY2(wallet.recharge(QStringLiteral("R-IDEMPOTENT"), userId, 5000, &balance, &error), qPrintable(error));
+    QCOMPARE(balance, 5000);
+    QVERIFY(!wallet.recharge(QStringLiteral("R-IDEMPOTENT"), otherUser, 5000, &balance, &error));
+    QVERIFY(!wallet.recharge(QStringLiteral("R-IDEMPOTENT"), userId, 6000, &balance, &error));
+    UserRecord user;
+    QVERIFY(UserRepository(&m_database).findById(userId, &user, &error));
+    QCOMPARE(user.balanceCents, 6000);
+    WalletRecord record;
+    QVERIFY(wallet.findByRecordNo(QStringLiteral("R-IDEMPOTENT"), &record, &error));
+    QCOMPARE(record.amountCents, 5000);
+    QCOMPARE(record.balanceAfterCents, 5000);
+    int count = -1;
+    QVERIFY(wallet.countByUser(userId, &count, &error));
+    QCOMPARE(count, 2);
+    QVERIFY(wallet.findByRecordNo(QStringLiteral("missing"), &record, &error));
+    QCOMPARE(record.id, 0);
+}
+
+void DatabaseRepositoryTest::atomicSettlementAndRecovery()
+{
+    const qint64 userId = createUser(QStringLiteral("13800138022"));
+    QString error;
+    WalletRepository wallet(&m_database);
+    OrderRepository orders(&m_database);
+    PileRepository piles(&m_database);
+    qint64 balance = 0;
+    QVERIFY(wallet.recharge(QStringLiteral("R-ATOMIC"), userId, 1000, &balance, &error));
+    PileRecord before;
+    QVERIFY(piles.findById(1, &before, &error));
+    qint64 orderId = 0;
+    QVERIFY(orders.createChargingOrder(QStringLiteral("O-ATOMIC"), userId, 1, 0, &orderId, &error));
+    qint64 duplicateId = 0;
+    QVERIFY(orders.createChargingOrder(QStringLiteral("O-ATOMIC"), userId, 1, 0, &duplicateId, &error));
+    QCOMPARE(duplicateId, orderId);
+    QVERIFY(orders.updateProgress(orderId, 10, 100, 12, &error));
+
+    // A fresh manager models service restart without relying on runtime memory.
+    DatabaseManager reopened;
+    QVERIFY(reopened.open(m_databasePath, &error));
+    QList<OrderRecord> active;
+    QVERIFY(OrderRepository(&reopened).listActive(&active, &error));
+    bool recovered = false;
+    for (const OrderRecord &record : active) {
+        if (record.id == orderId) {
+            recovered = true;
+            QCOMPARE(record.durationSeconds, 10);
+            QCOMPARE(record.energyWh, 100);
+        }
+    }
+    QVERIFY(recovered);
+
+    QVERIFY(!orders.stopAndSettle(orderId, 60, 500, 1001, QStringLiteral("completed"),
+                                  QStringLiteral("user_stop"), &balance, &error));
+    OrderRecord order;
+    QVERIFY(orders.findById(orderId, &order, &error));
+    QCOMPARE(order.status, QStringLiteral("charging"));
+    QCOMPARE(order.durationSeconds, 10);
+    QCOMPARE(order.feeCents, 12);
+    int count = 0;
+    QVERIFY(wallet.countByUser(userId, &count, &error));
+    QCOMPARE(count, 1);
+
+    // Force the last write to fail: all preceding debit/ledger/order writes must roll back.
+    QSqlQuery inject(m_database.database(&error));
+    QVERIFY(inject.exec(QStringLiteral("CREATE TEMP TRIGGER fail_release BEFORE UPDATE ON charging_piles "
+        "WHEN OLD.id=1 AND NEW.status='idle' BEGIN SELECT RAISE(ABORT,'injected release failure'); END")));
+    QVERIFY(!orders.stopAndSettle(orderId, 60, 500, 250, QStringLiteral("completed"),
+                                  QStringLiteral("user_stop"), &balance, &error));
+    QVERIFY(inject.exec(QStringLiteral("DROP TRIGGER fail_release")));
+    QVERIFY(orders.findById(orderId, &order, &error));
+    QCOMPARE(order.status, QStringLiteral("charging"));
+    QCOMPARE(order.energyWh, 100);
+    UserRecord user;
+    QVERIFY(UserRepository(&m_database).findById(userId, &user, &error));
+    QCOMPARE(user.balanceCents, 1000);
+    QVERIFY(wallet.countByUser(userId, &count, &error));
+    QCOMPARE(count, 1);
+    PileRecord pile;
+    QVERIFY(piles.findById(1, &pile, &error));
+    QCOMPARE(pile.status, QStringLiteral("charging"));
+    QCOMPARE(pile.totalChargeCount, before.totalChargeCount);
+    QCOMPARE(pile.totalChargeSeconds, before.totalChargeSeconds);
+
+    QVERIFY2(orders.stopAndSettle(orderId, 60, 500, 250, QStringLiteral("completed"),
+                                 QStringLiteral("user_stop"), &balance, &error), qPrintable(error));
+    QCOMPARE(balance, 750);
+    QVERIFY(wallet.recharge(QStringLiteral("R-AFTER-STOP"), userId, 100, &balance, &error));
+    QVERIFY(orders.stopAndSettle(orderId, 90, 900, 400, QStringLiteral("fault_stopped"),
+                                QStringLiteral("retry"), &balance, &error));
+    QCOMPARE(balance, 750);
+    QVERIFY(orders.findById(orderId, &order, &error));
+    QCOMPARE(order.status, QStringLiteral("completed"));
+    QCOMPARE(order.durationSeconds, 60);
+    QCOMPARE(order.energyWh, 500);
+    QCOMPARE(order.feeCents, 250);
+    QCOMPARE(order.stopReason, QStringLiteral("user_stop"));
+    QVERIFY(!order.stoppedAt.isEmpty());
+    QVERIFY(piles.findById(1, &pile, &error));
+    QCOMPARE(pile.status, QStringLiteral("idle"));
+    QCOMPARE(pile.totalChargeCount, before.totalChargeCount + 1);
+    QCOMPARE(pile.totalChargeSeconds, before.totalChargeSeconds + 60);
+    QList<WalletRecord> ledger;
+    QVERIFY(wallet.listByUser(userId, 20, 0, &ledger, &error));
+    QCOMPARE(ledger.size(), 3);
+    QCOMPARE(ledger.at(1).amountCents, -250);
+    QCOMPARE(ledger.at(1).orderId, orderId);
+    QVERIFY(orders.listActive(&active, &error));
+    for (const OrderRecord &record : active) QVERIFY(record.id != orderId);
+}
+
+void DatabaseRepositoryTest::repositoryPagination()
+{
+    QString error;
+    int count = 0;
+    UserRepository users(&m_database);
+    QList<UserRecord> userList;
+    QVERIFY(users.count(QStringLiteral("1380013802"), &count, &error));
+    QCOMPARE(count, 3);
+    QVERIFY(users.search(QStringLiteral("1380013802"), 1, 1, &userList, &error));
+    QCOMPARE(userList.size(), 1);
+    QCOMPARE(userList.first().phone, QStringLiteral("13800138021"));
+    StationRepository stations(&m_database);
+    QList<StationRecord> allStations, stationPage;
+    QVERIFY(stations.list(QStringLiteral("online"), &allStations, &error));
+    QVERIFY(stations.count(QStringLiteral("online"), &count, &error));
+    QCOMPARE(count, allStations.size());
+    QVERIFY(stations.list(QStringLiteral("online"), 1, 1, &stationPage, &error));
+    QCOMPARE(stationPage.size(), 1);
+    QCOMPARE(stationPage.first().id, allStations.at(1).id);
+    PileRepository piles(&m_database);
+    QList<PileRecord> pilePage;
+    QVERIFY(piles.countByStation(1, QStringLiteral("idle"), &count, &error));
+    QCOMPARE(count, 1);
+    QVERIFY(piles.listByStation(1, QStringLiteral("idle"), 1, 0, &pilePage, &error));
+    QCOMPARE(pilePage.size(), 1);
+    QCOMPARE(pilePage.first().id, 1);
+    OrderRepository orders(&m_database);
+    QList<OrderRecord> orderPage;
+    QVERIFY(orders.count(QStringLiteral("completed"), &count, &error));
+    QCOMPARE(count, 2);
+    QVERIFY(orders.list(QStringLiteral("completed"), 1, 0, &orderPage, &error));
+    QCOMPARE(orderPage.size(), 1);
+    QCOMPARE(orderPage.first().orderNo, QStringLiteral("O-ATOMIC"));
+    QVERIFY(orders.countByUser(orderPage.first().userId, &count, &error));
+    QCOMPARE(count, 1);
+    QVERIFY(orders.list(QStringLiteral("completed"), 1, 2, &orderPage, &error));
+    QVERIFY(orderPage.isEmpty());
+}
+
+void DatabaseRepositoryTest::faultSettlementAndLegacyReplay()
+{
+    const qint64 userId = createUser(QStringLiteral("13800138023"));
+    QString error;
+    WalletRepository wallet(&m_database);
+    OrderRepository orders(&m_database);
+    PileRepository piles(&m_database);
+    qint64 balance = 0, orderId = 0;
+    QVERIFY(wallet.recharge(QStringLiteral("R-FAULT"), userId, 1000, &balance, &error));
+    QVERIFY(orders.createChargingOrder(QStringLiteral("O-FAULT"), userId, 1, 0, &orderId, &error));
+    QVERIFY(!orders.createChargingOrder(QStringLiteral("O-FAULT"), userId, 2, 0, nullptr, &error));
+    QVERIFY(piles.updateStatus(1, QStringLiteral("charging"), QStringLiteral("fault"), &error));
+    QVERIFY2(wallet.settleOrder(QStringLiteral("P-FAULT"), orderId, 30, 100, 100,
+                                QStringLiteral("fault_stopped"), QStringLiteral("device_fault"),
+                                &balance, &error), qPrintable(error));
+    QCOMPARE(balance, 900);
+    QVERIFY(orders.stopAndSettle(orderId, 30, 100, 100, QStringLiteral("fault_stopped"),
+                                QStringLiteral("device_fault"), &balance, &error));
+    QCOMPARE(balance, 900);
+    int count = 0;
+    QVERIFY(wallet.countByUser(userId, &count, &error));
+    QCOMPARE(count, 2);
+    PileRecord pile;
+    QVERIFY(piles.findById(1, &pile, &error));
+    QCOMPARE(pile.status, QStringLiteral("idle"));
 }
 
 void DatabaseRepositoryTest::alarmControlAndPushRecords()

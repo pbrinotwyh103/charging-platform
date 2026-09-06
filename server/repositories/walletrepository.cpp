@@ -27,6 +27,40 @@ void readWallet(QSqlQuery &query, WalletRecord *record)
 }
 }
 
+bool WalletRepository::findByRecordNo(const QString &recordNo, WalletRecord *record,
+                                     QString *error) const
+{
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral(
+        "SELECT id,record_no,user_id,order_id,record_type,amount_cents,balance_after_cents,"
+        "status,created_at FROM wallet_records WHERE record_no=?"));
+    query.addBindValue(recordNo);
+    if (!query.exec()) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    *record = WalletRecord();
+    if (query.next()) readWallet(query, record);
+    return true;
+}
+
+bool WalletRepository::countByUser(qint64 userId, int *total, QString *error) const
+{
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral("SELECT COUNT(*) FROM wallet_records WHERE user_id=?"));
+    query.addBindValue(userId);
+    if (!query.exec() || !query.next()) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    if (total) *total = query.value(0).toInt();
+    return true;
+}
+
 bool WalletRepository::recharge(const QString &recordNo, qint64 userId,
                                 qint64 amountCents, qint64 *balanceAfterCents,
                                 QString *error) const
@@ -40,6 +74,17 @@ bool WalletRepository::recharge(const QString &recordNo, qint64 userId,
     if (!db.transaction()) {
         if (error) *error = db.lastError().text();
         return false;
+    }
+    WalletRecord existing;
+    if (!findByRecordNo(recordNo, &existing, error))
+        return rollback(db, error ? *error : QString(), error);
+    if (existing.id != 0) {
+        if (existing.userId != userId || existing.recordType != QStringLiteral("recharge")
+            || existing.amountCents != amountCents)
+            return rollback(db, QStringLiteral("流水号已用于其他交易"), error);
+        db.rollback(); // Read-only replay: preserve the original transaction's balance.
+        if (balanceAfterCents) *balanceAfterCents = existing.balanceAfterCents;
+        return true;
     }
     QSqlQuery update(db);
     update.prepare(QStringLiteral(
@@ -92,7 +137,7 @@ bool WalletRepository::settleOrder(const QString &recordNo, qint64 orderId,
     }
     QSqlQuery order(db);
     order.prepare(QStringLiteral(
-        "SELECT user_id,pile_id FROM charging_orders WHERE id=? AND status='charging'"));
+        "SELECT user_id,pile_id,status FROM charging_orders WHERE id=?"));
     order.addBindValue(orderId);
     if (!order.exec() || !order.next()) {
         return rollback(db, order.lastError().isValid() ? order.lastError().text()
@@ -100,6 +145,29 @@ bool WalletRepository::settleOrder(const QString &recordNo, qint64 orderId,
     }
     const qint64 userId = order.value(0).toLongLong();
     const qint64 pileId = order.value(1).toLongLong();
+    WalletRecord existing;
+    if (!findByRecordNo(recordNo, &existing, error))
+        return rollback(db, error ? *error : QString(), error);
+    if (existing.id != 0 && (existing.orderId != orderId
+        || existing.recordType != QStringLiteral("charge_payment"))) {
+        return rollback(db, QStringLiteral("流水号已用于其他交易"), error);
+    }
+    QSqlQuery payment(db);
+    payment.prepare(QStringLiteral(
+        "SELECT balance_after_cents FROM wallet_records "
+        "WHERE order_id=? AND record_type='charge_payment' ORDER BY id LIMIT 1"));
+    payment.addBindValue(orderId);
+    if (!payment.exec()) return rollback(db, payment.lastError().text(), error);
+    if (payment.next()) {
+        if (order.value(2).toString() == QStringLiteral("charging"))
+            return rollback(db, QStringLiteral("订单与支付状态不一致"), error);
+        const qint64 after = payment.value(0).toLongLong();
+        db.rollback();
+        if (balanceAfterCents) *balanceAfterCents = after;
+        return true;
+    }
+    if (order.value(2).toString() != QStringLiteral("charging"))
+        return rollback(db, QStringLiteral("进行中的订单不存在"), error);
     QSqlQuery debit(db);
     debit.prepare(QStringLiteral(
         "UPDATE users SET balance_cents=balance_cents-?,updated_at=CURRENT_TIMESTAMP "
@@ -144,9 +212,10 @@ bool WalletRepository::settleOrder(const QString &recordNo, qint64 orderId,
     release.prepare(QStringLiteral(
         "UPDATE charging_piles SET status='idle',total_charge_count=total_charge_count+1,"
         "total_charge_seconds=total_charge_seconds+?,updated_at=CURRENT_TIMESTAMP "
-        "WHERE id=? AND status='charging'"));
+        "WHERE id=? AND (status='charging' OR (?='fault_stopped' AND status IN ('fault','offline')))"));
     release.addBindValue(qMax<qint64>(0, durationSeconds));
     release.addBindValue(pileId);
+    release.addBindValue(finalStatus);
     if (!release.exec() || release.numRowsAffected() != 1) {
         return rollback(db, release.lastError().isValid() ? release.lastError().text()
                                                           : QStringLiteral("电桩状态异常"), error);
