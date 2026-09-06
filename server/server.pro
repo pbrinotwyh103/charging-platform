@@ -16,8 +16,11 @@ HEADERS += \
     network/tcpserver.h \
     repositories/alarmrepository.h \
     repositories/adminrepository.h \
+    repositories/controlrecordrepository.h \
+    repositories/favoriterepository.h \
     repositories/orderrepository.h \
     repositories/pilerepository.h \
+    repositories/pushrecordrepository.h \
     repositories/repositorybase.h \
     repositories/reservationrepository.h \
     repositories/stationrepository.h \
@@ -46,8 +49,17 @@ SOURCES += \
     jobs/jobmanager.cpp \
     network/clientsession.cpp \
     network/tcpserver.cpp \
+    repositories/alarmrepository.cpp \
     repositories/adminrepository.cpp \
+    repositories/controlrecordrepository.cpp \
+    repositories/favoriterepository.cpp \
+    repositories/orderrepository.cpp \
+    repositories/pilerepository.cpp \
+    repositories/pushrecordrepository.cpp \
+    repositories/reservationrepository.cpp \
+    repositories/stationrepository.cpp \
     repositories/userrepository.cpp \
+    repositories/walletrepository.cpp \
     security/passwordhasher.cpp \
     services/authservice.cpp \
     services/serviceregistry.cpp
