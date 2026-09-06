@@ -12,6 +12,7 @@ HEADERS += \
     database/databasemanager.h \
     dispatch/messagedispatcher.h \
     jobs/jobmanager.h \
+    map/tencentmapadapter.h \
     network/clientsession.h \
     network/tcpserver.h \
     repositories/alarmrepository.h \
@@ -44,12 +45,19 @@ SOURCES += \
     database/databasemanager.cpp \
     dispatch/messagedispatcher.cpp \
     jobs/jobmanager.cpp \
+    map/tencentmapadapter.cpp \
     network/clientsession.cpp \
     network/tcpserver.cpp \
     repositories/adminrepository.cpp \
+    repositories/orderrepository.cpp \
+    repositories/stationrepository.cpp \
     repositories/userrepository.cpp \
+    repositories/walletrepository.cpp \
     security/passwordhasher.cpp \
     services/authservice.cpp \
+    services/orderservice.cpp \
+    services/stationservice.cpp \
+    services/userservice.cpp \
     services/serviceregistry.cpp
 
 RESOURCES += resources/database.qrc

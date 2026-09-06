@@ -22,6 +22,17 @@ private:
     void handleUserLogin(ClientSession *session, const Charging::Message &message);
     void handleAdminLogin(ClientSession *session, const Charging::Message &message);
     void handleUserProfile(ClientSession *session, const Charging::Message &message);
+    void handleWalletRecharge(ClientSession *session,
+                              const Charging::Message &message);
+    void handleWalletLedger(ClientSession *session,
+                            const Charging::Message &message);
+    void handleOrderHistory(ClientSession *session, const Charging::Message &message);
+    void handleStationList(ClientSession *session, const Charging::Message &message,
+                           bool favoritesOnly);
+    void handleFavoriteToggle(ClientSession *session,
+                              const Charging::Message &message);
+    void handleMapGeocode(ClientSession *session,
+                          const Charging::Message &message);
     void sendError(ClientSession *session, Charging::MessageType type, quint32 requestId,
                    Charging::ErrorCode error, const QString &detail = {});
 

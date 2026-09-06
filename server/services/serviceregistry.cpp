@@ -21,6 +21,7 @@ bool ServiceRegistry::initialize(DatabaseManager *database, QString *error)
     m_alarms.setDatabase(database);
     m_statistics.setDatabase(database);
     m_admin.setDatabase(database);
+    m_maps.reloadConfiguration();
     return m_auth.initialize(error);
 }
 

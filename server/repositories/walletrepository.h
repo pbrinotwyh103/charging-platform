@@ -1,3 +1,30 @@
 #pragma once
 #include "repositories/repositorybase.h"
-class WalletRepository final : public RepositoryBase { public: using RepositoryBase::RepositoryBase; };
+
+#include <QList>
+#include <QString>
+
+struct WalletRecord {
+    qint64 id = 0;
+    QString recordNo;
+    qint64 userId = 0;
+    QString recordType;
+    qint64 amountCents = 0;
+    qint64 balanceAfterCents = 0;
+    QString status;
+    QString createdAt;
+};
+
+class WalletRepository final : public RepositoryBase
+{
+public:
+    using RepositoryBase::RepositoryBase;
+
+    bool findByRecordNo(const QString &recordNo, const QString &recordType,
+                        WalletRecord *record, QString *error) const;
+    bool recharge(const QString &recordNo, qint64 userId, qint64 amountCents,
+                  qint64 *balanceAfterCents, QString *error) const;
+    bool countByUser(qint64 userId, int *total, QString *error) const;
+    bool listByUser(qint64 userId, int limit, int offset,
+                    QList<WalletRecord> *records, QString *error) const;
+};

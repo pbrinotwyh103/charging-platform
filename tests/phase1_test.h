@@ -15,6 +15,11 @@ private slots:
     void pingAndUnauthorizedGuard();
     void invalidPhoneIsRejected();
     void userAutoRegistrationAndProfile();
+    void rechargeUpdatesBalanceAndLedgerImmediately();
+    void historicalOrdersAreUserScoped();
+    void favoritesAreIdempotentAndUserScoped();
+    void tencentGeocoderContract();
+    void mapGeocodeRequiresAuthenticationAndValidInput();
     void userCannotUseAdminCommand();
     void adminLoginAndPasswordStorage();
 

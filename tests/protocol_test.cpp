@@ -15,6 +15,7 @@ private slots:
     void unsupportedVersion();
     void oversizedPayload();
     void invalidJsonPayload();
+    void serverCoreMessageIds();
 };
 
 void ProtocolTest::roundTrip()
@@ -90,6 +91,27 @@ void ProtocolTest::invalidJsonPayload()
     const Charging::DecodeResult result = Charging::PacketCodec::tryDecode(buffer);
     QCOMPARE(result.status, Charging::DecodeStatus::Invalid);
     QVERIFY(result.error.contains(QStringLiteral("JSON")));
+}
+
+void ProtocolTest::serverCoreMessageIds()
+{
+    using Charging::MessageType;
+    QCOMPARE(static_cast<quint16>(MessageType::UserProfileUpdateRequest),
+             quint16(1020));
+    QCOMPARE(static_cast<quint16>(MessageType::WalletRechargeRequest),
+             quint16(1100));
+    QCOMPARE(static_cast<quint16>(MessageType::WalletLedgerRequest),
+             quint16(1110));
+    QCOMPARE(static_cast<quint16>(MessageType::ReservationCreateRequest),
+             quint16(3001));
+    QCOMPARE(static_cast<quint16>(MessageType::ChargingStartRequest),
+             quint16(3010));
+    QCOMPARE(static_cast<quint16>(MessageType::ChargingStopRequest),
+             quint16(3020));
+    QCOMPARE(static_cast<quint16>(MessageType::ActiveOrderRequest),
+             quint16(3030));
+    QCOMPARE(static_cast<quint16>(MessageType::ReservationCancelRequest),
+             quint16(3040));
 }
 
 QTEST_APPLESS_MAIN(ProtocolTest)

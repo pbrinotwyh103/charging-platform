@@ -1,10 +1,254 @@
 #include "pages/stationdetailpage.h"
+
 #include <QLabel>
 #include <QListWidget>
 #include <QPushButton>
-#include <QVariant>
+#include <QSpinBox>
+#include <QHBoxLayout>
 #include <QVBoxLayout>
-StationDetailPage::StationDetailPage(QWidget*p):QWidget(p){auto*l=new QVBoxLayout(this);auto*b=new QPushButton(QStringLiteral("返回附近站点"),this);l->addWidget(b);m_title=new QLabel(this);l->addWidget(m_title);m_summary=new QLabel(this);m_summary->setWordWrap(true);l->addWidget(m_summary);m_favorite=new QPushButton(this);l->addWidget(m_favorite);m_status=new QLabel(this);l->addWidget(m_status);m_piles=new QListWidget(this);l->addWidget(m_piles,1);connect(b,&QPushButton::clicked,this,&StationDetailPage::backRequested);connect(m_favorite,&QPushButton::clicked,this,[this]{emit favoriteRequested(m_station.value("stationId").toInteger(),!m_station.value("favorited").toBool());});}
-void StationDetailPage::setStation(const QJsonObject&s){m_station=s;m_title->setText(s.value("name").toString());m_summary->setText(QStringLiteral("%1\n电价 ¥%2/度 · 空闲 %3/%4").arg(s.value("address").toString()).arg(s.value("priceCentsPerKwh").toInt()/100.0,0,'f',2).arg(s.value("availablePiles").toInt()).arg(s.value("totalPiles").toInt()));m_favorite->setText(s.value("favorited").toBool()?QStringLiteral("取消收藏"):QStringLiteral("收藏站点"));m_status->setText(QStringLiteral("正在加载电桩信息…"));emit pilesRequested(s.value("stationId").toInteger());}
-void StationDetailPage::setPiles(const QJsonArray&p){m_piles->clear();if(p.isEmpty()){m_status->setText(QStringLiteral("暂无电桩数据"));return;}for(const auto&v:p){auto o=v.toObject();new QListWidgetItem(QStringLiteral("%1 · %2 · %3 kW\n状态：%4").arg(o.value("pileCode").toString(),o.value("type").toString()).arg(o.value("powerKw").toDouble()).arg(o.value("status").toString()),m_piles);}m_status->setText(QStringLiteral("共 %1 个电桩").arg(p.size()));}
-void StationDetailPage::showError(const QString&m){m_status->setText(m);m_piles->clear();}
+
+namespace {
+
+bool pileCanBeReserved(const QJsonObject &pile)
+{
+    const QString status = pile.value(QStringLiteral("status"))
+                               .toString().toLower();
+    return status == QStringLiteral("idle")
+        || status == QStringLiteral("available");
+}
+
+QString pileStatusText(const QString &status)
+{
+    const QString normalized = status.toLower();
+    if (normalized == QStringLiteral("idle")
+        || normalized == QStringLiteral("available"))
+        return QStringLiteral("空闲");
+    if (normalized == QStringLiteral("reserved")) return QStringLiteral("已预约");
+    if (normalized == QStringLiteral("charging")) return QStringLiteral("充电中");
+    if (normalized == QStringLiteral("fault")) return QStringLiteral("故障");
+    if (normalized == QStringLiteral("offline")) return QStringLiteral("离线");
+    return status.isEmpty() ? QStringLiteral("未知") : status;
+}
+
+} // namespace
+
+StationDetailPage::StationDetailPage(QWidget *parent)
+    : QWidget(parent)
+{
+    auto *layout = new QVBoxLayout(this);
+    auto *backButton = new QPushButton(QStringLiteral("返回附近站点"), this);
+    layout->addWidget(backButton);
+
+    m_title = new QLabel(this);
+    QFont titleFont = m_title->font();
+    titleFont.setPointSize(18);
+    titleFont.setBold(true);
+    m_title->setFont(titleFont);
+    layout->addWidget(m_title);
+
+    m_summary = new QLabel(this);
+    m_summary->setWordWrap(true);
+    layout->addWidget(m_summary);
+
+    m_favorite = new QPushButton(this);
+    m_favorite->setObjectName(QStringLiteral("stationFavoriteButton"));
+    m_favorite->setMinimumHeight(40);
+    layout->addWidget(m_favorite);
+    m_favoriteStatus = new QLabel(this);
+    m_favoriteStatus->setWordWrap(true);
+    m_favoriteStatus->setStyleSheet(QStringLiteral("color:#64748b;"));
+    layout->addWidget(m_favoriteStatus);
+
+    m_status = new QLabel(this);
+    layout->addWidget(m_status);
+    m_piles = new QListWidget(this);
+    layout->addWidget(m_piles, 1);
+
+    auto *reservationRow = new QHBoxLayout;
+    auto *durationLabel = new QLabel(QStringLiteral("保留时长"), this);
+    m_duration = new QSpinBox(this);
+    m_duration->setObjectName(QStringLiteral("reservationDuration"));
+    m_duration->setRange(5, 30);
+    m_duration->setValue(15);
+    m_duration->setSuffix(QStringLiteral(" 分钟"));
+    m_reserve = new QPushButton(QStringLiteral("预约所选电桩"), this);
+    m_reserve->setObjectName(QStringLiteral("reservePileButton"));
+    m_reserve->setMinimumHeight(42);
+    m_reserve->setStyleSheet(QStringLiteral(
+        "QPushButton{background:#2563eb;color:white;border:0;border-radius:9px;font-weight:600;}"
+        "QPushButton:disabled{background:#94a3b8;}"));
+    reservationRow->addWidget(durationLabel);
+    reservationRow->addWidget(m_duration);
+    reservationRow->addWidget(m_reserve, 1);
+    layout->addLayout(reservationRow);
+
+    connect(backButton, &QPushButton::clicked,
+            this, &StationDetailPage::backRequested);
+    connect(m_favorite, &QPushButton::clicked, this, [this] {
+        if (m_favoritePending) return;
+        const qint64 stationId =
+            m_station.value(QStringLiteral("stationId")).toVariant().toLongLong();
+        if (stationId <= 0) {
+            m_favoriteStatus->setText(QStringLiteral("充电站编号无效，无法收藏"));
+            return;
+        }
+        m_previousFavorite =
+            m_station.value(QStringLiteral("favorited")).toBool();
+        const bool desired = !m_previousFavorite;
+        m_station.insert(QStringLiteral("favorited"), desired);
+        m_favoritePending = true;
+        m_favoriteStatus->setText(QStringLiteral("正在更新收藏状态…"));
+        updateFavoriteButton();
+        emit favoriteRequested(stationId, desired);
+    });
+    connect(m_piles, &QListWidget::currentItemChanged,
+            this, [this] { updateReservationButton(); });
+    connect(m_reserve, &QPushButton::clicked, this, [this] {
+        if (m_reservationPending || !m_piles->currentItem()) return;
+        const QJsonObject pile =
+            m_piles->currentItem()->data(Qt::UserRole).toJsonObject();
+        const qint64 stationId = m_station.value(QStringLiteral("stationId"))
+                                     .toVariant().toLongLong();
+        const qint64 pileId = pile.value(QStringLiteral("pileId"))
+                                  .toVariant().toLongLong();
+        if (stationId <= 0 || pileId <= 0
+            || !pileCanBeReserved(pile)) {
+            m_status->setText(QStringLiteral("请选择一个空闲电桩"));
+            return;
+        }
+        m_reservationPending = true;
+        m_status->setText(QStringLiteral("正在创建预约…"));
+        updateReservationButton();
+        emit reservationRequested(stationId, pileId, m_duration->value());
+    });
+}
+
+void StationDetailPage::setStation(const QJsonObject &station)
+{
+    m_station = station;
+    m_favoritePending = false;
+    m_reservationPending = false;
+    m_piles->clear();
+    m_favoriteStatus->clear();
+    m_title->setText(station.value(QStringLiteral("name")).toString());
+    m_summary->setText(QStringLiteral("%1\n电价 ¥%2/度 · 空闲 %3/%4")
+        .arg(station.value(QStringLiteral("address")).toString())
+        .arg(station.value(QStringLiteral("priceCentsPerKwh")).toInt() / 100.0,
+             0, 'f', 2)
+        .arg(station.value(QStringLiteral("availablePiles")).toInt())
+        .arg(station.value(QStringLiteral("totalPiles")).toInt()));
+    updateFavoriteButton();
+    updateReservationButton();
+    m_status->setText(QStringLiteral("正在加载电桩信息…"));
+    emit pilesRequested(
+        station.value(QStringLiteral("stationId")).toVariant().toLongLong());
+}
+
+void StationDetailPage::setPiles(const QJsonArray &piles)
+{
+    m_piles->clear();
+    if (piles.isEmpty()) {
+        m_status->setText(QStringLiteral("暂无电桩数据"));
+        updateReservationButton();
+        return;
+    }
+    QListWidgetItem *firstIdle = nullptr;
+    for (const QJsonValue &value : piles) {
+        const QJsonObject pile = value.toObject();
+        auto *item = new QListWidgetItem(
+            QStringLiteral("%1 · %2 · %3 kW\n状态：%4")
+                .arg(pile.value(QStringLiteral("pileCode")).toString(),
+                     pile.value(QStringLiteral("type")).toString())
+                .arg(pile.value(QStringLiteral("powerKw")).toDouble())
+                .arg(pileStatusText(
+                    pile.value(QStringLiteral("status")).toString())),
+            m_piles);
+        item->setData(Qt::UserRole, pile);
+        if (!pileCanBeReserved(pile))
+            item->setFlags(item->flags() & ~Qt::ItemIsSelectable
+                           & ~Qt::ItemIsEnabled);
+        else if (!firstIdle)
+            firstIdle = item;
+    }
+    if (firstIdle) m_piles->setCurrentItem(firstIdle);
+    m_status->setText(QStringLiteral("共 %1 个电桩").arg(piles.size()));
+    updateReservationButton();
+}
+
+void StationDetailPage::showError(const QString &message)
+{
+    m_status->setText(message);
+    m_piles->clear();
+    updateReservationButton();
+}
+
+void StationDetailPage::reservationAccepted()
+{
+    m_reservationPending = false;
+    m_status->setText(QStringLiteral("预约成功，可在充电页开始充电"));
+    updateReservationButton();
+}
+
+void StationDetailPage::reservationFailed(const QString &message)
+{
+    m_reservationPending = false;
+    m_status->setText(message.isEmpty()
+        ? QStringLiteral("预约失败，请稍后重试") : message);
+    updateReservationButton();
+}
+
+void StationDetailPage::favoriteUpdated(qint64 stationId, bool favorited,
+                                        const QString &updatedAt)
+{
+    if (stationId != m_station.value(QStringLiteral("stationId"))
+                         .toVariant().toLongLong()) return;
+    m_station.insert(QStringLiteral("favorited"), favorited);
+    m_favoritePending = false;
+    updateFavoriteButton();
+    m_favoriteStatus->setText(
+        favorited ? QStringLiteral("已收藏该充电站")
+                  : QStringLiteral("已取消收藏"));
+    m_favoriteStatus->setToolTip(updatedAt);
+    emit favoriteStateChanged(stationId, favorited);
+}
+
+void StationDetailPage::favoriteUpdateFailed(qint64 stationId,
+                                             const QString &message)
+{
+    if (stationId != m_station.value(QStringLiteral("stationId"))
+                         .toVariant().toLongLong()) return;
+    m_station.insert(QStringLiteral("favorited"), m_previousFavorite);
+    m_favoritePending = false;
+    updateFavoriteButton();
+    m_favoriteStatus->setText(
+        message.isEmpty() ? QStringLiteral("收藏状态更新失败，已恢复原状态")
+                          : message);
+}
+
+void StationDetailPage::updateFavoriteButton()
+{
+    const bool favorited =
+        m_station.value(QStringLiteral("favorited")).toBool();
+    m_favorite->setDisabled(m_favoritePending);
+    if (m_favoritePending) {
+        m_favorite->setText(favorited ? QStringLiteral("正在收藏…")
+                                      : QStringLiteral("正在取消收藏…"));
+    } else {
+        m_favorite->setText(favorited ? QStringLiteral("★ 取消收藏")
+                                      : QStringLiteral("☆ 收藏站点"));
+    }
+    m_favorite->setStyleSheet(favorited
+        ? QStringLiteral("background:#fef3c7;color:#92400e;border:1px solid #fde68a;border-radius:9px;font-weight:600;")
+        : QStringLiteral("background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:9px;font-weight:600;"));
+}
+
+void StationDetailPage::updateReservationButton()
+{
+    const bool hasSelection = m_piles && m_piles->currentItem()
+        && pileCanBeReserved(
+            m_piles->currentItem()->data(Qt::UserRole).toJsonObject());
+    m_reserve->setDisabled(m_reservationPending || !hasSelection);
+    m_duration->setDisabled(m_reservationPending);
+    m_reserve->setText(m_reservationPending
+        ? QStringLiteral("正在预约…") : QStringLiteral("预约所选电桩"));
+}

@@ -11,6 +11,7 @@
 #include "services/stationservice.h"
 #include "services/statisticsservice.h"
 #include "services/userservice.h"
+#include "map/tencentmapadapter.h"
 
 #include <QObject>
 
@@ -36,6 +37,7 @@ public:
     AlarmService *alarms() { return &m_alarms; }
     StatisticsService *statistics() { return &m_statistics; }
     AdminService *admin() { return &m_admin; }
+    TencentMapAdapter *maps() { return &m_maps; }
 
 private:
     DatabaseManager *m_database = nullptr;
@@ -50,4 +52,5 @@ private:
     AlarmService m_alarms;
     StatisticsService m_statistics;
     AdminService m_admin;
+    TencentMapAdapter m_maps;
 };

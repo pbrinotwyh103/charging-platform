@@ -13,6 +13,9 @@ class HomePage;
 class ChargingPage;
 class ProfilePage;
 class StationDetailPage;
+class RechargeRecordsPage;
+class FavoritesPage;
+class QResizeEvent;
 
 class UserMainWindow final : public QMainWindow
 {
@@ -28,13 +31,23 @@ public slots:
     void showProfile(const QJsonObject &profile);
     void showLoginPage();
     void showFeatureMessage(const QString &message);
+    void showChargingPage();
+    void setChargingSnapshot(const QJsonObject &snapshot);
 
 signals:
     void connectionRequested(const QString &host, quint16 port);
     void loginRequested(const QString &phone, const QString &host, quint16 port);
     void logoutRequested();
+    void rechargeRecordsRequested();
+    void orderHistoryRequested();
+    void favoriteListRequested();
+
+protected:
+    void resizeEvent(QResizeEvent *event) override;
 
 private:
+    void applyResponsiveScale();
+
     QLabel *m_statusLabel = nullptr;
     QLineEdit *m_hostEdit = nullptr;
     QSpinBox *m_portSpin = nullptr;
@@ -47,4 +60,9 @@ private:
     ChargingPage *m_chargingPage = nullptr;
     ProfilePage *m_profilePage = nullptr;
     StationDetailPage *m_stationDetailPage = nullptr;
+    RechargeRecordsPage *m_rechargeRecordsPage = nullptr;
+    FavoritesPage *m_favoritesPage = nullptr;
+    QWidget *m_stationDetailReturnPage = nullptr;
+    bool m_authenticated = false;
+    qreal m_uiScale = 0.0;
 };
