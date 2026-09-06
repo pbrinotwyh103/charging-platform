@@ -1,0 +1,545 @@
+#include "business_integration_test.h"
+#include "protocol/packetcodec.h"
+#include <QElapsedTimer>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QSqlError>
+#include <QSqlQuery>
+#include <QtTest>
+
+using Charging::ErrorCode;
+using Charging::Message;
+using Charging::MessageType;
+using Charging::ClientConnection;
+
+namespace {
+struct RequestPair { MessageType request; MessageType response; };
+const QList<RequestPair> userPairs{
+    {MessageType::UserProfileRequest, MessageType::UserProfileResponse},
+    {MessageType::UserProfileUpdateRequest, MessageType::UserProfileUpdateResponse},
+    {MessageType::WalletRechargeRequest, MessageType::WalletRechargeResponse},
+    {MessageType::WalletLedgerRequest, MessageType::WalletLedgerResponse},
+    {MessageType::StationListRequest, MessageType::StationListResponse},
+    {MessageType::PileListRequest, MessageType::PileListResponse},
+    {MessageType::FavoriteToggleRequest, MessageType::FavoriteToggleResponse},
+    {MessageType::ReservationCreateRequest, MessageType::ReservationCreateResponse},
+    {MessageType::ReservationCancelRequest, MessageType::ReservationCancelResponse},
+    {MessageType::ChargingStartRequest, MessageType::ChargingStartResponse},
+    {MessageType::ChargingStopRequest, MessageType::ChargingStopResponse},
+    {MessageType::ActiveOrderRequest, MessageType::ActiveOrderResponse}
+};
+
+// A byte sink replaces only the operating-system TCP transport. The real
+// dispatcher, session encoder, services, SQLite and event loop still execute.
+class RecordingSocket final : public QTcpSocket {
+public:
+    RecordingSocket() { QIODevice::open(QIODevice::ReadWrite); setSocketState(ConnectedState); }
+    QList<Message> messages;
+    bool failWrites = false;
+protected:
+    qint64 writeData(const char *data, qint64 size) override {
+        if (failWrites) return -1;
+        QByteArray buffer(data, size);
+        const auto decoded = Charging::PacketCodec::tryDecode(buffer);
+        if (decoded.status == Charging::DecodeStatus::Complete) messages.append(decoded.message);
+        return size;
+    }
+};
+
+Message packet(MessageType type, quint32 id, const QJsonObject &payload = {})
+{
+    Message result;
+    result.header.messageType = type;
+    result.header.requestId = id;
+    result.payload = payload;
+    return result;
+}
+
+bool takeRequestSlot(ClientSession &session, quint32 id)
+{
+    if (!session.markRequestStarted(id)) return false;
+    session.finishRequest(id);
+    return true;
+}
+}
+
+void BusinessIntegrationTest::init()
+{
+    m_directory = std::make_unique<QTemporaryDir>();
+    QVERIFY(m_directory->isValid());
+    m_databasePath = m_directory->filePath("business.db");
+    if (QByteArray(QTest::currentTestFunction()).startsWith("direct")) return;
+    m_server = std::make_unique<ServerApplication>();
+    QString error;
+    QVERIFY2(m_server->start(0, m_databasePath, &error), qPrintable(error));
+}
+
+void BusinessIntegrationTest::cleanup()
+{
+    m_server.reset();
+    m_directory.reset();
+}
+
+void BusinessIntegrationTest::connectClient(ClientConnection &client)
+{
+    client.setAutoReconnect(false);
+    client.connectToServer("127.0.0.1", m_server->listeningPort());
+    QTRY_VERIFY_WITH_TIMEOUT(client.isConnected(), 3000);
+}
+
+Message BusinessIntegrationTest::take(QSignalSpy &spy, MessageType type,
+                                      quint32 requestId, int timeout)
+{
+    QElapsedTimer timer;
+    timer.start();
+    do {
+        for (qsizetype i = 0; i < spy.size(); ++i) {
+            const auto message = qvariant_cast<Message>(spy.at(i).at(0));
+            if (message.header.requestId == requestId && message.header.messageType == type) {
+                spy.removeAt(i);
+                return message;
+            }
+        }
+        if (timer.elapsed() < timeout) spy.wait(timeout - int(timer.elapsed()));
+    } while (timer.elapsed() < timeout);
+    QTest::qFail(qPrintable(QString("Missing message type %1, requestId %2")
+                           .arg(int(type)).arg(requestId)), __FILE__, __LINE__);
+    return {};
+}
+
+Message BusinessIntegrationTest::request(ClientConnection &client, MessageType type,
+    MessageType response, const QJsonObject &payload, ErrorCode status, quint32 requestId)
+{
+    QSignalSpy spy(&client, &ClientConnection::messageReceived);
+    const auto id = requestId ? requestId : client.nextRequestId();
+    if (!client.send(type, id, payload)) {
+        QTest::qFail("Could not send request", __FILE__, __LINE__);
+        return {};
+    }
+    // Match only the request ID here so wrong response types fail immediately.
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < 3000) {
+        for (qsizetype i = 0; i < spy.size(); ++i) {
+            const auto message = qvariant_cast<Message>(spy.at(i).at(0));
+            if (message.header.requestId != id) continue;
+            QTest::qCompare(message.header.messageType, response, "response type", "expected", __FILE__, __LINE__);
+            QTest::qCompare(message.header.statusCode, status, "status", "expected", __FILE__, __LINE__);
+            if (message.payload.value("message").toString().trimmed().isEmpty())
+                QTest::qFail("Every response needs a display message", __FILE__, __LINE__);
+            return message;
+        }
+        spy.clear();
+        spy.wait(3000 - int(timer.elapsed()));
+    }
+    QTest::qFail("Response request ID was not preserved", __FILE__, __LINE__);
+    return {};
+}
+
+Message BusinessIntegrationTest::login(ClientConnection &client, const QString &phone)
+{
+    connectClient(client);
+    return request(client, MessageType::UserLoginRequest, MessageType::UserLoginResponse, {{"phone", phone}});
+}
+
+Message BusinessIntegrationTest::loginAdmin(ClientConnection &client)
+{
+    connectClient(client);
+    return request(client, MessageType::AdminLoginRequest, MessageType::AdminLoginResponse,
+                   {{"username", "admin"}, {"password", "123456"}});
+}
+
+QVariant BusinessIntegrationTest::sql(const QString &statement)
+{
+    QVariant value;
+    const QString name = "business_fixture";
+    {
+        auto db = QSqlDatabase::addDatabase("QSQLITE", name);
+        db.setDatabaseName(m_databasePath);
+        if (!db.open()) QTest::qFail(qPrintable(db.lastError().text()), __FILE__, __LINE__);
+        QSqlQuery query(db);
+        if (!query.exec(statement)) QTest::qFail(qPrintable(query.lastError().text()), __FILE__, __LINE__);
+        if (query.next()) value = query.value(0);
+    }
+    QSqlDatabase::removeDatabase(name);
+    return value;
+}
+
+void BusinessIntegrationTest::triggerJob(const char *signal)
+{
+    auto *jobs = m_server->findChild<JobManager *>();
+    QVERIFY(jobs);
+    QVERIFY(QMetaObject::invokeMethod(jobs, signal, Qt::DirectConnection));
+}
+
+void BusinessIntegrationTest::unauthorizedResponses_data()
+{
+    QTest::addColumn<int>("requestType");
+    QTest::addColumn<int>("responseType");
+    auto pairs = userPairs;
+    pairs.append({MessageType::AdminCommandRequest, MessageType::AdminCommandResponse});
+    pairs.append({MessageType::LogoutRequest, MessageType::LogoutResponse});
+    for (const auto &pair : pairs)
+        QTest::newRow(qPrintable(QString::number(int(pair.request)))) << int(pair.request) << int(pair.response);
+}
+
+void BusinessIntegrationTest::unauthorizedResponses()
+{
+    QFETCH(int, requestType);
+    QFETCH(int, responseType);
+    ClientConnection client;
+    connectClient(client);
+    request(client, MessageType(requestType), MessageType(responseType), {}, ErrorCode::Unauthorized, 918273);
+    QSignalSpy spy(&client, &ClientConnection::messageReceived);
+    QVERIFY(client.send(MessageType(requestType), 0));
+    const auto invalid = take(spy, MessageType(responseType), 0);
+    QCOMPARE(invalid.header.statusCode, ErrorCode::InvalidPacket);
+    QVERIFY(!invalid.payload.value("message").toString().isEmpty());
+}
+
+void BusinessIntegrationTest::roleGuards()
+{
+    ClientConnection admin, user;
+    loginAdmin(admin);
+    login(user);
+    for (const auto &pair : userPairs)
+        request(admin, pair.request, pair.response, {}, ErrorCode::Forbidden);
+    request(user, MessageType::AdminCommandRequest, MessageType::AdminCommandResponse,
+            {{"action", "dashboard.summary"}}, ErrorCode::Forbidden);
+    request(user, MessageType::AdminLoginRequest, MessageType::AdminLoginResponse, {}, ErrorCode::Forbidden);
+    request(admin, MessageType::UserLoginRequest, MessageType::UserLoginResponse, {}, ErrorCode::Forbidden);
+    request(user, MessageType(65000), MessageType(65000), {}, ErrorCode::UnsupportedMessage);
+}
+
+void BusinessIntegrationTest::invalidFields_data()
+{
+    QTest::addColumn<int>("requestType");
+    QTest::addColumn<int>("responseType");
+    QTest::addColumn<QJsonObject>("payload");
+    QTest::addColumn<int>("status");
+    auto row = [](const char *name, MessageType req, MessageType res, QJsonObject payload,
+                  ErrorCode status = ErrorCode::ValidationFailed) {
+        QTest::newRow(name) << int(req) << int(res) << payload << int(status);
+    };
+    row("profile", MessageType::UserProfileUpdateRequest, MessageType::UserProfileUpdateResponse, {{"nickname", 123}});
+    row("recharge", MessageType::WalletRechargeRequest, MessageType::WalletRechargeResponse, {{"amountCents", "100"}, {"transactionId", "bad"}});
+    row("ledger", MessageType::WalletLedgerRequest, MessageType::WalletLedgerResponse, {{"page", 0}});
+    row("stations", MessageType::StationListRequest, MessageType::StationListResponse, {{"radiusKm", 101}});
+    row("piles", MessageType::PileListRequest, MessageType::PileListResponse, {{"stationId", "1"}});
+    row("favorite", MessageType::FavoriteToggleRequest, MessageType::FavoriteToggleResponse, {{"stationId", 1}, {"favorited", 1}});
+    row("reservation", MessageType::ReservationCreateRequest, MessageType::ReservationCreateResponse, {{"stationId", 1}, {"durationMinutes", 0}});
+    row("cancel", MessageType::ReservationCancelRequest, MessageType::ReservationCancelResponse, {{"reservationId", 0}});
+    row("start", MessageType::ChargingStartRequest, MessageType::ChargingStartResponse, {{"reservationId", "1"}});
+    row("stop", MessageType::ChargingStopRequest, MessageType::ChargingStopResponse, {{"orderId", 0}});
+    row("admin-fields", MessageType::AdminCommandRequest, MessageType::AdminCommandResponse, {{"action", 1}});
+    row("admin-unknown", MessageType::AdminCommandRequest, MessageType::AdminCommandResponse, {{"action", "unknown.action"}}, ErrorCode::UnsupportedMessage);
+}
+
+void BusinessIntegrationTest::invalidFields()
+{
+    QFETCH(int, requestType);
+    QFETCH(int, responseType);
+    QFETCH(QJsonObject, payload);
+    QFETCH(int, status);
+    ClientConnection client;
+    if (MessageType(requestType) == MessageType::AdminCommandRequest) loginAdmin(client);
+    else login(client);
+    request(client, MessageType(requestType), MessageType(responseType), payload, ErrorCode(status));
+}
+
+void BusinessIntegrationTest::userWorkflowAndPushes()
+{
+    ClientConnection user, secondSession, otherUser, admin, anonymous;
+    const auto userId = login(user).payload.value("userId").toInteger();
+    login(secondSession);
+    login(otherUser, "13800138802");
+    loginAdmin(admin);
+    connectClient(anonymous);
+    auto *tcp = m_server->findChild<TcpServer *>();
+    QVERIFY(tcp);
+    QCOMPARE(tcp->sessionsForUser(userId).size(), 2);
+    QCOMPARE(tcp->administratorSessions().size(), 1);
+
+    request(user, MessageType::UserProfileUpdateRequest, MessageType::UserProfileUpdateResponse, {{"nickname", "集成用户"}});
+    QCOMPARE(request(user, MessageType::UserProfileRequest, MessageType::UserProfileResponse).payload.value("nickname").toString(), QString("集成用户"));
+    const auto recharge = request(user, MessageType::WalletRechargeRequest, MessageType::WalletRechargeResponse,
+                                  {{"amountCents", 10000}, {"transactionId", "integration-recharge"}});
+    QCOMPARE(recharge.payload.value("balanceCents").toInt(), 10000);
+    QCOMPARE(request(user, MessageType::WalletLedgerRequest, MessageType::WalletLedgerResponse).payload.value("total").toInt(), 1);
+    QVERIFY(!request(user, MessageType::StationListRequest, MessageType::StationListResponse).payload.value("items").toArray().isEmpty());
+    QCOMPARE(request(user, MessageType::PileListRequest, MessageType::PileListResponse, {{"stationId", 1}}).payload.value("items").toArray().size(), 2);
+    QVERIFY(request(user, MessageType::FavoriteToggleRequest, MessageType::FavoriteToggleResponse, {{"stationId", 1}, {"favorited", true}}).payload.value("favorited").toBool());
+    QVERIFY(!request(user, MessageType::ActiveOrderRequest, MessageType::ActiveOrderResponse).payload.value("active").toBool());
+    auto reservation = request(user, MessageType::ReservationCreateRequest, MessageType::ReservationCreateResponse,
+                               {{"stationId", 1}, {"pileId", 1}}).payload;
+    QCOMPARE(request(user, MessageType::ReservationCancelRequest, MessageType::ReservationCancelResponse,
+                     {{"reservationId", reservation.value("reservationId")}}).payload.value("status").toString(), QString("cancelled"));
+    reservation = request(user, MessageType::ReservationCreateRequest, MessageType::ReservationCreateResponse,
+                           {{"stationId", 1}, {"pileId", 1}}).payload;
+    const auto started = request(user, MessageType::ChargingStartRequest, MessageType::ChargingStartResponse,
+                                 {{"reservationId", reservation.value("reservationId")}}).payload;
+    const auto orderId = started.value("orderId");
+    QCOMPARE(request(user, MessageType::ActiveOrderRequest, MessageType::ActiveOrderResponse).payload.value("orderId"), orderId);
+    request(otherUser, MessageType::ChargingStopRequest, MessageType::ChargingStopResponse,
+            {{"orderId", orderId}}, ErrorCode::Forbidden);
+    QSignalSpy userPush(&user, &ClientConnection::messageReceived), secondPush(&secondSession, &ClientConnection::messageReceived),
+        adminPush(&admin, &ClientConnection::messageReceived), otherPush(&otherUser, &ClientConnection::messageReceived),
+        anonymousPush(&anonymous, &ClientConnection::messageReceived);
+    const auto progress = take(userPush, MessageType::ChargingProgressPush, 0);
+    QCOMPARE(progress.payload.value("orderId"), orderId);
+    QVERIFY(progress.payload.value("seq").toInt() > 0);
+    QVERIFY(progress.payload.value("durationSec").toInt() >= 1);
+    QVERIFY(progress.payload.value("powerKw").toDouble() > 0);
+    QCOMPARE(take(adminPush, MessageType::ChargingProgressPush, 0).payload, progress.payload);
+    QCOMPARE(take(secondPush, MessageType::ChargingProgressPush, 0).payload, progress.payload);
+    const auto stopped = request(user, MessageType::ChargingStopRequest, MessageType::ChargingStopResponse, {{"orderId", orderId}}).payload;
+    QCOMPARE(stopped.value("status").toString(), QString("completed"));
+    QCOMPARE(stopped.value("stopReason").toString(), QString("user_stop"));
+    QCOMPARE(stopped.value("balanceCents").toInt() + stopped.value("feeCents").toInt(), 10000);
+    const auto final = take(userPush, MessageType::ChargingStoppedPush, 0);
+    QCOMPARE(final.payload.value("feeCents"), stopped.value("feeCents"));
+    QVERIFY(final.payload.value("seq").toInt() > progress.payload.value("seq").toInt());
+    QCOMPARE(take(adminPush, MessageType::ChargingStoppedPush, 0).payload, final.payload);
+    QCOMPARE(take(secondPush, MessageType::ChargingStoppedPush, 0).payload, final.payload);
+    QVERIFY(otherPush.isEmpty());
+    QVERIFY(anonymousPush.isEmpty());
+    QVERIFY(!request(user, MessageType::ActiveOrderRequest, MessageType::ActiveOrderResponse).payload.value("active").toBool());
+    request(secondSession, MessageType::LogoutRequest, MessageType::LogoutResponse);
+    QCOMPARE(tcp->sessionsForUser(userId).size(), 1);
+    user.disconnectFromServer();
+    QTRY_VERIFY(tcp->sessionsForUser(userId).isEmpty());
+    admin.disconnectFromServer();
+    QTRY_VERIFY(tcp->administratorSessions().isEmpty());
+}
+
+void BusinessIntegrationTest::faultsReachOwnerAndAdministrators()
+{
+    ClientConnection user, admin, stranger;
+    login(user);
+    loginAdmin(admin);
+    login(stranger, "13800138802");
+    const auto denied = request(user, MessageType::ReservationCreateRequest, MessageType::ReservationCreateResponse,
+                                {{"stationId", 1}}, ErrorCode::Conflict);
+    QCOMPARE(denied.payload.value("reason").toString(), QString("insufficient_balance"));
+    request(user, MessageType::WalletRechargeRequest, MessageType::WalletRechargeResponse,
+            {{"amountCents", 10000}, {"transactionId", "fault-recharge"}});
+    const auto reservation = request(user, MessageType::ReservationCreateRequest, MessageType::ReservationCreateResponse,
+                                     {{"stationId", 1}, {"pileId", 1}}).payload;
+    const auto orderId = request(user, MessageType::ChargingStartRequest, MessageType::ChargingStartResponse,
+                                 {{"reservationId", reservation.value("reservationId")}}).payload.value("orderId");
+    QSignalSpy userPush(&user, &ClientConnection::messageReceived), adminPush(&admin, &ClientConnection::messageReceived),
+        strangerPush(&stranger, &ClientConnection::messageReceived);
+    sql("UPDATE charging_piles SET status='fault' WHERE id=1");
+    triggerJob("chargingTick");
+    const auto alarm = take(userPush, MessageType::AlarmPush, 0);
+    QCOMPARE(alarm.payload.value("orderId"), orderId);
+    QCOMPARE(alarm.payload.value("alarmType").toString(), QString("device_fault"));
+    QCOMPARE(take(adminPush, MessageType::AlarmPush, 0).payload, alarm.payload);
+    const auto stopped = take(userPush, MessageType::ChargingStoppedPush, 0);
+    QCOMPARE(stopped.payload.value("status").toString(), QString("fault_stopped"));
+    QCOMPARE(take(adminPush, MessageType::ChargingStoppedPush, 0).payload, stopped.payload);
+    QVERIFY(strangerPush.isEmpty());
+    triggerJob("chargingTick");
+    QTest::qWait(100);
+    QVERIFY(userPush.isEmpty());
+    QCOMPARE(sql("SELECT COUNT(*) FROM alarms").toInt(), 1);
+}
+
+void BusinessIntegrationTest::reservationExpiryJob()
+{
+    ClientConnection user;
+    login(user);
+    request(user, MessageType::WalletRechargeRequest, MessageType::WalletRechargeResponse,
+            {{"amountCents", 10000}, {"transactionId", "expiry-recharge"}});
+    request(user, MessageType::ReservationCreateRequest, MessageType::ReservationCreateResponse, {{"stationId", 1}, {"pileId", 1}});
+    sql("UPDATE reservations SET expires_at='2000-01-01T00:00:00Z' WHERE status='active'");
+    triggerJob("reservationExpiryTick");
+    QTRY_COMPARE_WITH_TIMEOUT(sql("SELECT status FROM reservations").toString(), QString("expired"), 3000);
+    QCOMPARE(sql("SELECT status FROM charging_piles WHERE id=1").toString(), QString("idle"));
+}
+
+void BusinessIntegrationTest::duplicateRequestLifecycle()
+{
+    ClientConnection user;
+    login(user);
+    QSignalSpy spy(&user, &ClientConnection::messageReceived);
+    const QJsonObject payload{{"amountCents", 1000}, {"transactionId", "duplicate"}};
+    QVERIFY(user.send(MessageType::WalletRechargeRequest, 4545, payload));
+    QVERIFY(user.send(MessageType::WalletRechargeRequest, 4545, payload));
+    const auto first = take(spy, MessageType::WalletRechargeResponse, 4545);
+    const auto second = take(spy, MessageType::WalletRechargeResponse, 4545);
+    QSet<int> statuses{int(first.header.statusCode), int(second.header.statusCode)};
+    QCOMPARE(statuses, QSet<int>({int(ErrorCode::Success), int(ErrorCode::DuplicateRequest)}));
+    const auto ledger = request(user, MessageType::WalletLedgerRequest, MessageType::WalletLedgerResponse,
+                                {}, ErrorCode::Success, 4545);
+    QCOMPARE(ledger.payload.value("total").toInt(), 1);
+    QCOMPARE(sql("SELECT balance_cents FROM users").toInt(), 1000);
+}
+
+void BusinessIntegrationTest::adminScopeComesFromSession()
+{
+    ClientConnection first, second;
+    const auto firstScope = loginAdmin(first).payload.value("sessionId").toString();
+    const auto secondScope = loginAdmin(second).payload.value("sessionId").toString();
+    QVERIFY(firstScope != secondScope);
+    request(first, MessageType::AdminCommandRequest, MessageType::AdminCommandResponse,
+            {{"action", "pile.disable"}, {"pileId", 1}, {"_requestScope", "forged"}}, ErrorCode::Success, 777);
+    request(first, MessageType::AdminCommandRequest, MessageType::AdminCommandResponse,
+            {{"action", "pile.enable"}, {"pileId", 1}}, ErrorCode::Success, 778);
+    request(second, MessageType::AdminCommandRequest, MessageType::AdminCommandResponse,
+            {{"action", "pile.disable"}, {"pileId", 1}, {"_requestScope", "forged"}}, ErrorCode::Success, 777);
+    QCOMPARE(sql("SELECT status FROM charging_piles WHERE id=1").toString(), QString("disabled"));
+    const auto firstDetail = QJsonDocument::fromJson(sql("SELECT detail FROM device_control_records WHERE request_id=777 ORDER BY id LIMIT 1").toByteArray()).object();
+    const auto secondDetail = QJsonDocument::fromJson(sql("SELECT detail FROM device_control_records WHERE request_id=777 ORDER BY id DESC LIMIT 1").toByteArray()).object();
+    QCOMPARE(firstDetail.value("request").toObject().value("_requestScope").toString(), firstScope);
+    QCOMPARE(secondDetail.value("request").toObject().value("_requestScope").toString(), secondScope);
+}
+
+void BusinessIntegrationTest::logoutDiscardsPendingProfile()
+{
+    ClientConnection user;
+    login(user);
+    QSignalSpy spy(&user, &ClientConnection::messageReceived);
+    QVERIFY(user.send(MessageType::UserProfileRequest, 880));
+    QVERIFY(user.send(MessageType::LogoutRequest, 881));
+    QCOMPARE(take(spy, MessageType::LogoutResponse, 881).header.statusCode, ErrorCode::Success);
+    const auto profile = take(spy, MessageType::UserProfileResponse, 880);
+    QCOMPARE(profile.header.statusCode, ErrorCode::SessionExpired);
+    QVERIFY(!profile.payload.contains("phone"));
+}
+
+void BusinessIntegrationTest::directRequestMappingsAndLifecycle()
+{
+    DatabaseManager database;
+    ServiceRegistry services;
+    QString error;
+    QVERIFY2(database.open(m_databasePath, &error), qPrintable(error));
+    QVERIFY2(services.initialize(&database, &error), qPrintable(error));
+    MessageDispatcher dispatcher(&services);
+    auto *socket = new RecordingSocket;
+    ClientSession session(socket);
+    quint32 id = 1;
+    auto pairs = userPairs;
+    pairs.append({MessageType::AdminCommandRequest, MessageType::AdminCommandResponse});
+    pairs.append({MessageType::LogoutRequest, MessageType::LogoutResponse});
+    for (const auto &pair : pairs) {
+        dispatcher.dispatch(&session, packet(pair.request, id));
+        QCOMPARE(socket->messages.last().header.messageType, pair.response);
+        QCOMPARE(socket->messages.last().header.requestId, id);
+        QCOMPARE(socket->messages.last().header.statusCode, ErrorCode::Unauthorized);
+        QVERIFY(!socket->messages.last().payload.value("message").toString().isEmpty());
+        QVERIFY(takeRequestSlot(session, id++));
+    }
+    socket->messages.clear();
+    dispatcher.dispatch(&session, packet(MessageType::UserLoginRequest, 40, {{"phone", "13800138801"}}));
+    QVERIFY(!session.markRequestStarted(40));
+    QTRY_COMPARE(socket->messages.size(), 1);
+    QCOMPARE(socket->messages.first().header.statusCode, ErrorCode::Success);
+    QCOMPARE(socket->messages.first().payload.value("avatar").toString(), QString("default://gray-avatar"));
+    QVERIFY(session.isAuthenticated());
+    QVERIFY(takeRequestSlot(session, 40));
+    socket->messages.clear();
+    const auto recharge = packet(MessageType::WalletRechargeRequest, 41,
+                                 {{"amountCents", 1000}, {"transactionId", "direct-recharge"}});
+    dispatcher.dispatch(&session, recharge);
+    dispatcher.dispatch(&session, recharge);
+    QCOMPARE(socket->messages.size(), 1);
+    QCOMPARE(socket->messages.first().header.statusCode, ErrorCode::DuplicateRequest);
+    QVERIFY(!session.markRequestStarted(41));
+    QTRY_COMPARE(socket->messages.size(), 2);
+    QCOMPARE(socket->messages.last().header.statusCode, ErrorCode::Success);
+    QVERIFY(takeRequestSlot(session, 41));
+    QCOMPARE(sql("SELECT balance_cents FROM users").toInt(), 1000);
+
+    socket->messages.clear();
+    dispatcher.dispatch(&session, packet(MessageType::UserProfileRequest, 42));
+    dispatcher.dispatch(&session, packet(MessageType::LogoutRequest, 43));
+    QTRY_COMPARE(socket->messages.size(), 2);
+    QCOMPARE(socket->messages.last().header.messageType, MessageType::UserProfileResponse);
+    QCOMPARE(socket->messages.last().header.statusCode, ErrorCode::SessionExpired);
+    QVERIFY(!socket->messages.last().payload.contains("phone"));
+    QVERIFY(takeRequestSlot(session, 42));
+    QVERIFY(!session.isAuthenticated());
+}
+
+void BusinessIntegrationTest::directTimeoutKeepsRequestReserved()
+{
+    DatabaseManager database;
+    ServiceRegistry services;
+    QString error;
+    QVERIFY2(database.open(m_databasePath, &error), qPrintable(error));
+    QVERIFY2(services.initialize(&database, &error), qPrintable(error));
+    MessageDispatcher dispatcher(&services, nullptr, 50);
+    auto *socket = new RecordingSocket;
+    ClientSession session(socket);
+    // A real SQLite writer lock delays auto-registration without replacing the
+    // service under test. The event loop remains free to deliver the deadline.
+    QSqlQuery lock(database.database());
+    QVERIFY(lock.exec("BEGIN IMMEDIATE"));
+    const auto loginPacket = packet(MessageType::UserLoginRequest, 50, {{"phone", "13800138801"}});
+    dispatcher.dispatch(&session, loginPacket);
+    QTRY_COMPARE_WITH_TIMEOUT(socket->messages.size(), 1, 1000);
+    QCOMPARE(socket->messages.first().header.statusCode, ErrorCode::RequestTimeout);
+    QCOMPARE(socket->messages.first().header.messageType, MessageType::UserLoginResponse);
+    QCOMPARE(socket->messages.first().header.requestId, quint32(50));
+    dispatcher.dispatch(&session, loginPacket);
+    QCOMPARE(socket->messages.last().header.statusCode, ErrorCode::DuplicateRequest);
+    QVERIFY(lock.exec("ROLLBACK"));
+    QTRY_VERIFY_WITH_TIMEOUT(takeRequestSlot(session, 50), 3000);
+    QCOMPARE(socket->messages.size(), 2); // No second response after timeout.
+    QVERIFY(!session.isAuthenticated()); // A late login cannot silently sign in.
+}
+
+void BusinessIntegrationTest::directAdminScopeAndDisconnect()
+{
+    DatabaseManager database;
+    ServiceRegistry services;
+    QString error;
+    QVERIFY2(database.open(m_databasePath, &error), qPrintable(error));
+    QVERIFY2(services.initialize(&database, &error), qPrintable(error));
+    MessageDispatcher dispatcher(&services);
+    auto *socket = new RecordingSocket;
+    ClientSession session(socket);
+    session.authenticate(Charging::Role::Administrator, 1, "admin");
+    const auto scope = session.sessionId();
+    dispatcher.dispatch(&session, packet(MessageType::AdminCommandRequest, 70,
+        {{"action", "pile.disable"}, {"pileId", 1}, {"_requestScope", "forged"}}));
+    QTRY_COMPARE(socket->messages.size(), 1);
+    QCOMPARE(socket->messages.last().header.statusCode, ErrorCode::Success);
+    const auto detail = QJsonDocument::fromJson(sql("SELECT detail FROM device_control_records").toByteArray()).object();
+    QCOMPARE(detail.value("request").toObject().value("_requestScope").toString(), scope);
+    for (const auto &pair : userPairs) {
+        dispatcher.dispatch(&session, packet(pair.request, 71));
+        QCOMPARE(socket->messages.last().header.messageType, pair.response);
+        QCOMPARE(socket->messages.last().header.statusCode, ErrorCode::Forbidden);
+        QVERIFY(takeRequestSlot(session, 71));
+    }
+    {
+        auto disconnected = std::make_unique<ClientSession>(new RecordingSocket);
+        disconnected->authenticate(Charging::Role::Administrator, 1, "admin");
+        dispatcher.dispatch(disconnected.get(), packet(MessageType::AdminCommandRequest, 72,
+            {{"action", "pile.enable"}, {"pileId", 1}}));
+        disconnected.reset();
+    }
+    QTRY_COMPARE_WITH_TIMEOUT(sql("SELECT status FROM charging_piles WHERE id=1").toString(), QString("idle"), 3000);
+    // Dispatcher teardown also releases a living session's in-flight ID.
+    auto shortLived = std::make_unique<MessageDispatcher>(&services);
+    shortLived->dispatch(&session, packet(MessageType::AdminCommandRequest, 73,
+        {{"action", "dashboard.summary"}}));
+    shortLived.reset();
+    QVERIFY(takeRequestSlot(session, 73));
+}
+
+void BusinessIntegrationTest::directSessionReportsQueueFailure()
+{
+    auto *socket = new RecordingSocket;
+    ClientSession session(socket);
+    QVERIFY(session.send(MessageType::ChargingProgressPush, 0, {{"orderId", 1}}));
+    socket->failWrites = true;
+    QVERIFY(!session.send(MessageType::ChargingProgressPush, 0, {{"orderId", 1}}));
+    QCOMPARE(socket->messages.size(), 1);
+    ClientSession disconnected(new QTcpSocket);
+    QVERIFY(!disconnected.send(MessageType::ChargingStoppedPush, 0));
+}
+
+QTEST_GUILESS_MAIN(BusinessIntegrationTest)

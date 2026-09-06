@@ -22,14 +22,16 @@ QString ClientSession::peerDescription() const
         .arg(m_socket->peerPort());
 }
 
-void ClientSession::send(Charging::MessageType type,
+bool ClientSession::send(Charging::MessageType type,
                          quint32 requestId,
                          const QJsonObject &payload,
                          Charging::ErrorCode status)
 {
     if (m_socket->state() == QAbstractSocket::ConnectedState) {
-        m_socket->write(Charging::PacketCodec::encode(type, requestId, payload, status));
+        const auto packet = Charging::PacketCodec::encode(type, requestId, payload, status);
+        return m_socket->write(packet) == packet.size();
     }
+    return false;
 }
 
 void ClientSession::close()

@@ -1,5 +1,4 @@
-QT += core network sql concurrent testlib
-QT -= gui
+QT += core gui network sql concurrent testlib
 CONFIG += console testcase c++17
 CONFIG -= app_bundle
 TEMPLATE = app
@@ -39,3 +38,11 @@ SOURCES += \
     ../server/services/serviceregistry.cpp
 
 RESOURCES += ../server/resources/database.qrc
+
+# ServiceRegistry and MessageDispatcher now link the complete business core.
+SOURCES -= ../server/services/authservice.cpp \
+    ../server/services/serviceregistry.cpp \
+    ../server/repositories/adminrepository.cpp \
+    ../server/repositories/userrepository.cpp
+SOURCES += $$files($$PWD/../server/services/*.cpp) \
+    $$files($$PWD/../server/repositories/*.cpp)

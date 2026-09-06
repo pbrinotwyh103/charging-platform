@@ -15,7 +15,9 @@ class ClientSession final : public QObject
 public:
     explicit ClientSession(QTcpSocket *socket, QObject *parent = nullptr);
     QString peerDescription() const;
-    void send(Charging::MessageType type,
+    // True means the complete packet entered the socket's outgoing queue;
+    // application-level receipt is not acknowledged by the wire protocol.
+    bool send(Charging::MessageType type,
               quint32 requestId,
               const QJsonObject &payload = {},
               Charging::ErrorCode status = Charging::ErrorCode::Success);
