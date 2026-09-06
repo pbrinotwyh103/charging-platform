@@ -54,24 +54,30 @@ inline QString duration(int seconds) {
 }
 
 inline QString pileStatus(const QString &status) {
-  if (status == QStringLiteral("idle"))
+  if (status == QStringLiteral("idle") || status == QStringLiteral("IDLE"))
     return QStringLiteral("空闲");
   if (status == QStringLiteral("reserved"))
     return QStringLiteral("已预约");
   if (status == QStringLiteral("charging"))
     return QStringLiteral("充电中");
-  if (status == QStringLiteral("fault"))
+  if (status == QStringLiteral("IN_USE"))
+    return QStringLiteral("使用中");
+  if (status == QStringLiteral("fault") || status == QStringLiteral("FAULT"))
     return QStringLiteral("故障");
-  if (status == QStringLiteral("offline"))
+  if (status == QStringLiteral("offline") ||
+      status == QStringLiteral("OFFLINE"))
     return QStringLiteral("离线");
-  if (status == QStringLiteral("disabled"))
+  if (status == QStringLiteral("disabled") ||
+      status == QStringLiteral("DISABLED"))
     return QStringLiteral("已停用");
   return status.isEmpty() ? QStringLiteral("未知") : status;
 }
 
 inline QString userStatus(const QString &status) {
-  return status == QStringLiteral("frozen") ? QStringLiteral("已冻结")
-                                            : QStringLiteral("正常");
+  return status == QStringLiteral("frozen") ||
+                 status == QStringLiteral("FROZEN")
+             ? QStringLiteral("已冻结")
+             : QStringLiteral("正常");
 }
 
 inline QString orderStatus(const QString &status) {
@@ -146,13 +152,15 @@ inline void styleStateItem(QTableWidgetItem *item, Tone tone) {
 }
 
 inline Tone pileTone(const QString &status) {
-  if (status == QStringLiteral("idle"))
+  if (status == QStringLiteral("idle") || status == QStringLiteral("IDLE"))
     return Tone::Success;
-  if (status == QStringLiteral("charging"))
+  if (status == QStringLiteral("charging") ||
+      status == QStringLiteral("IN_USE"))
     return Tone::Info;
   if (status == QStringLiteral("reserved"))
     return Tone::Warning;
-  if (status == QStringLiteral("fault"))
+  if (status == QStringLiteral("fault") ||
+      status == QStringLiteral("FAULT"))
     return Tone::Danger;
   return Tone::Neutral;
 }

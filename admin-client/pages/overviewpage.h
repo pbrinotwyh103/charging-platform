@@ -19,6 +19,7 @@ public slots:
   void requestRefresh();
   void setSummary(const QJsonObject &payload);
   void setRevenue(const QJsonObject &payload);
+  void setPileStatus(const QJsonObject &payload);
   void setLoading(const QString &action, bool loading);
   void setError(const QString &message);
 

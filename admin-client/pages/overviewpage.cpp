@@ -15,12 +15,13 @@
 namespace {
 
 QString metricMoney(const QJsonObject &metrics, const QString &formattedKey,
-                    const QString &centsKey) {
+                    const QString &centsKey, const QString &fenKey) {
   const QString formatted = metrics.value(formattedKey).toString();
   if (!formatted.isEmpty())
     return formatted;
+  const QString amountKey = metrics.contains(centsKey) ? centsKey : fenKey;
   return AdminUi::money(
-      static_cast<qint64>(metrics.value(centsKey).toDouble()));
+      static_cast<qint64>(metrics.value(amountKey).toDouble()));
 }
 
 QString metricCount(const QJsonObject &metrics, const QString &key) {
@@ -73,7 +74,7 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
   m_revenueChart = new RevenueChartWidget(content);
   connect(m_revenueChart, &RevenueChartWidget::rangeChanged, this,
           [this](int days) {
-            emit commandRequested(QStringLiteral("dashboard.revenue"),
+            emit commandRequested(QStringLiteral("report.summary"),
                                   {{QStringLiteral("days"), days}});
           });
   layout->addWidget(m_revenueChart);
@@ -93,9 +94,9 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
 int OverviewPage::revenueDays() const { return m_revenueChart->days(); }
 
 void OverviewPage::requestRefresh() {
-  emit commandRequested(QStringLiteral("dashboard.summary"), {});
-  emit commandRequested(QStringLiteral("dashboard.revenue"),
+  emit commandRequested(QStringLiteral("report.summary"),
                         {{QStringLiteral("days"), revenueDays()}});
+  emit commandRequested(QStringLiteral("report.pileStates"), {});
 }
 
 void OverviewPage::setSummary(const QJsonObject &payload) {
@@ -104,23 +105,35 @@ void OverviewPage::setSummary(const QJsonObject &payload) {
   QJsonObject orders = data.value(QStringLiteral("orderMetrics")).toObject();
   if (revenue.isEmpty())
     revenue = data.value(QStringLiteral("metrics")).toObject();
+  if (revenue.isEmpty())
+    revenue = data;
   if (orders.isEmpty())
-    orders = revenue;
+    orders = data.value(QStringLiteral("metrics")).toObject();
+  if (orders.isEmpty())
+    orders = data;
+
+  const QJsonArray points = data.value(QStringLiteral("points")).toArray();
+  if (!points.isEmpty())
+    m_revenueChart->setRevenueData(points);
 
   m_todayRevenue->setText(metricMoney(revenue, QStringLiteral("todayRevenue"),
-                                      QStringLiteral("todayRevenueCents")));
+                                      QStringLiteral("todayRevenueCents"),
+                                      QStringLiteral("todayRevenueFen")));
   m_monthRevenue->setText(metricMoney(revenue, QStringLiteral("monthRevenue"),
-                                      QStringLiteral("monthRevenueCents")));
+                                      QStringLiteral("monthRevenueCents"),
+                                      QStringLiteral("monthRevenueFen")));
   m_totalRevenue->setText(metricMoney(revenue, QStringLiteral("totalRevenue"),
-                                      QStringLiteral("totalRevenueCents")));
+                                      QStringLiteral("totalRevenueCents"),
+                                      QStringLiteral("totalRevenueFen")));
   m_todayOrders->setText(
       metricCount(orders, QStringLiteral("todayOrderCount")));
   m_monthOrders->setText(
       metricCount(orders, QStringLiteral("monthOrderCount")));
   m_totalOrders->setText(
       metricCount(orders, QStringLiteral("totalOrderCount")));
-  m_pileStatusChart->setStatusData(
-      data.value(QStringLiteral("pileStatus")).toObject());
+  const QJsonObject pileStatus = data.value(QStringLiteral("pileStatus")).toObject();
+  if (!pileStatus.isEmpty())
+    m_pileStatusChart->setStatusData(pileStatus);
   setState(QStringLiteral("更新于 %1")
                .arg(data.value(QStringLiteral("updatedAt"))
                         .toString(QStringLiteral("刚刚"))),
@@ -135,8 +148,12 @@ void OverviewPage::setRevenue(const QJsonObject &payload) {
   m_revenueChart->setRevenueData(points);
 }
 
+void OverviewPage::setPileStatus(const QJsonObject &payload) {
+  m_pileStatusChart->setStatusData(AdminUi::dataObject(payload));
+}
+
 void OverviewPage::setLoading(const QString &action, bool loading) {
-  if (loading && action.startsWith(QStringLiteral("dashboard."))) {
+  if (loading && action.startsWith(QStringLiteral("report."))) {
     setState(QStringLiteral("正在刷新运营数据…"), QStringLiteral("loading"));
   }
 }

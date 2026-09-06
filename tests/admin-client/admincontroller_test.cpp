@@ -147,9 +147,9 @@ void AdminControllerTest::login(AdminController &controller,
 void AdminControllerTest::unauthenticatedCommandIsRejected() {
   AdminController controller;
   QSignalSpy failed(&controller, &AdminController::commandFailed);
-  controller.requestAdminCommand(QStringLiteral("dashboard.summary"));
+  controller.requestAdminCommand(QStringLiteral("report.summary"));
   QCOMPARE(failed.count(), 1);
-  QCOMPARE(failed.at(0).at(0).toString(), QStringLiteral("dashboard.summary"));
+  QCOMPARE(failed.at(0).at(0).toString(), QStringLiteral("report.summary"));
   QCOMPARE(failed.at(0).at(2).toInt(),
            static_cast<int>(Charging::ErrorCode::Unauthorized));
 }
@@ -162,18 +162,18 @@ void AdminControllerTest::loginAndCommandRoundTrip() {
   QSignalSpy busy(&controller, &AdminController::commandBusyChanged);
   QSignalSpy succeeded(&controller, &AdminController::commandSucceeded);
   controller.requestAdminCommand(
-      QStringLiteral("dashboard.summary"),
+      QStringLiteral("report.summary"),
       {{QStringLiteral("scope"), QStringLiteral("all")}});
   QTRY_COMPARE_WITH_TIMEOUT(succeeded.count(), 1, 3'000);
   QCOMPARE(server.commandCount(), 1);
   QCOMPARE(
       server.commandAt(0).payload.value(QStringLiteral("action")).toString(),
-      QStringLiteral("dashboard.summary"));
+      QStringLiteral("report.summary"));
   QCOMPARE(
       server.commandAt(0).payload.value(QStringLiteral("scope")).toString(),
       QStringLiteral("all"));
   QCOMPARE(succeeded.at(0).at(0).toString(),
-           QStringLiteral("dashboard.summary"));
+           QStringLiteral("report.summary"));
   QCOMPARE(busy.count(), 2);
   QCOMPARE(busy.at(0).at(1).toBool(), true);
   QCOMPARE(busy.at(1).at(1).toBool(), false);
@@ -186,9 +186,9 @@ void AdminControllerTest::staleResponseCannotOverrideLatestRequest() {
   login(controller, server);
 
   QSignalSpy succeeded(&controller, &AdminController::commandSucceeded);
-  controller.requestAdminCommand(QStringLiteral("users.list"),
+  controller.requestAdminCommand(QStringLiteral("admin.users"),
                                  {{QStringLiteral("page"), 1}});
-  controller.requestAdminCommand(QStringLiteral("users.list"),
+  controller.requestAdminCommand(QStringLiteral("admin.users"),
                                  {{QStringLiteral("page"), 2}});
   QTRY_COMPARE_WITH_TIMEOUT(server.commandCount(), 2, 3'000);
 
@@ -213,15 +213,17 @@ void AdminControllerTest::serviceErrorCodeIsPreserved() {
 
   QSignalSpy failed(&controller, &AdminController::commandFailed);
   controller.requestAdminCommand(
-      QStringLiteral("piles.control"),
+      QStringLiteral("admin.pileControl"),
       {{QStringLiteral("pileId"), 7},
-       {QStringLiteral("command"), QStringLiteral("restart")}});
+       {QStringLiteral("action"), QStringLiteral("RESTART")},
+       {QStringLiteral("reason"), QStringLiteral("测试操作")}});
   QTRY_COMPARE_WITH_TIMEOUT(server.commandCount(), 1, 3'000);
   server.respondToCommand(
       0, {{QStringLiteral("message"), QStringLiteral("权限不足")}},
       Charging::ErrorCode::Forbidden);
   QTRY_COMPARE_WITH_TIMEOUT(failed.count(), 1, 3'000);
-  QCOMPARE(failed.at(0).at(0).toString(), QStringLiteral("piles.control"));
+  QCOMPARE(failed.at(0).at(0).toString(),
+           QStringLiteral("admin.pileControl"));
   QCOMPARE(failed.at(0).at(2).toInt(),
            static_cast<int>(Charging::ErrorCode::Forbidden));
 }
@@ -234,7 +236,7 @@ void AdminControllerTest::sessionExpiryInvalidatesSessionAndPendingCommands() {
 
   QSignalSpy failed(&controller, &AdminController::commandFailed);
   QSignalSpy loggedOut(&controller, &AdminController::loggedOut);
-  controller.requestAdminCommand(QStringLiteral("users.list"));
+  controller.requestAdminCommand(QStringLiteral("admin.users"));
   controller.requestAdminCommand(QStringLiteral("orders.list"));
   QTRY_COMPARE_WITH_TIMEOUT(server.commandCount(), 2, 3'000);
   server.respondToCommand(
@@ -244,7 +246,7 @@ void AdminControllerTest::sessionExpiryInvalidatesSessionAndPendingCommands() {
   QTRY_COMPARE_WITH_TIMEOUT(loggedOut.count(), 1, 3'000);
   QCOMPARE(failed.count(), 2);
   QVERIFY(!controller.isLoggedIn());
-  QCOMPARE(failed.at(0).at(0).toString(), QStringLiteral("users.list"));
+  QCOMPARE(failed.at(0).at(0).toString(), QStringLiteral("admin.users"));
   QCOMPARE(failed.at(0).at(2).toInt(),
            static_cast<int>(Charging::ErrorCode::SessionExpired));
   QCOMPARE(failed.at(1).at(0).toString(), QStringLiteral("orders.list"));
@@ -274,11 +276,11 @@ void AdminControllerTest::disconnectionFailsPendingCommand() {
   login(controller, server);
 
   QSignalSpy failed(&controller, &AdminController::commandFailed);
-  controller.requestAdminCommand(QStringLiteral("alarms.list"));
+  controller.requestAdminCommand(QStringLiteral("admin.alarms"));
   QTRY_COMPARE_WITH_TIMEOUT(server.commandCount(), 1, 3'000);
   server.disconnectClient();
   QTRY_COMPARE_WITH_TIMEOUT(failed.count(), 1, 3'000);
-  QCOMPARE(failed.at(0).at(0).toString(), QStringLiteral("alarms.list"));
+  QCOMPARE(failed.at(0).at(0).toString(), QStringLiteral("admin.alarms"));
   QCOMPARE(failed.at(0).at(2).toInt(),
            static_cast<int>(Charging::ErrorCode::NetworkUnavailable));
 }

@@ -312,10 +312,10 @@ void AdminUiTest::phoneSearchIsDebouncedAndNumeric() {
   QCOMPARE(search->text(), QStringLiteral("138"));
   search->setText(QStringLiteral("1380013"));
   QTRY_COMPARE_WITH_TIMEOUT(requests.count(), 1, 1'000);
-  QCOMPARE(requests.at(0).at(0).toString(), QStringLiteral("users.list"));
+  QCOMPARE(requests.at(0).at(0).toString(), QStringLiteral("admin.users"));
   const QJsonObject parameters =
       qvariant_cast<QJsonObject>(requests.at(0).at(1));
-  QCOMPARE(parameters.value(QStringLiteral("phone")).toString(),
+  QCOMPARE(parameters.value(QStringLiteral("phoneContains")).toString(),
            QStringLiteral("1380013"));
   QCOMPARE(parameters.value(QStringLiteral("page")).toInt(), 1);
 }
@@ -383,7 +383,7 @@ void AdminUiTest::sessionExpiryReturnsToLoginWithReason() {
   AdminMainWindow window;
   window.showDemoWorkspace();
   window.handleCommandFailed(
-      QStringLiteral("users.list"), QStringLiteral("管理员会话已过期"),
+      QStringLiteral("admin.users"), QStringLiteral("管理员会话已过期"),
       static_cast<int>(Charging::ErrorCode::SessionExpired));
 
   auto *pages =

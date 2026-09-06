@@ -30,8 +30,9 @@
 namespace {
 
 QString stationStatusText(const QString &status) {
-  return status == QStringLiteral("offline") ? QStringLiteral("离线")
-                                             : QStringLiteral("运营中");
+  return status.compare(QStringLiteral("offline"), Qt::CaseInsensitive) == 0
+             ? QStringLiteral("离线")
+             : QStringLiteral("运营中");
 }
 
 QJsonObject stationFromDialog(QWidget *parent, const QJsonObject &initial,
@@ -105,6 +106,9 @@ QJsonObject stationFromDialog(QWidget *parent, const QJsonObject &initial,
       AdminUi::integerId(initial, QStringLiteral("stationId"));
   if (stationId > 0)
     station.insert(QStringLiteral("stationId"), stationId);
+  const int version = initial.value(QStringLiteral("version")).toInt();
+  if (version > 0)
+    station.insert(QStringLiteral("version"), version);
   return station;
 }
 
@@ -372,7 +376,11 @@ void AssetsPage::setStations(const QJsonObject &payload) {
 }
 
 void AssetsPage::setStationDetail(const QJsonObject &payload) {
-  const QJsonObject station = AdminUi::dataObject(payload);
+  const QJsonObject data = AdminUi::dataObject(payload);
+  const QJsonObject station =
+      data.value(QStringLiteral("station")).toObject().isEmpty()
+          ? data
+          : data.value(QStringLiteral("station")).toObject();
   if (!station.isEmpty())
     m_selectedStation = station;
   m_stationDetail->setText(
@@ -421,7 +429,8 @@ void AssetsPage::setPiles(const QJsonObject &payload) {
         row, 3,
         new QTableWidgetItem(QStringLiteral("%1 kW").arg(
             pile.value(QStringLiteral("powerKw")).toDouble(), 0, 'f', 1)));
-    const QString pileStatus = pile.value(QStringLiteral("status")).toString();
+    const QString pileStatus = pile.value(QStringLiteral("status")).toString(
+        pile.value(QStringLiteral("state")).toString());
     auto *statusItem = new QTableWidgetItem(AdminUi::pileStatus(pileStatus));
     AdminUi::styleStateItem(statusItem, AdminUi::pileTone(pileStatus));
     m_pileTable->setItem(row, 4, statusItem);
@@ -463,7 +472,8 @@ void AssetsPage::setPileDetail(const QJsonObject &payload) {
                QString::number(pile.value(QStringLiteral("powerKw")).toDouble(),
                                'f', 1),
                AdminUi::pileStatus(
-                   pile.value(QStringLiteral("status")).toString()),
+                             pile.value(QStringLiteral("status")).toString(
+                                 pile.value(QStringLiteral("state")).toString())),
                QString::number(
                    pile.value(QStringLiteral("totalChargeCount")).toInt()),
                QString::number(
@@ -481,7 +491,8 @@ void AssetsPage::applyDevicePush(const QJsonObject &payload) {
         m_pileTable->item(row, 0)->data(Qt::UserRole).toMap());
     if (AdminUi::integerId(pile, QStringLiteral("pileId")) == pileId) {
       const QString status =
-          payload.value(QStringLiteral("status")).toString();
+          payload.value(QStringLiteral("status")).toString(
+              payload.value(QStringLiteral("state")).toString());
       m_pileTable->item(row, 4)->setText(AdminUi::pileStatus(status));
       AdminUi::styleStateItem(m_pileTable->item(row, 4),
                               AdminUi::pileTone(status));
@@ -495,17 +506,17 @@ void AssetsPage::applyDevicePush(const QJsonObject &payload) {
 void AssetsPage::operationSucceeded(const QString &action,
                                     const QJsonObject &payload) {
   Q_UNUSED(payload)
-  if (action.startsWith(QStringLiteral("stations."))) {
+  if (action == QStringLiteral("admin.saveStation")) {
     m_stationState->setText(QStringLiteral("充电站保存成功"));
     requestStations(m_stationPagination->currentPage());
-  } else if (action == QStringLiteral("piles.control")) {
+  } else if (action == QStringLiteral("admin.pileControl")) {
     m_pileState->setText(QStringLiteral("远程操作已提交"));
     requestPiles(m_pilePagination->currentPage());
   }
 }
 
 void AssetsPage::setLoading(const QString &action, bool loading) {
-  if (action == QStringLiteral("piles.control")) {
+  if (action == QStringLiteral("admin.pileControl")) {
     const bool enabled = !loading && !m_selectedPile.isEmpty();
     for (QPushButton *button : {m_stopPileButton, m_restartPileButton,
                                 m_enablePileButton, m_disablePileButton}) {
@@ -514,15 +525,18 @@ void AssetsPage::setLoading(const QString &action, bool loading) {
   }
   if (!loading)
     return;
-  if (action.startsWith(QStringLiteral("stations."))) {
+  if (action.startsWith(QStringLiteral("admin.station")) ||
+      action == QStringLiteral("admin.saveStation")) {
     m_stationState->setText(QStringLiteral("正在处理充电站数据…"));
-  } else if (action.startsWith(QStringLiteral("piles."))) {
+  } else if (action == QStringLiteral("admin.piles") ||
+             action == QStringLiteral("admin.pileControl")) {
     m_pileState->setText(QStringLiteral("正在处理电桩数据…"));
   }
 }
 
 void AssetsPage::setError(const QString &action, const QString &message) {
-  if (action.startsWith(QStringLiteral("stations.")))
+  if (action.startsWith(QStringLiteral("admin.station")) ||
+      action == QStringLiteral("admin.saveStation"))
     m_stationState->setText(message);
   else
     m_pileState->setText(message);
@@ -530,20 +544,32 @@ void AssetsPage::setError(const QString &action, const QString &message) {
 
 void AssetsPage::requestStations(int page) {
   emit commandRequested(
-      QStringLiteral("stations.list"),
+      QStringLiteral("admin.stations"),
       {{QStringLiteral("page"), page},
        {QStringLiteral("pageSize"), 15},
        {QStringLiteral("keyword"), m_stationSearch->text().trimmed()}});
 }
 
 void AssetsPage::requestPiles(int page) {
-  emit commandRequested(QStringLiteral("piles.list"),
-                        {{QStringLiteral("page"), page},
-                         {QStringLiteral("pageSize"), 15},
-                         {QStringLiteral("stationId"),
-                          m_pileStationFilter->currentData().toInt()},
-                         {QStringLiteral("status"),
-                          m_pileStatusFilter->currentData().toString()}});
+  const QString selectedStatus = m_pileStatusFilter->currentData().toString();
+  QString state;
+  if (selectedStatus == QStringLiteral("charging") ||
+      selectedStatus == QStringLiteral("reserved")) {
+    state = QStringLiteral("IN_USE");
+  } else if (selectedStatus == QStringLiteral("fault") ||
+             selectedStatus == QStringLiteral("disabled")) {
+    state = QStringLiteral("FAULT");
+  } else if (selectedStatus == QStringLiteral("offline")) {
+    state = QStringLiteral("OFFLINE");
+  } else if (selectedStatus == QStringLiteral("idle")) {
+    state = QStringLiteral("IDLE");
+  }
+  emit commandRequested(
+      QStringLiteral("admin.piles"),
+      {{QStringLiteral("page"), page},
+       {QStringLiteral("pageSize"), 15},
+       {QStringLiteral("stationId"), m_pileStationFilter->currentData().toInt()},
+       {QStringLiteral("state"), state}});
 }
 
 void AssetsPage::updateStationSelection() {
@@ -563,8 +589,10 @@ void AssetsPage::updateStationSelection() {
   const qint64 stationId =
       AdminUi::integerId(m_selectedStation, QStringLiteral("stationId"));
   if (stationId > 0) {
-    emit commandRequested(QStringLiteral("stations.detail"),
-                          {{QStringLiteral("stationId"), stationId}});
+    emit commandRequested(QStringLiteral("admin.stationDetail"),
+                          {{QStringLiteral("stationId"), stationId},
+                           {QStringLiteral("page"), 1},
+                           {QStringLiteral("pageSize"), 100}});
   }
 }
 
@@ -587,12 +615,6 @@ void AssetsPage::updatePileSelection() {
       m_pileTable->item(row, 0)->data(Qt::UserRole).toMap());
   updateResponsiveLayout();
   setPileDetail({{QStringLiteral("data"), m_selectedPile}});
-  const qint64 pileId =
-      AdminUi::integerId(m_selectedPile, QStringLiteral("pileId"));
-  if (pileId > 0) {
-    emit commandRequested(QStringLiteral("piles.detail"),
-                          {{QStringLiteral("pileId"), pileId}});
-  }
 }
 
 void AssetsPage::openStationEditor(bool editExisting) {
@@ -603,9 +625,17 @@ void AssetsPage::openStationEditor(bool editExisting) {
       this, editExisting ? m_selectedStation : QJsonObject(), &accepted);
   if (!accepted)
     return;
-  emit commandRequested(editExisting ? QStringLiteral("stations.update")
-                                     : QStringLiteral("stations.create"),
-                        station);
+  const qint64 stationId =
+      AdminUi::integerId(station, QStringLiteral("stationId"));
+  const int version = station.value(QStringLiteral("version")).toInt();
+  station.remove(QStringLiteral("stationId"));
+  station.remove(QStringLiteral("version"));
+  QJsonObject parameters = {{QStringLiteral("input"), station}};
+  if (editExisting && stationId > 0)
+    parameters.insert(QStringLiteral("stationId"), stationId);
+  if (editExisting && version > 0)
+    parameters.insert(QStringLiteral("version"), version);
+  emit commandRequested(QStringLiteral("admin.saveStation"), parameters);
 }
 
 void AssetsPage::controlSelectedPile(const QString &command) {
@@ -625,9 +655,16 @@ void AssetsPage::controlSelectedPile(const QString &command) {
           .arg(m_selectedPile.value(QStringLiteral("pileCode")).toString(),
                label));
   if (answer == QMessageBox::Yes) {
-    emit commandRequested(QStringLiteral("piles.control"),
-                          {{QStringLiteral("pileId"), pileId},
-                           {QStringLiteral("command"), command}});
+    const QHash<QString, QString> actions = {
+        {QStringLiteral("stop"), QStringLiteral("STOP")},
+        {QStringLiteral("restart"), QStringLiteral("RESTART")},
+        {QStringLiteral("enable"), QStringLiteral("ENABLE")},
+        {QStringLiteral("disable"), QStringLiteral("DISABLE")}};
+    emit commandRequested(
+        QStringLiteral("admin.pileControl"),
+        {{QStringLiteral("pileId"), pileId},
+         {QStringLiteral("action"), actions.value(command)},
+         {QStringLiteral("reason"), QStringLiteral("管理员远程操作")}});
   }
 }
 

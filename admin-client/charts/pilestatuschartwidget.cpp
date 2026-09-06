@@ -58,10 +58,12 @@ void PileStatusChartWidget::setStatusData(const QJsonObject &status) {
   m_series->clear();
   const int idle = statusCount(status, QStringLiteral("idle"));
   const int reserved = statusCount(status, QStringLiteral("reserved"));
-  const int charging = statusCount(status, QStringLiteral("charging"));
+  int charging = statusCount(status, QStringLiteral("charging"));
   const int fault = statusCount(status, QStringLiteral("fault"));
   const int offline = statusCount(status, QStringLiteral("offline"));
   const int disabled = statusCount(status, QStringLiteral("disabled"));
+  if (charging == 0 && reserved == 0 && status.contains(QStringLiteral("inUse")))
+    charging = statusCount(status, QStringLiteral("inUse"));
   const int sum = idle + reserved + charging + fault + offline + disabled;
   const int total = qMax(sum, status.value(QStringLiteral("total")).toInt(sum));
 

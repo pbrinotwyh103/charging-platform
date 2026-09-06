@@ -58,17 +58,20 @@ MonitorPage::MonitorPage(QWidget *parent) : QWidget(parent) {
     const int row = m_table->currentRow();
     if (row < 0 || !m_table->item(row, 0))
       return;
-    const qint64 orderId =
-        m_table->item(row, 0)->data(Qt::UserRole).toLongLong();
-    if (orderId <= 0)
+    const qint64 pileId =
+        m_table->item(row, 0)->data(Qt::UserRole + 1).toLongLong();
+    if (pileId <= 0)
       return;
     const auto answer =
         QMessageBox::question(this, QStringLiteral("确认远程停止"),
                               QStringLiteral("确认停止订单 %1 的充电？")
                                   .arg(m_table->item(row, 0)->text()));
     if (answer == QMessageBox::Yes) {
-      emit commandRequested(QStringLiteral("charging.stop"),
-                            {{QStringLiteral("orderId"), orderId}});
+      emit commandRequested(
+          QStringLiteral("admin.pileControl"),
+          {{QStringLiteral("pileId"), pileId},
+           {QStringLiteral("action"), QStringLiteral("STOP")},
+           {QStringLiteral("reason"), QStringLiteral("管理员远程停止")}});
     }
   });
   m_pagination = new PaginationBar(this);
@@ -92,6 +95,8 @@ void MonitorPage::setChargingData(const QJsonObject &payload) {
         new QTableWidgetItem(item.value(QStringLiteral("orderNo")).toString());
     orderItem->setData(Qt::UserRole,
                        AdminUi::integerId(item, QStringLiteral("orderId")));
+    orderItem->setData(Qt::UserRole + 1,
+                       AdminUi::integerId(item, QStringLiteral("pileId")));
     m_table->setItem(row, 0, orderItem);
     m_table->setItem(
         row, 1,
@@ -163,10 +168,10 @@ void MonitorPage::applyStoppedPush(const QJsonObject &payload) {
 }
 
 void MonitorPage::setLoading(const QString &action, bool loading) {
-  if (action == QStringLiteral("charging.active.list") && loading) {
+  if (action == QStringLiteral("admin.monitor") && loading) {
     m_stateLabel->setText(QStringLiteral("正在加载实时充电记录…"));
   }
-  if (action == QStringLiteral("charging.stop")) {
+  if (action == QStringLiteral("admin.pileControl")) {
     m_stopButton->setEnabled(!loading && m_table->currentRow() >= 0);
   }
 }
@@ -177,7 +182,7 @@ void MonitorPage::setError(const QString &message) {
 
 void MonitorPage::requestPage(int page) {
   emit commandRequested(
-      QStringLiteral("charging.active.list"),
+      QStringLiteral("admin.monitor"),
       {{QStringLiteral("page"), page}, {QStringLiteral("pageSize"), 15}});
 }
 

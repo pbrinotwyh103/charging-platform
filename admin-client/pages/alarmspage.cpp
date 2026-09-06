@@ -16,6 +16,21 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 
+namespace {
+
+QString alarmStatusValue(const QJsonObject &alarm) {
+  const QString explicitStatus = alarm.value(QStringLiteral("status")).toString();
+  if (!explicitStatus.isEmpty())
+    return explicitStatus;
+  if (!alarm.value(QStringLiteral("recoveredAt")).toString().isEmpty())
+    return QStringLiteral("resolved");
+  if (!alarm.value(QStringLiteral("ackAt")).toString().isEmpty())
+    return QStringLiteral("acknowledged");
+  return QStringLiteral("open");
+}
+
+} // namespace
+
 AlarmsPage::AlarmsPage(QWidget *parent) : QWidget(parent) {
   setObjectName(QStringLiteral("alarmsPage"));
   auto *root = new QVBoxLayout(this);
@@ -74,11 +89,6 @@ AlarmsPage::AlarmsPage(QWidget *parent) : QWidget(parent) {
         m_table->item(row, 0)->data(Qt::UserRole).toMap());
     showDetail(alarm);
     updateResponsiveLayout();
-    const qint64 alarmId = AdminUi::integerId(alarm, QStringLiteral("alarmId"));
-    if (alarmId > 0) {
-      emit commandRequested(QStringLiteral("alarms.detail"),
-                            {{QStringLiteral("alarmId"), alarmId}});
-    }
   });
   root->addWidget(m_table, 1);
 
@@ -136,7 +146,7 @@ void AlarmsPage::setAlarms(const QJsonObject &payload) {
     m_table->setItem(row, 4,
                      new QTableWidgetItem(
                          alarm.value(QStringLiteral("message")).toString()));
-    const QString status = alarm.value(QStringLiteral("status")).toString();
+    const QString status = alarmStatusValue(alarm);
     auto *statusItem = new QTableWidgetItem(AdminUi::alarmStatus(status));
     AdminUi::styleStateItem(
         statusItem, status == QStringLiteral("resolved")
@@ -173,7 +183,7 @@ void AlarmsPage::applyAlarmPush(const QJsonObject &payload) {
 }
 
 void AlarmsPage::setLoading(const QString &action, bool loading) {
-  if (loading && action.startsWith(QStringLiteral("alarms."))) {
+  if (loading && action == QStringLiteral("admin.alarms")) {
     m_stateLabel->setText(QStringLiteral("正在加载告警数据…"));
   }
 }
@@ -183,12 +193,21 @@ void AlarmsPage::setError(const QString &message) {
 }
 
 void AlarmsPage::requestPage(int page) {
-  emit commandRequested(
-      QStringLiteral("alarms.list"),
-      {{QStringLiteral("page"), page},
-       {QStringLiteral("pageSize"), 15},
-       {QStringLiteral("severity"), m_severity->currentData().toString()},
-       {QStringLiteral("status"), m_status->currentData().toString()}});
+  QJsonObject parameters = {
+      {QStringLiteral("page"), page},
+      {QStringLiteral("pageSize"), 15},
+      {QStringLiteral("severity"), m_severity->currentData().toString()}};
+  const QString status = m_status->currentData().toString();
+  if (status == QStringLiteral("open")) {
+    parameters.insert(QStringLiteral("handled"), false);
+    parameters.insert(QStringLiteral("recovered"), false);
+  } else if (status == QStringLiteral("acknowledged")) {
+    parameters.insert(QStringLiteral("handled"), true);
+    parameters.insert(QStringLiteral("recovered"), false);
+  } else if (status == QStringLiteral("resolved")) {
+    parameters.insert(QStringLiteral("recovered"), true);
+  }
+  emit commandRequested(QStringLiteral("admin.alarms"), parameters);
 }
 
 void AlarmsPage::showDetail(const QJsonObject &alarm) {
@@ -200,8 +219,7 @@ void AlarmsPage::showDetail(const QJsonObject &alarm) {
       QStringLiteral("%1 · %2\n电桩：%3\n订单：%4\n%5\n发生：%6\n恢复：%7")
           .arg(AdminUi::alarmSeverity(
                    alarm.value(QStringLiteral("severity")).toString()),
-               AdminUi::alarmStatus(
-                   alarm.value(QStringLiteral("status")).toString()),
+               AdminUi::alarmStatus(alarmStatusValue(alarm)),
                alarm.value(QStringLiteral("pileCode"))
                    .toString(QStringLiteral("--")),
                alarm.value(QStringLiteral("orderNo"))

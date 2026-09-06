@@ -87,8 +87,8 @@ QWidget *RecordsPage::createUsersTab() {
     if (userId <= 0)
       return;
     const bool freeze =
-        m_selectedUser.value(QStringLiteral("status")).toString() !=
-        QStringLiteral("frozen");
+        m_selectedUser.value(QStringLiteral("status")).toString().compare(
+            QStringLiteral("frozen"), Qt::CaseInsensitive) != 0;
     const QString actionText =
         freeze ? QStringLiteral("冻结") : QStringLiteral("解冻");
     if (QMessageBox::question(
@@ -96,9 +96,14 @@ QWidget *RecordsPage::createUsersTab() {
             QStringLiteral("确认%1用户 %2？")
                 .arg(actionText, m_selectedUser.value(QStringLiteral("phone"))
                                      .toString())) == QMessageBox::Yes) {
-      emit commandRequested(QStringLiteral("users.freeze"),
-                            {{QStringLiteral("userId"), userId},
-                             {QStringLiteral("frozen"), freeze}});
+      emit commandRequested(
+          QStringLiteral("admin.setUserStatus"),
+          {{QStringLiteral("userId"), userId},
+           {QStringLiteral("status"),
+            freeze ? QStringLiteral("FROZEN") : QStringLiteral("ACTIVE")},
+           {QStringLiteral("reason"),
+            freeze ? QStringLiteral("管理员冻结用户")
+                   : QStringLiteral("管理员解冻用户")}});
     }
   });
 
@@ -338,19 +343,20 @@ void RecordsPage::setOrders(const QJsonObject &payload) {
 void RecordsPage::operationSucceeded(const QString &action,
                                      const QJsonObject &payload) {
   Q_UNUSED(payload)
-  if (action == QStringLiteral("users.freeze")) {
+  if (action == QStringLiteral("admin.setUserStatus")) {
     m_userState->setText(QStringLiteral("用户状态更新成功"));
     requestUsers(m_userPagination->currentPage());
   }
 }
 
 void RecordsPage::setLoading(const QString &action, bool loading) {
-  if (action == QStringLiteral("users.freeze")) {
+  if (action == QStringLiteral("admin.setUserStatus")) {
     m_freezeButton->setEnabled(!loading && !m_selectedUser.isEmpty());
   }
   if (!loading)
     return;
-  if (action.startsWith(QStringLiteral("users."))) {
+  if (action == QStringLiteral("admin.users") ||
+      action == QStringLiteral("admin.setUserStatus")) {
     m_userState->setText(QStringLiteral("正在处理用户数据…"));
   } else if (action.startsWith(QStringLiteral("orders."))) {
     m_orderState->setText(QStringLiteral("正在加载订单…"));
@@ -358,7 +364,8 @@ void RecordsPage::setLoading(const QString &action, bool loading) {
 }
 
 void RecordsPage::setError(const QString &action, const QString &message) {
-  if (action.startsWith(QStringLiteral("users.")))
+  if (action == QStringLiteral("admin.users") ||
+      action == QStringLiteral("admin.setUserStatus"))
     m_userState->setText(message);
   else
     m_orderState->setText(message);
@@ -366,10 +373,10 @@ void RecordsPage::setError(const QString &action, const QString &message) {
 
 void RecordsPage::requestUsers(int page) {
   emit commandRequested(
-      QStringLiteral("users.list"),
+      QStringLiteral("admin.users"),
       {{QStringLiteral("page"), page},
        {QStringLiteral("pageSize"), 15},
-       {QStringLiteral("phone"), m_phoneSearch->text().trimmed()}});
+       {QStringLiteral("phoneContains"), m_phoneSearch->text().trimmed()}});
 }
 
 void RecordsPage::requestOrders(int page) {
@@ -404,8 +411,8 @@ void RecordsPage::updateUserSelection() {
   m_selectedUser = QJsonObject::fromVariantMap(
       m_userTable->item(row, 0)->data(Qt::UserRole).toMap());
   const bool frozen =
-      m_selectedUser.value(QStringLiteral("status")).toString() ==
-      QStringLiteral("frozen");
+      m_selectedUser.value(QStringLiteral("status")).toString().compare(
+          QStringLiteral("frozen"), Qt::CaseInsensitive) == 0;
   m_freezeButton->setText(frozen ? QStringLiteral("解冻用户")
                                  : QStringLiteral("冻结用户"));
   m_freezeButton->setEnabled(true);

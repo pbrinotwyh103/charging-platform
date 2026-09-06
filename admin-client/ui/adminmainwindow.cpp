@@ -363,7 +363,7 @@ void AdminMainWindow::showDemoWorkspace() {
   setConnectionStatus(QStringLiteral("演示数据 · 未连接服务器"), false);
   connect(this, &AdminMainWindow::adminCommandRequested, this,
           [this](const QString &action, const QJsonObject &parameters) {
-            if (action == QStringLiteral("dashboard.revenue")) {
+            if (action == QStringLiteral("report.summary")) {
               const int requestedDays =
                   parameters.value(QStringLiteral("days")).toInt(7);
               const int days = requestedDays == 30 ? 30 : 7;
@@ -374,11 +374,9 @@ void AdminMainWindow::showDemoWorkspace() {
               return;
             }
             const QStringList mutations = {
-                QStringLiteral("charging.stop"),
-                QStringLiteral("stations.create"),
-                QStringLiteral("stations.update"),
-                QStringLiteral("piles.control"),
-                QStringLiteral("users.freeze")};
+                QStringLiteral("admin.pileControl"),
+                QStringLiteral("admin.saveStation"),
+                QStringLiteral("admin.setUserStatus")};
             if (mutations.contains(action)) {
               setNotice(QStringLiteral("演示模式为只读，操作不会提交到服务器"));
             }
@@ -419,6 +417,7 @@ void AdminMainWindow::showDemoWorkspace() {
              QJsonArray{
                  QJsonObject{
                      {QStringLiteral("orderId"), 101},
+                     {QStringLiteral("pileId"), 1},
                      {QStringLiteral("orderNo"),
                       QStringLiteral("CHG20260905001")},
                      {QStringLiteral("phone"), QStringLiteral("138****8000")},
@@ -430,6 +429,7 @@ void AdminMainWindow::showDemoWorkspace() {
                      {QStringLiteral("updatedAt"), QStringLiteral("10:28:16")}},
                  QJsonObject{
                      {QStringLiteral("orderId"), 102},
+                     {QStringLiteral("pileId"), 2},
                      {QStringLiteral("orderNo"),
                       QStringLiteral("CHG20260905002")},
                      {QStringLiteral("phone"), QStringLiteral("139****9000")},
@@ -606,39 +606,34 @@ void AdminMainWindow::setCommandBusy(const QString &action, bool busy) {
 
 void AdminMainWindow::handleCommandSucceeded(const QString &action,
                                              const QJsonObject &payload) {
-  if (action == QStringLiteral("dashboard.summary"))
+  if (action == QStringLiteral("report.summary"))
     m_overviewPage->setSummary(payload);
-  else if (action == QStringLiteral("dashboard.revenue"))
-    m_overviewPage->setRevenue(payload);
-  else if (action == QStringLiteral("charging.active.list"))
+  else if (action == QStringLiteral("report.pileStates"))
+    m_overviewPage->setPileStatus(payload);
+  else if (action == QStringLiteral("admin.monitor"))
     m_monitorPage->setChargingData(payload);
-  else if (action == QStringLiteral("alarms.list"))
+  else if (action == QStringLiteral("admin.alarms"))
     m_alarmsPage->setAlarms(payload);
-  else if (action == QStringLiteral("alarms.detail"))
-    m_alarmsPage->setAlarmDetail(payload);
-  else if (action == QStringLiteral("stations.list"))
+  else if (action == QStringLiteral("admin.stations"))
     m_assetsPage->setStations(payload);
-  else if (action == QStringLiteral("stations.detail"))
+  else if (action == QStringLiteral("admin.stationDetail"))
     m_assetsPage->setStationDetail(payload);
-  else if (action == QStringLiteral("piles.list"))
+  else if (action == QStringLiteral("admin.piles"))
     m_assetsPage->setPiles(payload);
-  else if (action == QStringLiteral("piles.detail"))
-    m_assetsPage->setPileDetail(payload);
-  else if (action == QStringLiteral("users.list"))
+  else if (action == QStringLiteral("admin.users"))
     m_recordsPage->setUsers(payload);
   else if (action == QStringLiteral("orders.list"))
     m_recordsPage->setOrders(payload);
-  else if (action == QStringLiteral("charging.stop")) {
+  else if (action == QStringLiteral("admin.pileControl")) {
     setNotice(payload.value(QStringLiteral("message"))
-                  .toString(QStringLiteral("远程停止请求已执行")));
+                  .toString(QStringLiteral("设备控制请求已受理")));
     m_monitorPage->requestRefresh();
-  } else if (action == QStringLiteral("stations.create") ||
-             action == QStringLiteral("stations.update") ||
-             action == QStringLiteral("piles.control")) {
+    m_assetsPage->operationSucceeded(action, payload);
+  } else if (action == QStringLiteral("admin.saveStation")) {
     m_assetsPage->operationSucceeded(action, payload);
     setNotice(payload.value(QStringLiteral("message"))
                   .toString(QStringLiteral("资产操作成功")));
-  } else if (action == QStringLiteral("users.freeze")) {
+  } else if (action == QStringLiteral("admin.setUserStatus")) {
     m_recordsPage->operationSucceeded(action, payload);
     setNotice(payload.value(QStringLiteral("message"))
                   .toString(QStringLiteral("用户状态更新成功")));
@@ -648,16 +643,22 @@ void AdminMainWindow::handleCommandSucceeded(const QString &action,
 void AdminMainWindow::handleCommandFailed(const QString &action,
                                           const QString &message,
                                           int errorCode) {
-  if (action.startsWith(QStringLiteral("dashboard.")))
+  if (action.startsWith(QStringLiteral("report.")))
     m_overviewPage->setError(message);
-  else if (action.startsWith(QStringLiteral("charging.")))
+  else if (action == QStringLiteral("admin.monitor"))
     m_monitorPage->setError(message);
-  else if (action.startsWith(QStringLiteral("alarms.")))
+  else if (action == QStringLiteral("admin.alarms"))
     m_alarmsPage->setError(message);
-  else if (action.startsWith(QStringLiteral("stations.")) ||
-           action.startsWith(QStringLiteral("piles."))) {
+  else if (action.startsWith(QStringLiteral("admin.station")) ||
+           action == QStringLiteral("admin.stations") ||
+           action == QStringLiteral("admin.piles") ||
+           action == QStringLiteral("admin.saveStation")) {
     m_assetsPage->setError(action, message);
-  } else if (action.startsWith(QStringLiteral("users.")) ||
+  } else if (action == QStringLiteral("admin.pileControl")) {
+    m_monitorPage->setError(message);
+    m_assetsPage->setError(action, message);
+  } else if (action == QStringLiteral("admin.users") ||
+             action == QStringLiteral("admin.setUserStatus") ||
              action.startsWith(QStringLiteral("orders."))) {
     m_recordsPage->setError(action, message);
   }
