@@ -8,6 +8,58 @@
 #include <QDateTime>
 #include <QTimer>
 
+namespace {
+
+QString chargingStatusText(const QJsonObject &snapshot)
+{
+    const QString raw = snapshot.value(QStringLiteral("status"))
+                            .toString().trimmed();
+    const QString normalized = raw.toLower();
+    if (normalized == QStringLiteral("reserved")
+        || normalized == QStringLiteral("booked")) return QStringLiteral("已预约");
+    if (normalized == QStringLiteral("charging")
+        || normalized.contains(QStringLiteral("充电中"))) return QStringLiteral("充电中");
+    if (normalized == QStringLiteral("stopping")) return QStringLiteral("停止中");
+    if (normalized == QStringLiteral("settling")
+        || normalized == QStringLiteral("reconciling")) return QStringLiteral("对账中");
+    if (normalized == QStringLiteral("waiting_payment")
+        || normalized == QStringLiteral("pending_payment")) return QStringLiteral("待付款");
+    if (normalized == QStringLiteral("completed")
+        || normalized == QStringLiteral("finished")) return QStringLiteral("已完成");
+    if (normalized == QStringLiteral("abnormal")
+        || normalized == QStringLiteral("fault")
+        || normalized == QStringLiteral("failed")) return QStringLiteral("异常结束");
+    return raw.isEmpty() ? QStringLiteral("状态未知") : raw;
+}
+
+qint64 integerField(const QJsonObject &object,
+                   const QStringList &keys, qint64 fallback = 0)
+{
+    for (const QString &key : keys) {
+        const QJsonValue value = object.value(key);
+        if (value.isUndefined() || value.isNull()) continue;
+        bool ok = false;
+        const qint64 number = value.toVariant().toLongLong(&ok);
+        if (ok) return number;
+    }
+    return fallback;
+}
+
+double numberField(const QJsonObject &object,
+                   const QStringList &keys, double fallback = 0.0)
+{
+    for (const QString &key : keys) {
+        const QJsonValue value = object.value(key);
+        if (value.isDouble()) return value.toDouble();
+        bool ok = false;
+        const double number = value.toString().toDouble(&ok);
+        if (ok) return number;
+    }
+    return fallback;
+}
+
+} // namespace
+
 ChargingPage::ChargingPage(QWidget *parent)
     : QWidget(parent)
 {
@@ -31,6 +83,7 @@ ChargingPage::ChargingPage(QWidget *parent)
             "• 充电时长和当前费用\n"
             "• 最后更新时间"),
         this);
+    m_statusLabel->setObjectName(QStringLiteral("chargingStatusLabel"));
 
     m_statusLabel->setWordWrap(true);
     m_statusLabel->setAlignment(Qt::AlignLeft | Qt::AlignTop);
@@ -200,13 +253,18 @@ void ChargingPage::refreshExpiryState()
     }
     const bool expired = m_lastSnapshotMs == 0
         || QDateTime::currentMSecsSinceEpoch() - m_lastSnapshotMs > 10000;
+    const qint64 feeCents = integerField(
+        m_snapshot, {QStringLiteral("feeCents"), QStringLiteral("feeFen")});
     QString text = QStringLiteral("状态：%1\n累计电量：%2 kWh\n实时功率：%3 kW\n充电时长：%4 秒\n当前费用：¥ %5\n最后更新时间：%6")
-        .arg(m_snapshot.value("status").toString())
-        .arg(m_snapshot.value("energyKwh").toDouble(), 0, 'f', 2)
-        .arg(m_snapshot.value("powerKw").toDouble(), 0, 'f', 1)
-        .arg(m_snapshot.value("durationSec").toInt())
-        .arg(m_snapshot.value("feeCents").toInt() / 100.0, 0, 'f', 2)
-        .arg(m_snapshot.value("updatedAt").toString());
+        .arg(chargingStatusText(m_snapshot))
+        .arg(numberField(m_snapshot, {QStringLiteral("energyKwh"),
+                                      QStringLiteral("energy")}), 0, 'f', 2)
+        .arg(numberField(m_snapshot, {QStringLiteral("powerKw"),
+                                      QStringLiteral("power")}), 0, 'f', 1)
+        .arg(integerField(m_snapshot, {QStringLiteral("durationSec"),
+                                      QStringLiteral("durationSeconds")}))
+        .arg(feeCents / 100.0, 0, 'f', 2)
+        .arg(m_snapshot.value(QStringLiteral("updatedAt")).toString());
     if (expired) text += QStringLiteral("\n数据已过期（超过 10 秒未收到新快照）");
     if (m_disconnected) text += QStringLiteral("\n网络已断开，以上为最后一次有效数据（非实时）");
     m_statusLabel->setText(text);

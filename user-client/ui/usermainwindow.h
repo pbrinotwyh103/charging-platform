@@ -15,6 +15,7 @@ class ProfilePage;
 class StationDetailPage;
 class RechargeRecordsPage;
 class FavoritesPage;
+class NavigationPage;
 class QResizeEvent;
 
 class UserMainWindow final : public QMainWindow
@@ -33,6 +34,8 @@ public slots:
     void showFeatureMessage(const QString &message);
     void showChargingPage();
     void setChargingSnapshot(const QJsonObject &snapshot);
+    void showNavigation(const QJsonObject &station, double fromLatitude,
+                        double fromLongitude);
 
 signals:
     void connectionRequested(const QString &host, quint16 port);
@@ -62,7 +65,9 @@ private:
     StationDetailPage *m_stationDetailPage = nullptr;
     RechargeRecordsPage *m_rechargeRecordsPage = nullptr;
     FavoritesPage *m_favoritesPage = nullptr;
+    NavigationPage *m_navigationPage = nullptr;
     QWidget *m_stationDetailReturnPage = nullptr;
+    QWidget *m_navigationReturnPage = nullptr;
     bool m_authenticated = false;
     qreal m_uiScale = 0.0;
 };

@@ -7,6 +7,7 @@
 #include "pages/profilepage.h"
 #include "pages/stationdetailpage.h"
 #include "pages/rechargerecordspage.h"
+#include "pages/navigationpage.h"
 
 #include <QFormLayout>
 #include <QGroupBox>
@@ -131,6 +132,7 @@ UserMainWindow::UserMainWindow(QWidget *parent)
     m_stationDetailPage = new StationDetailPage(m_pages);
     m_rechargeRecordsPage = new RechargeRecordsPage(m_pages);
     m_favoritesPage = new FavoritesPage(m_pages);
+    m_navigationPage = new NavigationPage(m_pages);
     connect(m_profilePage, &ProfilePage::logoutRequested, this, &UserMainWindow::logoutRequested);
     connect(m_profilePage, &ProfilePage::rechargeRecordsRequested, this, [this] {
         m_pages->setCurrentWidget(m_rechargeRecordsPage);
@@ -157,6 +159,7 @@ UserMainWindow::UserMainWindow(QWidget *parent)
     m_pages->addWidget(m_stationDetailPage);
     m_pages->addWidget(m_rechargeRecordsPage);
     m_pages->addWidget(m_favoritesPage);
+    m_pages->addWidget(m_navigationPage);
     connect(homeButton, &QPushButton::clicked, this, [this] { m_pages->setCurrentWidget(m_homePage); });
     connect(chargingButton, &QPushButton::clicked, this, [this] { m_pages->setCurrentWidget(m_chargingPage); });
     connect(mineButton, &QPushButton::clicked, this, [this] {
@@ -193,6 +196,10 @@ UserMainWindow::UserMainWindow(QWidget *parent)
     connect(m_favoritesPage, &FavoritesPage::stationsRequested, this, [this] {
         m_favoritesPage->showLoading();
         emit favoriteListRequested();
+    });
+    connect(m_navigationPage, &NavigationPage::backRequested, this, [this] {
+        m_pages->setCurrentWidget(
+            m_navigationReturnPage ? m_navigationReturnPage : m_stationDetailPage);
     });
     root->addWidget(m_pages, 1);
     root->addWidget(m_navWidget);
@@ -340,4 +347,18 @@ void UserMainWindow::showChargingPage()
 void UserMainWindow::setChargingSnapshot(const QJsonObject &snapshot)
 {
     m_chargingPage->setSnapshot(snapshot);
+}
+
+void UserMainWindow::showNavigation(const QJsonObject &station,
+                                    double fromLatitude,
+                                    double fromLongitude)
+{
+    if (!m_authenticated) return;
+    m_navigationReturnPage = m_pages->currentWidget();
+    const double toLatitude = station.value(QStringLiteral("latitude")).toDouble();
+    const double toLongitude = station.value(QStringLiteral("longitude")).toDouble();
+    m_navigationPage->setRoute(fromLatitude, fromLongitude, toLatitude,
+                               toLongitude,
+                               station.value(QStringLiteral("name")).toString());
+    m_pages->setCurrentWidget(m_navigationPage);
 }

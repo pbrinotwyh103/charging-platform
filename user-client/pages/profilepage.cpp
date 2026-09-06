@@ -43,6 +43,8 @@ public:
         update();
     }
 
+    QPixmap avatarPixmap() const { return m_pixmap; }
+
 protected:
     bool event(QEvent *event) override
     {
@@ -237,6 +239,7 @@ ProfilePage::ProfilePage(QWidget *parent)
     m_avatarLabel = new AvatarEditButton(profileSection);
 
     m_nicknameLabel = new QLabel(profileSection);
+    m_nicknameLabel->setObjectName(QStringLiteral("profileNicknameLabel"));
     QFont nicknameFont = m_nicknameLabel->font();
     nicknameFont.setPointSize(16);
     nicknameFont.setBold(true);
@@ -257,6 +260,10 @@ ProfilePage::ProfilePage(QWidget *parent)
             "background:#eff6ff;"
             "color:#1e3a8a;"
             "border-radius:9px;"));
+    m_profileStatusLabel = new QLabel(profileSection);
+    m_profileStatusLabel->setObjectName(QStringLiteral("profileUpdateStatusLabel"));
+    m_profileStatusLabel->setWordWrap(true);
+    m_profileStatusLabel->setStyleSheet(QStringLiteral("color:#64748b;"));
 
     m_logoutButton = new QPushButton(QStringLiteral("退出登录"), this);
     auto *nicknameRow = new QHBoxLayout;
@@ -343,8 +350,12 @@ ProfilePage::ProfilePage(QWidget *parent)
         }
         const QImage preview = image.scaled(
             512, 512, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-        static_cast<AvatarEditButton *>(m_avatarLabel)
-            ->setAvatarPixmap(QPixmap::fromImage(preview));
+        auto *avatar = static_cast<AvatarEditButton *>(m_avatarLabel);
+        if (!m_avatarBeforeEdit)
+            m_avatarBeforeEdit = new QPixmap(avatar->avatarPixmap());
+        avatar->setAvatarPixmap(QPixmap::fromImage(preview));
+        m_avatarUpdatePending = true;
+        m_profileStatusLabel->setText(QStringLiteral("头像已选择，正在等待服务端确认…"));
         QByteArray encoded;
         QBuffer buffer(&encoded);
         buffer.open(QIODevice::WriteOnly);
@@ -418,6 +429,7 @@ ProfilePage::ProfilePage(QWidget *parent)
 
     profileLayout->addLayout(profileHeader);
     profileLayout->addLayout(identityRow);
+    profileLayout->addWidget(m_profileStatusLabel);
     profileLayout->addLayout(accountActions);
 
     historyLayout->addLayout(ordersHeader);
@@ -427,6 +439,11 @@ ProfilePage::ProfilePage(QWidget *parent)
     layout->addWidget(profileSection, 1);
     layout->addWidget(historySection, 3);
     layout->addWidget(m_logoutButton);
+}
+
+ProfilePage::~ProfilePage()
+{
+    delete m_avatarBeforeEdit;
 }
 
 void ProfilePage::setProfile(const QJsonObject &profile)
@@ -442,10 +459,89 @@ void ProfilePage::setProfile(const QJsonObject &profile)
         : profile.value(QStringLiteral("balanceCents"));
     setBalanceCents(balance.toVariant().toLongLong());
 
+    QString avatarData;
+    for (const QString &key : {QStringLiteral("avatarBase64"),
+                               QStringLiteral("avatar"),
+                               QStringLiteral("avatarPath")}) {
+        const QString candidate = profile.value(key).toString().trimmed();
+        if (!candidate.isEmpty()) {
+            avatarData = candidate;
+            break;
+        }
+    }
+    if (!avatarData.isEmpty() && avatarData != QStringLiteral("null")) {
+        const int comma = avatarData.indexOf(QLatin1Char(','));
+        const QByteArray encoded = QByteArray::fromBase64(
+            (comma >= 0 ? avatarData.mid(comma + 1) : avatarData)
+                .toLatin1());
+        QImage image;
+        if (image.loadFromData(encoded)) {
+            static_cast<AvatarEditButton *>(m_avatarLabel)->setAvatarPixmap(
+                QPixmap::fromImage(image.scaled(512, 512, Qt::KeepAspectRatio,
+                                                 Qt::SmoothTransformation)));
+        }
+    }
+    m_avatarUpdatePending = false;
+    delete m_avatarBeforeEdit;
+    m_avatarBeforeEdit = nullptr;
+    m_profileStatusLabel->clear();
+
     const QJsonValue orders = profile.contains(QStringLiteral("orders"))
         ? profile.value(QStringLiteral("orders"))
         : profile.value(QStringLiteral("orderHistory"));
     if (orders.isArray()) setOrders(orders.toArray());
+}
+
+void ProfilePage::applyProfileUpdate(const QJsonObject &profile)
+{
+    QJsonObject merged = profile;
+    if (!merged.contains(QStringLiteral("nickname")))
+        merged.insert(QStringLiteral("nickname"), m_currentNickname);
+    if (!merged.contains(QStringLiteral("phone")))
+        merged.insert(QStringLiteral("phone"), m_phoneLabel->text());
+    if (!merged.contains(QStringLiteral("balanceFen"))
+        && !merged.contains(QStringLiteral("balanceCents")))
+        merged.insert(QStringLiteral("balanceFen"), m_balanceFen);
+    setProfile(merged);
+    m_profileStatusLabel->setStyleSheet(QStringLiteral("color:#166534;"));
+    m_profileStatusLabel->setText(QStringLiteral("资料已更新"));
+}
+
+void ProfilePage::showProfileUpdateError(const QString &message)
+{
+    if (m_avatarUpdatePending) {
+        auto *avatar = static_cast<AvatarEditButton *>(m_avatarLabel);
+        if (m_avatarBeforeEdit) avatar->setAvatarPixmap(*m_avatarBeforeEdit);
+        m_avatarUpdatePending = false;
+        delete m_avatarBeforeEdit;
+        m_avatarBeforeEdit = nullptr;
+    }
+    m_profileStatusLabel->setStyleSheet(QStringLiteral("color:#b91c1c;"));
+    m_profileStatusLabel->setText(message.isEmpty()
+        ? QStringLiteral("资料更新失败，已恢复原显示") : message);
+}
+
+void ProfilePage::setRechargeBusy(bool busy)
+{
+    m_profileStatusLabel->setStyleSheet(QStringLiteral("color:#64748b;"));
+    m_profileStatusLabel->setText(busy ? QStringLiteral("充值请求处理中，请勿重复提交…") : QString());
+}
+
+void ProfilePage::showRechargeResult(const QJsonObject &record)
+{
+    const QJsonValue balance = record.contains(QStringLiteral("balanceFen"))
+        ? record.value(QStringLiteral("balanceFen"))
+        : record.value(QStringLiteral("balanceCents"));
+    if (!balance.isUndefined()) setBalanceCents(balance.toVariant().toLongLong());
+    m_profileStatusLabel->setStyleSheet(QStringLiteral("color:#166534;"));
+    m_profileStatusLabel->setText(QStringLiteral("充值成功，钱包余额已更新"));
+}
+
+void ProfilePage::showRechargeError(const QString &message)
+{
+    m_profileStatusLabel->setStyleSheet(QStringLiteral("color:#b91c1c;"));
+    m_profileStatusLabel->setText(message.isEmpty()
+        ? QStringLiteral("充值失败，请查询充值记录后重试") : message);
 }
 
 void ProfilePage::setBalanceCents(qint64 balanceCents)

@@ -157,8 +157,19 @@ int main(int argc, char *argv[])
     QObject::connect(&controller, &ClientApi::stationsFailed,
                      home, &HomePage::showError);
     QObject::connect(&controller, &ClientApi::pilesReceived, window.findChild<StationDetailPage *>(), &StationDetailPage::setPiles);
+    QObject::connect(&controller, &ClientApi::pilesFailed,
+                     window.findChild<StationDetailPage *>(), &StationDetailPage::showError);
     auto *stationDetail = window.findChild<StationDetailPage *>();
     auto *favorites = window.findChild<FavoritesPage *>();
+    QObject::connect(stationDetail, &StationDetailPage::navigationRequested,
+                     &window, [home, &window](const QJsonObject &station) {
+        if (!home->hasResolvedLocation()) {
+            window.showFeatureMessage(QStringLiteral("请先在首页使用模拟定位或地址解析，再规划路线"));
+            return;
+        }
+        window.showNavigation(station, home->resolvedLatitude(),
+                              home->resolvedLongitude());
+    });
     QObject::connect(stationDetail, &StationDetailPage::favoriteRequested,
                      &controller, &ClientApi::toggleFavorite);
     QObject::connect(&controller, &ClientApi::favoriteUpdated,
@@ -190,15 +201,18 @@ int main(int argc, char *argv[])
                      &controller, &ClientApi::recharge);
     QObject::connect(&controller, &ClientApi::profileReceived,
                      profile, &ProfilePage::setProfile);
+    QObject::connect(&controller, &ClientApi::profileUpdated,
+                     profile, &ProfilePage::applyProfileUpdate);
+    QObject::connect(&controller, &ClientApi::profileUpdateFailed,
+                     profile, &ProfilePage::showProfileUpdateError);
     QObject::connect(&controller, &ClientApi::profileUpdateFailed,
                      &window, &UserMainWindow::showFeatureMessage);
     QObject::connect(&controller, &ClientApi::rechargeSucceeded,
-                     profile, [profile, &window](const QJsonObject &record) {
-        profile->setBalanceCents(
-            record.value(QStringLiteral("balanceCents"))
-                .toVariant().toLongLong());
-        window.showFeatureMessage(QStringLiteral("充值成功，钱包余额已更新"));
-    });
+                     profile, &ProfilePage::showRechargeResult);
+    QObject::connect(&controller, &ClientApi::rechargeBusy,
+                     profile, &ProfilePage::setRechargeBusy);
+    QObject::connect(&controller, &ClientApi::rechargeFailed,
+                     profile, &ProfilePage::showRechargeError);
     QObject::connect(&controller, &ClientApi::rechargeFailed,
                      &window, &UserMainWindow::showFeatureMessage);
     QObject::connect(profile, &ProfilePage::orderHistoryRequested,

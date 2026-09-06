@@ -7,6 +7,7 @@
 class QLabel;
 class QListWidget;
 class QPushButton;
+class QPixmap;
 
 class ProfilePage final : public QWidget
 {
@@ -14,11 +15,17 @@ class ProfilePage final : public QWidget
 
 public:
     explicit ProfilePage(QWidget *parent = nullptr);
+    ~ProfilePage() override;
 
     void setProfile(const QJsonObject &profile);
 
 public slots:
     void setBalanceCents(qint64 balanceCents);
+    void applyProfileUpdate(const QJsonObject &profile);
+    void showProfileUpdateError(const QString &message);
+    void setRechargeBusy(bool busy);
+    void showRechargeResult(const QJsonObject &record);
+    void showRechargeError(const QString &message);
     void showOrderLoading();
     void showOrderError(const QString &message);
     void setOrders(const QJsonArray &orders);
@@ -44,6 +51,9 @@ private:
     QPushButton *m_orderRefreshButton = nullptr;
 
     QPushButton *m_logoutButton = nullptr;
+    QLabel *m_profileStatusLabel = nullptr;
     QString m_currentNickname;
     qint64 m_balanceFen = 0;
+    QPixmap *m_avatarBeforeEdit = nullptr;
+    bool m_avatarUpdatePending = false;
 };

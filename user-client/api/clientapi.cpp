@@ -46,6 +46,25 @@ ClientApi::ClientApi(QObject *parent) : QObject(parent)
     connect(&m_connection, &Charging::ClientConnection::disconnected, this, [this] {
         emit connectionStatus(QStringLiteral("服务器连接已断开，数据可能已过期"), false);
         emit chargingConnectionChanged(false);
+        if (m_loginRequest != 0) {
+            m_pendingRequests.remove(m_loginRequest);
+            m_loginRequest = 0;
+            emit loginBusy(false);
+            emit loginFailed(QStringLiteral("网络已断开，登录未完成，请重试"));
+        }
+        if (m_profileRequest != 0) {
+            m_pendingRequests.remove(m_profileRequest);
+            m_profileRequest = 0;
+            emit profileUpdateBusy(false);
+            emit profileUpdateFailed(QStringLiteral("网络已断开，资料修改未提交"));
+        }
+        if (m_rechargeRequest != 0) {
+            m_pendingRequests.remove(m_rechargeRequest);
+            m_rechargeRequest = 0;
+            m_rechargeTransactionId.clear();
+            emit rechargeBusy(false);
+            emit rechargeFailed(QStringLiteral("网络已断开，充值结果未知，请查询充值记录后再重试"));
+        }
         if (m_geocodeRequest != 0) {
             m_pendingRequests.remove(m_geocodeRequest);
             m_geocodeRequest = 0;
@@ -71,6 +90,7 @@ ClientApi::ClientApi(QObject *parent) : QObject(parent)
         };
         if (m.header.requestId == m_loginRequest && m.header.messageType == Charging::MessageType::UserLoginResponse) {
             m_pendingRequests.remove(m.header.requestId);
+            m_loginRequest = 0;
             emit loginBusy(false);
             if (m.header.statusCode != Charging::ErrorCode::Success) {
                 emit loginFailed(Charging::errorMessage(m.header.statusCode, m.payload.value(QStringLiteral("message")).toString()));
@@ -127,7 +147,11 @@ ClientApi::ClientApi(QObject *parent) : QObject(parent)
             }
         } else if (m.header.messageType == Charging::MessageType::PileListResponse) {
             m_pendingRequests.remove(m.header.requestId);
-            if (m.header.statusCode == Charging::ErrorCode::Success) emit pilesReceived(m.payload.value(QStringLiteral("items")).toArray()); else emit featureUnavailable(QStringLiteral("电桩查询失败：%1").arg(m.payload.value(QStringLiteral("message")).toString()));
+            if (m.header.statusCode == Charging::ErrorCode::Success)
+                emit pilesReceived(m.payload.value(QStringLiteral("items")).toArray());
+            else
+                emit pilesFailed(QStringLiteral("电桩查询失败：%1").arg(
+                    businessErrorText(m)));
         } else if (m.header.messageType == Charging::MessageType::UserProfileResponse) {
             m_pendingRequests.remove(m.header.requestId);
             if (m.header.statusCode == Charging::ErrorCode::Success) emit profileReceived(m.payload);
@@ -169,14 +193,22 @@ ClientApi::ClientApi(QObject *parent) : QObject(parent)
             }
         } else if (m.header.messageType == Charging::MessageType::UserProfileUpdateResponse) {
             m_pendingRequests.remove(m.header.requestId);
+            if (m.header.requestId == m_profileRequest) {
+                m_profileRequest = 0;
+                emit profileUpdateBusy(false);
+            }
             if (m.header.statusCode == Charging::ErrorCode::Success) {
                 emit profileUpdated(m.payload);
-                emit profileReceived(m.payload);
             } else {
                 emit profileUpdateFailed(errorText());
             }
         } else if (m.header.messageType == Charging::MessageType::WalletRechargeResponse) {
             m_pendingRequests.remove(m.header.requestId);
+            if (m.header.requestId == m_rechargeRequest) {
+                m_rechargeRequest = 0;
+                m_rechargeTransactionId.clear();
+                emit rechargeBusy(false);
+            }
             if (m.header.statusCode == Charging::ErrorCode::Success)
                 emit rechargeSucceeded(m.payload);
             else
@@ -256,13 +288,24 @@ void ClientApi::connectToServer(const QString &host, quint16 port) { m_connectio
 void ClientApi::login(const QString &phone)
 {
     m_phone = phone.trimmed(); emit loginBusy(true);
-    if (!m_connection.isConnected()) return;
+    if (!m_connection.isConnected()) {
+        emit loginBusy(false);
+        emit loginFailed(QStringLiteral("当前未连接服务器，请先连接后重试"));
+        return;
+    }
     m_loginRequest = m_connection.nextRequestId();
     m_pendingRequests.insert(m_loginRequest, QStringLiteral("登录"));
-    if (!m_connection.send(Charging::MessageType::UserLoginRequest, m_loginRequest, {{QStringLiteral("phone"), m_phone}})) emit loginBusy(false);
+    if (!m_connection.send(Charging::MessageType::UserLoginRequest, m_loginRequest, {{QStringLiteral("phone"), m_phone}})) {
+        m_pendingRequests.remove(m_loginRequest);
+        m_loginRequest = 0;
+        emit loginBusy(false);
+        emit loginFailed(QStringLiteral("登录请求发送失败，请稍后重试"));
+        return;
+    }
     QTimer::singleShot(8000, this, [this] {
         if (!m_pendingRequests.contains(m_loginRequest)) return;
         m_pendingRequests.remove(m_loginRequest);
+        m_loginRequest = 0;
         emit loginBusy(false);
         emit requestTimedOut(QStringLiteral("登录"));
         emit loginFailed(QStringLiteral("登录请求超时（8秒）"));
@@ -325,7 +368,16 @@ void ClientApi::requestStations(const QString &region, const QString &address,
     sendRequest(Charging::MessageType::StationListRequest, payload,
                 QStringLiteral("站点查询"));
 }
-void ClientApi::requestPiles(qint64 stationId){ sendRequest(Charging::MessageType::PileListRequest, {{"stationId",stationId}}, QStringLiteral("电桩查询")); }
+void ClientApi::requestPiles(qint64 stationId)
+{
+    if (stationId <= 0) {
+        emit pilesFailed(QStringLiteral("充电站编号无效"));
+        return;
+    }
+    sendRequest(Charging::MessageType::PileListRequest,
+                {{QStringLiteral("stationId"), stationId}},
+                QStringLiteral("电桩查询"));
+}
 void ClientApi::requestOrderHistory()
 {
     if (!m_connection.isConnected()) {
@@ -381,6 +433,10 @@ void ClientApi::toggleFavorite(qint64 stationId, bool favorited)
 void ClientApi::updateProfile(const QString &nickname,
                               const QString &avatarBase64)
 {
+    if (m_profileRequest != 0) {
+        emit profileUpdateFailed(QStringLiteral("资料修改正在处理中，请稍候"));
+        return;
+    }
     QJsonObject payload;
     if (!nickname.trimmed().isEmpty())
         payload.insert(QStringLiteral("nickname"), nickname.trimmed());
@@ -390,18 +446,29 @@ void ClientApi::updateProfile(const QString &nickname,
         emit profileUpdateFailed(QStringLiteral("没有需要更新的资料"));
         return;
     }
-    sendRequest(Charging::MessageType::UserProfileUpdateRequest, payload,
-                QStringLiteral("资料更新"));
+    m_profileRequest = sendRequest(Charging::MessageType::UserProfileUpdateRequest,
+                                   payload, QStringLiteral("资料更新"));
+    if (m_profileRequest != 0) emit profileUpdateBusy(true);
 }
 
 void ClientApi::recharge(qint64 amountCents)
 {
-    sendRequest(
+    if (amountCents < 100 || amountCents > 500000) {
+        emit rechargeFailed(QStringLiteral("充值金额需为 1—5000 元"));
+        return;
+    }
+    if (m_rechargeRequest != 0) {
+        emit rechargeFailed(QStringLiteral("充值正在处理中，请勿重复提交"));
+        return;
+    }
+    m_rechargeTransactionId =
+        QUuid::createUuid().toString(QUuid::WithoutBraces);
+    m_rechargeRequest = sendRequest(
         Charging::MessageType::WalletRechargeRequest,
         {{QStringLiteral("amountCents"), amountCents},
-         {QStringLiteral("transactionId"),
-          QUuid::createUuid().toString(QUuid::WithoutBraces)}},
+         {QStringLiteral("transactionId"), m_rechargeTransactionId}},
         QStringLiteral("钱包充值"));
+    if (m_rechargeRequest != 0) emit rechargeBusy(true);
 }
 
 void ClientApi::requestWalletLedger()
@@ -449,18 +516,20 @@ void ClientApi::stopCharging(qint64 orderId)
                 QStringLiteral("停止充电"));
 }
 
-void ClientApi::sendRequest(Charging::MessageType type, const QJsonObject &payload, const QString &feature)
+quint32 ClientApi::sendRequest(Charging::MessageType type,
+                               const QJsonObject &payload,
+                               const QString &feature)
 {
     if (!m_connection.isConnected()) {
         emitRequestFailure(feature,
                            QStringLiteral("%1失败：当前未连接服务器").arg(feature));
-        return;
+        return 0;
     }
     const quint32 requestId = m_connection.nextRequestId();
     if (!m_connection.send(type, requestId, payload)) {
         emitRequestFailure(feature,
                            QStringLiteral("%1请求发送失败").arg(feature));
-        return;
+        return 0;
     }
     m_pendingRequests.insert(requestId, feature);
     QTimer::singleShot(8000, this, [this, requestId] {
@@ -472,7 +541,17 @@ void ClientApi::sendRequest(Charging::MessageType type, const QJsonObject &paylo
         emit requestTimedOut(feature);
         emitRequestFailure(feature,
                            QStringLiteral("%1请求超时（8秒）").arg(feature));
+        if (requestId == m_profileRequest) {
+            m_profileRequest = 0;
+            emit profileUpdateBusy(false);
+        }
+        if (requestId == m_rechargeRequest) {
+            m_rechargeRequest = 0;
+            m_rechargeTransactionId.clear();
+            emit rechargeBusy(false);
+        }
     });
+    return requestId;
 }
 
 void ClientApi::emitRequestFailure(const QString &feature,
@@ -484,6 +563,14 @@ void ClientApi::emitRequestFailure(const QString &feature,
         emit rechargeFailed(message);
     else if (feature == QStringLiteral("充值记录"))
         emit walletLedgerFailed(message);
+    else if (feature == QStringLiteral("电桩查询"))
+        emit pilesFailed(message);
+    else if (feature == QStringLiteral("站点查询"))
+        emit stationsFailed(message);
+    else if (feature == QStringLiteral("历史订单"))
+        emit orderHistoryFailed(message);
+    else if (feature == QStringLiteral("收藏站点"))
+        emit favoritesFailed(message);
     else if (feature == QStringLiteral("创建预约")
              || feature == QStringLiteral("取消预约"))
         emit reservationFailed(message);

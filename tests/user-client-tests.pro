@@ -18,7 +18,8 @@ HEADERS += \
     ../user-client/widgets/nicknamedialog.h \
     ../user-client/widgets/rechargedialog.h \
     ../user-client/pages/stationutils.h \
-    ../user-client/stores/snapshotstore.h
+    ../user-client/stores/snapshotstore.h \
+    ../user-client/map/mapnavigator.h
 
 SOURCES += \
     homepage_test.cpp \
@@ -29,4 +30,5 @@ SOURCES += \
     ../user-client/widgets/nicknamedialog.cpp \
     ../user-client/widgets/rechargedialog.cpp \
     ../user-client/pages/stationutils.cpp \
-    ../user-client/stores/snapshotstore.cpp
+    ../user-client/stores/snapshotstore.cpp \
+    ../user-client/map/mapnavigator.cpp

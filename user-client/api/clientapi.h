@@ -51,6 +51,7 @@ signals:
     void stationsReceived(const QJsonArray &);
     void stationsFailed(const QString &message);
     void pilesReceived(const QJsonArray &);
+    void pilesFailed(const QString &message);
     void orderHistoryReceived(const QJsonArray &);
     void orderHistoryFailed(const QString &message);
     void favoritesReceived(const QJsonArray &);
@@ -60,8 +61,10 @@ signals:
     void favoriteUpdateFailed(qint64 stationId, const QString &message);
     void profileUpdated(const QJsonObject &profile);
     void profileUpdateFailed(const QString &message);
+    void profileUpdateBusy(bool busy);
     void rechargeSucceeded(const QJsonObject &record);
     void rechargeFailed(const QString &message);
+    void rechargeBusy(bool busy);
     void walletLedgerReceived(const QJsonArray &records);
     void walletLedgerFailed(const QString &message);
     void reservationCreated(const QJsonObject &reservation);
@@ -85,6 +88,10 @@ private:
     QHash<quint32, QString> m_pendingRequests;
     QHash<quint32, qint64> m_favoriteRequests;
     QSet<qint64> m_pendingFavoriteStations;
-    void sendRequest(Charging::MessageType type, const QJsonObject &payload, const QString &feature);
+    quint32 m_profileRequest = 0;
+    quint32 m_rechargeRequest = 0;
+    QString m_rechargeTransactionId;
+    quint32 sendRequest(Charging::MessageType type, const QJsonObject &payload,
+                        const QString &feature);
     void emitRequestFailure(const QString &feature, const QString &message);
 };

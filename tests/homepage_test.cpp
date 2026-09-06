@@ -2,16 +2,21 @@
 #include "pages/chargingpage.h"
 #include "pages/stationdetailpage.h"
 #include "pages/profilepage.h"
+#include "pages/stationutils.h"
+#include "map/mapnavigator.h"
 #include "stores/snapshotstore.h"
+#include "widgets/rechargedialog.h"
 
 #include <QComboBox>
 #include <QDateTime>
 #include <QInputMethodEvent>
 #include <QLabel>
+#include <QListWidget>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QSpinBox>
+#include <QUrlQuery>
 #include <QtTest>
 
 #include <cmath>
@@ -31,6 +36,14 @@ private slots:
     void idlePileCanBeReserved();
     void chargingActionsFollowTaskState();
     void rechargeResponseUpdatesDisplayedBalance();
+    void rechargeAmountBoundaries();
+    void stationEmptyAndErrorState();
+    void stationInvalidCoordinatesSortLast();
+    void pileStateCompatibilityAndErrorRecovery();
+    void chargingStatusMapping();
+    void profileUpdateErrorKeepsOriginalNickname();
+    void navigationUrlWithKey();
+    void navigationFallbackWithoutKey();
 };
 
 void HomePageTest::emptyAddressIsRejected()
@@ -222,6 +235,129 @@ void HomePageTest::rechargeResponseUpdatesDisplayedBalance()
     QCOMPARE(balance->text(), QStringLiteral("钱包余额：¥0.00"));
     page.setBalanceCents(12345);
     QCOMPARE(balance->text(), QStringLiteral("钱包余额：¥123.45"));
+}
+
+void HomePageTest::rechargeAmountBoundaries()
+{
+    RechargeDialog dialog(0);
+    auto *amount = dialog.findChild<QLineEdit *>(QStringLiteral("rechargeAmountEdit"));
+    auto *confirm = dialog.findChild<QPushButton *>(QStringLiteral("rechargeConfirmButton"));
+    QVERIFY(amount && confirm);
+
+    amount->setText(QStringLiteral("0"));
+    confirm->click();
+    QVERIFY(!dialog.result());
+    QVERIFY(dialog.findChild<QLabel *>(QStringLiteral("rechargeAmountErrorLabel"))
+                ->text().contains(QStringLiteral("1-5000")));
+
+    amount->setText(QStringLiteral("1"));
+    confirm->click();
+    QCOMPARE(dialog.result(), static_cast<int>(QDialog::Accepted));
+    QCOMPARE(dialog.amountFen(), 100);
+}
+
+void HomePageTest::stationEmptyAndErrorState()
+{
+    HomePage page;
+    page.setStations({});
+    QVERIFY(page.findChild<QLabel *>(QStringLiteral("homeStatusLabel"))
+                ->text().contains(QStringLiteral("没有可用充电站")));
+    page.showError(QStringLiteral("站点请求失败"));
+    QVERIFY(page.findChild<QLabel *>(QStringLiteral("homeStatusLabel"))
+                ->text().contains(QStringLiteral("站点请求失败")));
+    QVERIFY(page.findChild<QPushButton *>(QStringLiteral("searchButton"))->isEnabled());
+}
+
+void HomePageTest::stationInvalidCoordinatesSortLast()
+{
+    const QJsonArray sorted = StationUtils::sortByDistance(
+        {QJsonObject{{QStringLiteral("stationId"), 1},
+                     {QStringLiteral("latitude"), 31.23},
+                     {QStringLiteral("longitude"), 121.47}},
+         QJsonObject{{QStringLiteral("stationId"), 2},
+                     {QStringLiteral("latitude"), QStringLiteral("bad")},
+                     {QStringLiteral("longitude"), 121.47}},
+         QJsonObject{{QStringLiteral("stationId"), 3},
+                     {QStringLiteral("latitude"), 31.24},
+                     {QStringLiteral("longitude"), 121.48}}},
+        31.23, 121.47);
+    QCOMPARE(sorted.at(0).toObject().value(QStringLiteral("stationId")).toInt(), 1);
+    QCOMPARE(sorted.at(1).toObject().value(QStringLiteral("stationId")).toInt(), 3);
+    QCOMPARE(sorted.at(2).toObject().value(QStringLiteral("stationId")).toInt(), 2);
+    QVERIFY(!std::isfinite(sorted.at(2).toObject()
+                               .value(QStringLiteral("distanceKm")).toDouble()));
+}
+
+void HomePageTest::pileStateCompatibilityAndErrorRecovery()
+{
+    StationDetailPage page;
+    page.setStation({{QStringLiteral("stationId"), 12},
+                     {QStringLiteral("name"), QStringLiteral("测试站")},
+                     {QStringLiteral("price"), 1.2}});
+    page.setPiles({QJsonObject{{QStringLiteral("pileId"), 21},
+                               {QStringLiteral("pileNo"), QStringLiteral("A01")},
+                               {QStringLiteral("state"), QStringLiteral("available")},
+                               {QStringLiteral("power"), 60.0},
+                               {QStringLiteral("estimatedAvailableAt"),
+                                QStringLiteral("现在")}}});
+    auto *reserve = page.findChild<QPushButton *>(QStringLiteral("reservePileButton"));
+    QVERIFY(reserve->isEnabled());
+    QVERIFY(page.findChild<QListWidget *>()->item(0)->text().contains(QStringLiteral("预计可用：现在")));
+    page.showError(QStringLiteral("加载失败"));
+    QVERIFY(!reserve->isEnabled());
+    QVERIFY(page.findChild<QLabel *>(QStringLiteral("stationPileStatusLabel"))
+                ->text().contains(QStringLiteral("加载失败")));
+}
+
+void HomePageTest::chargingStatusMapping()
+{
+    ChargingPage page;
+    page.setSnapshot({{QStringLiteral("orderId"), 1},
+                      {QStringLiteral("seq"), 1},
+                      {QStringLiteral("status"), QStringLiteral("pending_payment")},
+                      {QStringLiteral("feeFen"), 12345}});
+    const QString text = page.findChild<QLabel *>(QStringLiteral("chargingStatusLabel"))->text();
+    QVERIFY(text.contains(QStringLiteral("待付款")));
+    QVERIFY(text.contains(QStringLiteral("¥ 123.45")));
+}
+
+void HomePageTest::profileUpdateErrorKeepsOriginalNickname()
+{
+    ProfilePage page;
+    page.setProfile({{QStringLiteral("nickname"), QStringLiteral("原昵称")},
+                     {QStringLiteral("phone"), QStringLiteral("13500135000")},
+                     {QStringLiteral("balanceFen"), 0}});
+    page.showProfileUpdateError(QStringLiteral("昵称重复"));
+    QCOMPARE(page.findChild<QLabel *>(QStringLiteral("profileNicknameLabel"))->text(),
+             QStringLiteral("原昵称"));
+    QVERIFY(page.findChild<QLabel *>(QStringLiteral("profileUpdateStatusLabel"))
+                ->text().contains(QStringLiteral("昵称重复")));
+}
+
+void HomePageTest::navigationUrlWithKey()
+{
+    qputenv("TENCENT_MAP_KEY", "test-key");
+    const QUrl driving = MapNavigator::navigationUrl(31.2304, 121.4737,
+                                                      31.2400, 121.4800,
+                                                      QStringLiteral("driving"));
+    QCOMPARE(driving.scheme(), QStringLiteral("https"));
+    QCOMPARE(driving.host(), QStringLiteral("apis.map.qq.com"));
+    QVERIFY(driving.path().contains(QStringLiteral("/direction/v1/driving/")));
+    QCOMPARE(QUrlQuery(driving).queryItemValue(QStringLiteral("from")),
+             QStringLiteral("31.230400,121.473700"));
+    const QUrl walking = MapNavigator::navigationUrl(31.2304, 121.4737,
+                                                      31.2400, 121.4800,
+                                                      QStringLiteral("walking"));
+    QVERIFY(walking.path().contains(QStringLiteral("/direction/v1/walking/")));
+    qunsetenv("TENCENT_MAP_KEY");
+}
+
+void HomePageTest::navigationFallbackWithoutKey()
+{
+    qunsetenv("TENCENT_MAP_KEY");
+    QVERIFY(!MapNavigator::navigationUrl(31.2304, 121.4737,
+                                         31.2400, 121.4800,
+                                         QStringLiteral("driving")).isValid());
 }
 
 QTEST_MAIN(HomePageTest)

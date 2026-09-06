@@ -11,8 +11,10 @@ namespace {
 
 bool pileCanBeReserved(const QJsonObject &pile)
 {
-    const QString status = pile.value(QStringLiteral("status"))
-                               .toString().toLower();
+    QString status = pile.value(QStringLiteral("status")).toString();
+    if (status.trimmed().isEmpty())
+        status = pile.value(QStringLiteral("state")).toString();
+    status = status.trimmed().toLower();
     return status == QStringLiteral("idle")
         || status == QStringLiteral("available");
 }
@@ -28,6 +30,31 @@ QString pileStatusText(const QString &status)
     if (normalized == QStringLiteral("fault")) return QStringLiteral("故障");
     if (normalized == QStringLiteral("offline")) return QStringLiteral("离线");
     return status.isEmpty() ? QStringLiteral("未知") : status;
+}
+
+QString pileFieldString(const QJsonObject &pile,
+                        const QStringList &keys,
+                        const QString &fallback = {})
+{
+    for (const QString &key : keys) {
+        const QJsonValue value = pile.value(key);
+        if (value.isString() && !value.toString().trimmed().isEmpty())
+            return value.toString().trimmed();
+        if (value.isDouble()) return QString::number(value.toVariant().toLongLong());
+    }
+    return fallback;
+}
+
+double pileFieldNumber(const QJsonObject &pile, const QStringList &keys)
+{
+    for (const QString &key : keys) {
+        const QJsonValue value = pile.value(key);
+        if (value.isDouble()) return value.toDouble();
+        bool ok = false;
+        const double number = value.toString().toDouble(&ok);
+        if (ok) return number;
+    }
+    return 0.0;
 }
 
 } // namespace
@@ -54,12 +81,23 @@ StationDetailPage::StationDetailPage(QWidget *parent)
     m_favorite->setObjectName(QStringLiteral("stationFavoriteButton"));
     m_favorite->setMinimumHeight(40);
     layout->addWidget(m_favorite);
+    auto *stationActions = new QHBoxLayout;
+    m_navigate = new QPushButton(QStringLiteral("路线规划"), this);
+    m_navigate->setObjectName(QStringLiteral("stationNavigationButton"));
+    m_navigate->setMinimumHeight(38);
+    m_navigate->setToolTip(QStringLiteral("使用腾讯地图规划驾车或步行路线"));
+    m_refreshPiles = new QPushButton(QStringLiteral("刷新电桩"), this);
+    m_refreshPiles->setObjectName(QStringLiteral("refreshPilesButton"));
+    stationActions->addWidget(m_navigate, 1);
+    stationActions->addWidget(m_refreshPiles, 1);
+    layout->addLayout(stationActions);
     m_favoriteStatus = new QLabel(this);
     m_favoriteStatus->setWordWrap(true);
     m_favoriteStatus->setStyleSheet(QStringLiteral("color:#64748b;"));
     layout->addWidget(m_favoriteStatus);
 
     m_status = new QLabel(this);
+    m_status->setObjectName(QStringLiteral("stationPileStatusLabel"));
     layout->addWidget(m_status);
     m_piles = new QListWidget(this);
     layout->addWidget(m_piles, 1);
@@ -84,6 +122,17 @@ StationDetailPage::StationDetailPage(QWidget *parent)
 
     connect(backButton, &QPushButton::clicked,
             this, &StationDetailPage::backRequested);
+    connect(m_navigate, &QPushButton::clicked, this, [this] {
+        emit navigationRequested(m_station);
+    });
+    connect(m_refreshPiles, &QPushButton::clicked, this, [this] {
+        const qint64 stationId = m_station.value(QStringLiteral("stationId"))
+                                     .toVariant().toLongLong();
+        if (stationId <= 0) return;
+        m_status->setText(QStringLiteral("正在刷新电桩信息…"));
+        m_refreshPiles->setDisabled(true);
+        emit pilesRequested(stationId);
+    });
     connect(m_favorite, &QPushButton::clicked, this, [this] {
         if (m_favoritePending) return;
         const qint64 stationId =
@@ -131,21 +180,35 @@ void StationDetailPage::setStation(const QJsonObject &station)
     m_piles->clear();
     m_favoriteStatus->clear();
     m_title->setText(station.value(QStringLiteral("name")).toString());
+    const QJsonValue priceValue = station.contains(QStringLiteral("priceCentsPerKwh"))
+        ? station.value(QStringLiteral("priceCentsPerKwh"))
+        : station.value(QStringLiteral("price"));
+    const double price = station.contains(QStringLiteral("priceCentsPerKwh"))
+        ? priceValue.toDouble() / 100.0 : priceValue.toDouble();
+    const QJsonValue availableValue = station.contains(QStringLiteral("availablePiles"))
+        ? station.value(QStringLiteral("availablePiles"))
+        : station.value(QStringLiteral("available"));
+    const QJsonValue totalValue = station.contains(QStringLiteral("totalPiles"))
+        ? station.value(QStringLiteral("totalPiles"))
+        : station.value(QStringLiteral("total"));
     m_summary->setText(QStringLiteral("%1\n电价 ¥%2/度 · 空闲 %3/%4")
         .arg(station.value(QStringLiteral("address")).toString())
-        .arg(station.value(QStringLiteral("priceCentsPerKwh")).toInt() / 100.0,
-             0, 'f', 2)
-        .arg(station.value(QStringLiteral("availablePiles")).toInt())
-        .arg(station.value(QStringLiteral("totalPiles")).toInt()));
+        .arg(price, 0, 'f', 2)
+        .arg(availableValue.toInt())
+        .arg(totalValue.toInt()));
     updateFavoriteButton();
     updateReservationButton();
     m_status->setText(QStringLiteral("正在加载电桩信息…"));
+    m_refreshPiles->setDisabled(true);
+    m_navigate->setDisabled(!m_station.contains(QStringLiteral("latitude"))
+                           || !m_station.contains(QStringLiteral("longitude")));
     emit pilesRequested(
         station.value(QStringLiteral("stationId")).toVariant().toLongLong());
 }
 
 void StationDetailPage::setPiles(const QJsonArray &piles)
 {
+    m_refreshPiles->setDisabled(false);
     m_piles->clear();
     if (piles.isEmpty()) {
         m_status->setText(QStringLiteral("暂无电桩数据"));
@@ -155,13 +218,28 @@ void StationDetailPage::setPiles(const QJsonArray &piles)
     QListWidgetItem *firstIdle = nullptr;
     for (const QJsonValue &value : piles) {
         const QJsonObject pile = value.toObject();
+        const QString code = pileFieldString(
+            pile, {QStringLiteral("pileCode"), QStringLiteral("pileNo"),
+                   QStringLiteral("code")}, QStringLiteral("编号未知"));
+        const QString type = pileFieldString(
+            pile, {QStringLiteral("type"), QStringLiteral("pileType")},
+            QStringLiteral("类型未知"));
+        const QString status = pileFieldString(
+            pile, {QStringLiteral("status"), QStringLiteral("state")},
+            QStringLiteral("unknown"));
+        const double power = pileFieldNumber(
+            pile, {QStringLiteral("powerKw"), QStringLiteral("power")});
+        const QString availableAt = pileFieldString(
+            pile, {QStringLiteral("availableAt"), QStringLiteral("estimatedAvailableAt"),
+                   QStringLiteral("availableTime")});
+        QString detail = QStringLiteral("%1 · %2 · %3 kW\n状态：%4")
+            .arg(code, type)
+            .arg(power, 0, 'f', 1)
+            .arg(pileStatusText(status));
+        if (!availableAt.isEmpty())
+            detail += QStringLiteral("\n预计可用：%1").arg(availableAt);
         auto *item = new QListWidgetItem(
-            QStringLiteral("%1 · %2 · %3 kW\n状态：%4")
-                .arg(pile.value(QStringLiteral("pileCode")).toString(),
-                     pile.value(QStringLiteral("type")).toString())
-                .arg(pile.value(QStringLiteral("powerKw")).toDouble())
-                .arg(pileStatusText(
-                    pile.value(QStringLiteral("status")).toString())),
+            detail,
             m_piles);
         item->setData(Qt::UserRole, pile);
         if (!pileCanBeReserved(pile))
@@ -177,6 +255,7 @@ void StationDetailPage::setPiles(const QJsonArray &piles)
 
 void StationDetailPage::showError(const QString &message)
 {
+    m_refreshPiles->setDisabled(false);
     m_status->setText(message);
     m_piles->clear();
     updateReservationButton();

@@ -26,6 +26,9 @@ public slots:
                              const QString &formattedAddress);
     void showAddressResolutionError(const QString &message);
     void useTextSearchFallback();
+    double resolvedLatitude() const { return m_latitude; }
+    double resolvedLongitude() const { return m_longitude; }
+    bool hasResolvedLocation() const { return m_hasResolvedLocation; }
 signals:
     void geocodeRequested(const QString &address, const QString &region);
     void stationsRequested(const QString &, const QString &, double, double);

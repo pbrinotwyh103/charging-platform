@@ -15,6 +15,7 @@ HEADERS += \
     pages/favoritespage.h \
     pages/profilepage.h \
     pages/rechargerecordspage.h \
+    pages/navigationpage.h \
     pages/stationutils.h \
     pages/stationdetailpage.h \
     widgets/nicknamedialog.h \
@@ -31,6 +32,7 @@ SOURCES += \
     pages/favoritespage.cpp \
     pages/profilepage.cpp \
     pages/rechargerecordspage.cpp \
+    pages/navigationpage.cpp \
     pages/stationutils.cpp \
     pages/stationdetailpage.cpp \
     widgets/nicknamedialog.cpp \

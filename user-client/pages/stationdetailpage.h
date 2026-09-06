@@ -24,6 +24,7 @@ signals:
     void favoriteStateChanged(qint64 stationId, bool favorited);
     void reservationRequested(qint64 stationId, qint64 pileId,
                               int durationMinutes);
+    void navigationRequested(const QJsonObject &station);
 
 private:
     void updateFavoriteButton();
@@ -36,6 +37,8 @@ private:
     QLabel *m_favoriteStatus = nullptr;
     QListWidget *m_piles = nullptr;
     QPushButton *m_favorite = nullptr;
+    QPushButton *m_navigate = nullptr;
+    QPushButton *m_refreshPiles = nullptr;
     QPushButton *m_reserve = nullptr;
     QSpinBox *m_duration = nullptr;
     bool m_favoritePending = false;
