@@ -37,6 +37,8 @@ private slots:
     void directOversizedPushIsRejected();
     void paddedAdminRequestIsBounded();
     void oversizedChargingPushIsAudited();
+    void directPeerStreamRejectsReordering();
+    void directPeerStreamAcceptsZeroSecondAndFinal();
 
 private:
     void connectClient(Charging::ClientConnection &client);
@@ -49,6 +51,11 @@ private:
     Charging::Message take(QSignalSpy &spy, Charging::MessageType type,
                            quint32 requestId, int timeout = 3000,
                            const std::function<bool(const Charging::Message &)> &matches = {});
+    Charging::Message takeMatching(QSignalSpy &spy,
+        const std::function<bool(const Charging::Message &)> &matches, int timeout);
+    Charging::Message takeChargingFrame(QSignalSpy &spy, const QJsonValue &orderId, int timeout);
+    QString compareNextPeerFrame(QSignalSpy &peer, const Charging::Message &owner,
+                                 qint64 *previousSequence, int timeout = 3000);
     QVariant sql(const QString &statement);
     void triggerJob(const char *signal);
 

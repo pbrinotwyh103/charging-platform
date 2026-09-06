@@ -71,6 +71,13 @@ QJsonObject paddedAdminPayload(qsizetype targetBytes)
     payload.insert("action", payload.value("action").toString() + QString(targetBytes - originalBytes, ' '));
     return payload;
 }
+
+bool chargingFrameFor(const Message &message, const QJsonValue &orderId)
+{
+    return message.header.requestId == 0 && message.payload.value("orderId") == orderId
+        && (message.header.messageType == MessageType::ChargingProgressPush
+            || message.header.messageType == MessageType::ChargingStoppedPush);
+}
 }
 
 void BusinessIntegrationTest::init()
@@ -101,21 +108,50 @@ Message BusinessIntegrationTest::take(QSignalSpy &spy, MessageType type,
                                       quint32 requestId, int timeout,
                                       const std::function<bool(const Message &)> &matches)
 {
+    return takeMatching(spy, [&](const Message &message) {
+        return message.header.requestId == requestId && message.header.messageType == type
+            && (!matches || matches(message));
+    }, timeout);
+}
+
+Message BusinessIntegrationTest::takeMatching(QSignalSpy &spy,
+    const std::function<bool(const Message &)> &matches, int timeout)
+{
     QElapsedTimer timer;
     timer.start();
     do {
         for (qsizetype i = 0; i < spy.size(); ++i) {
             const auto message = qvariant_cast<Message>(spy.at(i).at(0));
-            if (message.header.requestId == requestId && message.header.messageType == type
-                && (!matches || matches(message))) {
+            if (matches(message)) {
                 spy.removeAt(i);
                 return message;
             }
         }
         if (timer.elapsed() < timeout) spy.wait(timeout - int(timer.elapsed()));
     } while (timer.elapsed() < timeout);
-    QTest::qFail(qPrintable(QString("Missing message type %1, requestId %2")
-                           .arg(int(type)).arg(requestId)), __FILE__, __LINE__);
+    QTest::qFail("Missing expected server message before deadline", __FILE__, __LINE__);
+    return {};
+}
+
+Message BusinessIntegrationTest::takeChargingFrame(QSignalSpy &spy, const QJsonValue &orderId,
+                                                   int timeout)
+{
+    // Filter only the order and event family. The next matching arrival must
+    // be checked, even when its seq/type differs from the expected frame.
+    return takeMatching(spy, [&](const Message &message) {
+        return chargingFrameFor(message, orderId);
+    }, timeout);
+}
+
+QString BusinessIntegrationTest::compareNextPeerFrame(QSignalSpy &peer, const Message &owner,
+                                                       qint64 *previousSequence, int timeout)
+{
+    const auto received = takeChargingFrame(peer, owner.payload.value("orderId"), timeout);
+    const auto sequence = received.payload.value("seq").toInteger();
+    if (sequence <= *previousSequence) return "Peer sequence did not strictly increase";
+    *previousSequence = sequence;
+    if (received.header.messageType != owner.header.messageType || received.payload != owner.payload)
+        return "Next peer frame differs from corresponding owner frame";
     return {};
 }
 
@@ -288,52 +324,77 @@ void BusinessIntegrationTest::userWorkflowAndPushes()
                      {{"reservationId", reservation.value("reservationId")}}).payload.value("status").toString(), QString("cancelled"));
     reservation = request(user, MessageType::ReservationCreateRequest, MessageType::ReservationCreateResponse,
                            {{"stationId", 1}, {"pileId", 1}}).payload;
+    QSignalSpy userPush(&user, &ClientConnection::messageReceived), secondPush(&secondSession, &ClientConnection::messageReceived),
+        adminPush(&admin, &ClientConnection::messageReceived);
     const auto started = request(user, MessageType::ChargingStartRequest, MessageType::ChargingStartResponse,
                                  {{"reservationId", reservation.value("reservationId")}}).payload;
     const auto orderId = started.value("orderId");
     QCOMPARE(request(user, MessageType::ActiveOrderRequest, MessageType::ActiveOrderResponse).payload.value("orderId"), orderId);
     request(otherUser, MessageType::ChargingStopRequest, MessageType::ChargingStopResponse,
             {{"orderId", orderId}}, ErrorCode::Forbidden);
-    QSignalSpy userPush(&user, &ClientConnection::messageReceived), secondPush(&secondSession, &ClientConnection::messageReceived),
-        adminPush(&admin, &ClientConnection::messageReceived), otherPush(&otherUser, &ClientConnection::messageReceived),
+    QSignalSpy otherPush(&otherUser, &ClientConnection::messageReceived),
         anonymousPush(&anonymous, &ClientConnection::messageReceived);
     // The server's global timer can first sample a newly started order at age
-    // zero. Wait for elapsed charging, then compare that same seq on each peer.
+    // zero. Check every stream in arrival order while waiting for elapsed time.
     Message progress;
     qint64 previousSequence = started.value("seq").toInteger();
+    qint64 adminSequence = previousSequence;
+    qint64 secondSequence = previousSequence;
+    QString peerError;
     QElapsedTimer progressDeadline;
     progressDeadline.start();
     do {
         const int remaining = 3000 - int(progressDeadline.elapsed());
         QVERIFY2(remaining > 0, "Charging progress did not reach one elapsed second");
-        progress = take(userPush, MessageType::ChargingProgressPush, 0, remaining,
-            [&](const Message &message) { return message.payload.value("orderId") == orderId; });
+        progress = takeChargingFrame(userPush, orderId, remaining);
+        QCOMPARE(progress.header.messageType, MessageType::ChargingProgressPush);
         const auto sequence = progress.payload.value("seq").toInteger();
         QVERIFY(sequence > previousSequence);
         previousSequence = sequence;
+        peerError = compareNextPeerFrame(adminPush, progress, &adminSequence,
+                                         qMax(1, 3000 - int(progressDeadline.elapsed())));
+        QVERIFY2(peerError.isEmpty(), qPrintable(peerError));
+        peerError = compareNextPeerFrame(secondPush, progress, &secondSequence,
+                                         qMax(1, 3000 - int(progressDeadline.elapsed())));
+        QVERIFY2(peerError.isEmpty(), qPrintable(peerError));
     } while (progress.payload.value("durationSec").toInt() < 1);
     QCOMPARE(progress.payload.value("orderId"), orderId);
     QVERIFY(progress.payload.value("seq").toInt() > 0);
     QVERIFY(progress.payload.value("durationSec").toInt() >= 1);
     QVERIFY(progress.payload.value("powerKw").toDouble() > 0);
-    const auto sameProgress = [&](const Message &message) {
-        return message.payload.value("orderId") == orderId
-            && message.payload.value("seq") == progress.payload.value("seq");
-    };
-    QCOMPARE(take(adminPush, MessageType::ChargingProgressPush, 0, 3000, sameProgress).payload, progress.payload);
-    QCOMPARE(take(secondPush, MessageType::ChargingProgressPush, 0, 3000, sameProgress).payload, progress.payload);
     const auto stopped = request(user, MessageType::ChargingStopRequest, MessageType::ChargingStopResponse, {{"orderId", orderId}}).payload;
     QCOMPARE(stopped.value("status").toString(), QString("completed"));
     QCOMPARE(stopped.value("stopReason").toString(), QString("user_stop"));
     QCOMPARE(stopped.value("balanceCents").toInt() + stopped.value("feeCents").toInt(), 10000);
-    const auto final = take(userPush, MessageType::ChargingStoppedPush, 0);
+    // A progress tick may already be queued when stop is requested. Consume
+    // those frames on all three streams before accepting the stopped frame.
+    Message final;
+    QElapsedTimer stopDeadline;
+    stopDeadline.start();
+    do {
+        const int remaining = 3000 - int(stopDeadline.elapsed());
+        QVERIFY2(remaining > 0, "Missing final charging event");
+        final = takeChargingFrame(userPush, orderId, remaining);
+        const auto sequence = final.payload.value("seq").toInteger();
+        QVERIFY(sequence > previousSequence);
+        previousSequence = sequence;
+        peerError = compareNextPeerFrame(adminPush, final, &adminSequence,
+                                         qMax(1, 3000 - int(stopDeadline.elapsed())));
+        QVERIFY2(peerError.isEmpty(), qPrintable(peerError));
+        peerError = compareNextPeerFrame(secondPush, final, &secondSequence,
+                                         qMax(1, 3000 - int(stopDeadline.elapsed())));
+        QVERIFY2(peerError.isEmpty(), qPrintable(peerError));
+    } while (final.header.messageType != MessageType::ChargingStoppedPush);
     QCOMPARE(final.payload.value("feeCents"), stopped.value("feeCents"));
     QVERIFY(final.payload.value("seq").toInt() > progress.payload.value("seq").toInt());
-    QCOMPARE(take(adminPush, MessageType::ChargingStoppedPush, 0).payload, final.payload);
-    QCOMPARE(take(secondPush, MessageType::ChargingStoppedPush, 0).payload, final.payload);
     QVERIFY(otherPush.isEmpty());
     QVERIFY(anonymousPush.isEmpty());
     QVERIFY(!request(user, MessageType::ActiveOrderRequest, MessageType::ActiveOrderResponse).payload.value("active").toBool());
+    for (auto *stream : {&userPush, &adminPush, &secondPush}) {
+        for (const auto &arguments : *stream)
+            QVERIFY2(!chargingFrameFor(qvariant_cast<Message>(arguments.at(0)), orderId),
+                     "Unchecked charging frame remained after the stopped event");
+    }
     request(secondSession, MessageType::LogoutRequest, MessageType::LogoutResponse);
     QCOMPARE(tcp->sessionsForUser(userId).size(), 1);
     user.disconnectFromServer();
@@ -788,6 +849,46 @@ void BusinessIntegrationTest::oversizedChargingPushIsAudited()
     QCOMPARE(sql("SELECT status FROM charging_orders").toString(), QString("charging"));
     QVERIFY(sql("SELECT energy_wh FROM charging_orders").toInt() > 0);
     request(user, MessageType::UserProfileRequest, MessageType::UserProfileResponse);
+}
+
+void BusinessIntegrationTest::directPeerStreamRejectsReordering()
+{
+    ClientConnection peer;
+    QSignalSpy messages(&peer, &ClientConnection::messageReceived);
+    const auto first = packet(MessageType::ChargingProgressPush, 0,
+                              {{"orderId", 1}, {"seq", 1}, {"durationSec", 0}});
+    const auto second = packet(MessageType::ChargingProgressPush, 0,
+                               {{"orderId", 1}, {"seq", 2}, {"durationSec", 1}});
+    // Exercise the same consumer used by the TCP workflow with actual signal
+    // arrival order 2,1. Searching ahead for seq 1 would incorrectly accept it.
+    peer.messageReceived(second);
+    peer.messageReceived(first);
+    qint64 previousSequence = 0;
+    const auto error = compareNextPeerFrame(messages, first, &previousSequence, 100);
+    QVERIFY2(!error.isEmpty(), "Peer stream 2,1 must fail the workflow's stream comparison");
+    // The remaining seq 1 must also fail the strict-increase check after seq 2,
+    // even when its payload happens to match the requested owner snapshot.
+    previousSequence = 2;
+    QVERIFY(!compareNextPeerFrame(messages, first, &previousSequence, 100).isEmpty());
+}
+
+void BusinessIntegrationTest::directPeerStreamAcceptsZeroSecondAndFinal()
+{
+    ClientConnection peer;
+    QSignalSpy messages(&peer, &ClientConnection::messageReceived);
+    const QList<Message> owner{
+        packet(MessageType::ChargingProgressPush, 0, {{"orderId", 1}, {"seq", 1}, {"durationSec", 0}}),
+        packet(MessageType::ChargingProgressPush, 0, {{"orderId", 1}, {"seq", 2}, {"durationSec", 1}}),
+        packet(MessageType::ChargingStoppedPush, 0, {{"orderId", 1}, {"seq", 3}, {"durationSec", 1}})
+    };
+    for (const auto &frame : owner) peer.messageReceived(frame);
+    qint64 previousSequence = 0;
+    for (const auto &frame : owner) {
+        const auto error = compareNextPeerFrame(messages, frame, &previousSequence, 100);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+    }
+    QCOMPARE(previousSequence, qint64(3));
+    QVERIFY(messages.isEmpty());
 }
 
 QTEST_GUILESS_MAIN(BusinessIntegrationTest)
