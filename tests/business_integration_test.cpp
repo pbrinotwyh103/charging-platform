@@ -148,7 +148,7 @@ QString BusinessIntegrationTest::compareNextPeerFrame(QSignalSpy &peer, const Me
 {
     const auto received = takeChargingFrame(peer, owner.payload.value("orderId"), timeout);
     const auto sequence = received.payload.value("seq").toInteger();
-    if (sequence <= *previousSequence) return "Peer sequence did not strictly increase";
+    if (sequence != *previousSequence + 1) return "Peer sequence was not consecutive";
     *previousSequence = sequence;
     if (received.header.messageType != owner.header.messageType || received.payload != owner.payload)
         return "Next peer frame differs from corresponding owner frame";
@@ -349,7 +349,7 @@ void BusinessIntegrationTest::userWorkflowAndPushes()
         progress = takeChargingFrame(userPush, orderId, remaining);
         QCOMPARE(progress.header.messageType, MessageType::ChargingProgressPush);
         const auto sequence = progress.payload.value("seq").toInteger();
-        QVERIFY(sequence > previousSequence);
+        QCOMPARE(sequence, previousSequence + 1);
         previousSequence = sequence;
         peerError = compareNextPeerFrame(adminPush, progress, &adminSequence,
                                          qMax(1, 3000 - int(progressDeadline.elapsed())));
@@ -376,7 +376,7 @@ void BusinessIntegrationTest::userWorkflowAndPushes()
         QVERIFY2(remaining > 0, "Missing final charging event");
         final = takeChargingFrame(userPush, orderId, remaining);
         const auto sequence = final.payload.value("seq").toInteger();
-        QVERIFY(sequence > previousSequence);
+        QCOMPARE(sequence, previousSequence + 1);
         previousSequence = sequence;
         peerError = compareNextPeerFrame(adminPush, final, &adminSequence,
                                          qMax(1, 3000 - int(stopDeadline.elapsed())));
@@ -866,9 +866,13 @@ void BusinessIntegrationTest::directPeerStreamRejectsReordering()
     qint64 previousSequence = 0;
     const auto error = compareNextPeerFrame(messages, first, &previousSequence, 100);
     QVERIFY2(!error.isEmpty(), "Peer stream 2,1 must fail the workflow's stream comparison");
-    // The remaining seq 1 must also fail the strict-increase check after seq 2,
+    // The remaining seq 1 must also fail the consecutive check after seq 2,
     // even when its payload happens to match the requested owner snapshot.
     previousSequence = 2;
+    QVERIFY(!compareNextPeerFrame(messages, first, &previousSequence, 100).isEmpty());
+    // A repeated frame must fail even when it matches the owner's payload.
+    peer.messageReceived(first);
+    previousSequence = 1;
     QVERIFY(!compareNextPeerFrame(messages, first, &previousSequence, 100).isEmpty());
 }
 
@@ -889,6 +893,42 @@ void BusinessIntegrationTest::directPeerStreamAcceptsZeroSecondAndFinal()
     }
     QCOMPARE(previousSequence, qint64(3));
     QVERIFY(messages.isEmpty());
+}
+
+void BusinessIntegrationTest::directPeerStreamsRejectSharedGap_data()
+{
+    QTest::addColumn<int>("progressSequence");
+    QTest::addColumn<int>("stoppedSequence");
+    QTest::newRow("missing-progress-1-3-4") << 3 << 4;
+    QTest::newRow("gap-before-stopped-1-2-4") << 2 << 4;
+}
+
+void BusinessIntegrationTest::directPeerStreamsRejectSharedGap()
+{
+    QFETCH(int, progressSequence);
+    QFETCH(int, stoppedSequence);
+    ClientConnection admin, secondOwner;
+    QSignalSpy adminMessages(&admin, &ClientConnection::messageReceived);
+    QSignalSpy secondMessages(&secondOwner, &ClientConnection::messageReceived);
+    const QList<Message> owner{
+        packet(MessageType::ChargingProgressPush, 0, {{"orderId", 1}, {"seq", 1}, {"durationSec", 0}}),
+        packet(MessageType::ChargingProgressPush, 0, {{"orderId", 1}, {"seq", progressSequence}, {"durationSec", 1}}),
+        packet(MessageType::ChargingStoppedPush, 0, {{"orderId", 1}, {"seq", stoppedSequence}, {"durationSec", 1}})
+    };
+    // Every recipient has the same omission: payload equality across peers
+    // cannot detect the missing event unless each stream enforces +1.
+    for (const auto &frame : owner) {
+        admin.messageReceived(frame);
+        secondOwner.messageReceived(frame);
+    }
+    qint64 adminSequence = 0, secondSequence = 0;
+    QString adminError, secondError;
+    for (const auto &frame : owner) {
+        if (adminError.isEmpty()) adminError = compareNextPeerFrame(adminMessages, frame, &adminSequence, 100);
+        if (secondError.isEmpty()) secondError = compareNextPeerFrame(secondMessages, frame, &secondSequence, 100);
+    }
+    QVERIFY2(!adminError.isEmpty(), "Administrator stream must reject a shared sequence gap");
+    QVERIFY2(!secondError.isEmpty(), "Second-owner stream must reject a shared sequence gap");
 }
 
 QTEST_GUILESS_MAIN(BusinessIntegrationTest)

@@ -39,6 +39,8 @@ private slots:
     void oversizedChargingPushIsAudited();
     void directPeerStreamRejectsReordering();
     void directPeerStreamAcceptsZeroSecondAndFinal();
+    void directPeerStreamsRejectSharedGap_data();
+    void directPeerStreamsRejectSharedGap();
 
 private:
     void connectClient(Charging::ClientConnection &client);
