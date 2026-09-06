@@ -21,6 +21,10 @@ class WalletRepository final : public RepositoryBase
 {
 public:
     using RepositoryBase::RepositoryBase;
+    // A record number is scoped to a server-selected transaction type.
+    bool findByRecordNo(const QString &recordNo, const QString &recordType,
+                        WalletRecord *record, QString *error) const;
+    bool countByUser(qint64 userId, int *total, QString *error) const;
 
     bool recharge(const QString &recordNo, qint64 userId, qint64 amountCents,
                   qint64 *balanceAfterCents, QString *error) const;

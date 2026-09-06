@@ -169,9 +169,13 @@ void ProfilePage::setProfile(const QJsonObject &profile)
             : (m_demoMode ? QStringLiteral("演示账号 · 状态正常")
                           : QStringLiteral("用户资料已从服务端同步。")));
     m_ledgerList->clear();
-    m_ledgerList->addItems({
-        QStringLiteral("09-06 09:18  +¥100.00  成功\n充值后余额 ¥286.50"),
-        QStringLiteral("09-03 18:42  +¥50.00  成功\n充值后余额 ¥196.30")});
+    if (m_demoMode) {
+        m_ledgerList->addItems({
+            QStringLiteral("09-06 09:18  +¥100.00  成功\n充值后余额 ¥286.50"),
+            QStringLiteral("09-03 18:42  +¥50.00  成功\n充值后余额 ¥196.30")});
+    } else {
+        m_ledgerList->addItem(QStringLiteral("正在同步钱包流水…"));
+    }
 }
 
 void ProfilePage::setFavoriteStation(const QString &name, bool favorited)
@@ -181,6 +185,27 @@ void ProfilePage::setFavoriteStation(const QString &name, bool favorited)
         m_favoriteList->addItem(name);
     if (!favorited)
         for (auto *item : matches) delete m_favoriteList->takeItem(m_favoriteList->row(item));
+}
+
+void ProfilePage::applyWalletResult(const QJsonObject &result)
+{
+    m_balanceCents = static_cast<qint64>(result.value(QStringLiteral("balanceCents")).toDouble());
+    updateBalance();
+    m_accountNoteLabel->setText(QStringLiteral("充值成功，钱包余额和流水已同步。"));
+}
+
+void ProfilePage::setLedger(const QJsonArray &items)
+{
+    m_ledgerList->clear();
+    for (const auto &value : items) {
+        const QJsonObject item = value.toObject();
+        const qint64 amount = static_cast<qint64>(item.value(QStringLiteral("amountCents")).toDouble());
+        m_ledgerList->addItem(QStringLiteral("%1  %2¥%3\n余额 ¥%4")
+            .arg(item.value(QStringLiteral("createdAt")).toString(), amount >= 0 ? QStringLiteral("+") : QString())
+            .arg(amount / 100.0, 0, 'f', 2)
+            .arg(item.value(QStringLiteral("balanceAfterCents")).toDouble() / 100.0, 0, 'f', 2));
+    }
+    if (items.isEmpty()) m_ledgerList->addItem(QStringLiteral("暂无钱包流水"));
 }
 
 void ProfilePage::updateBalance()

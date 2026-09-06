@@ -4,6 +4,7 @@
 
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QStringList>
 
 namespace {
 
@@ -21,13 +22,29 @@ void readUser(QSqlQuery &query, UserRecord *record)
 
 } // namespace
 
+bool UserRepository::count(const QString &phoneKeyword, int *total, QString *error) const
+{
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral("SELECT COUNT(*) FROM users WHERE phone LIKE ?"));
+    query.addBindValue(QStringLiteral("%") + phoneKeyword + QStringLiteral("%"));
+    if (!query.exec() || !query.next()) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    if (total) *total = query.value(0).toInt();
+    return true;
+}
+
 bool UserRepository::findByPhone(const QString &phone, UserRecord *record, QString *error) const
 {
     QSqlDatabase db = database()->database(error);
     if (!db.isValid() || !db.isOpen()) return false;
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
-        "SELECT id, phone, nickname, avatar_path, balance_cents, status, created_at, updated_at "
+        "SELECT id, phone, nickname, avatar_path, balance_cents, status, "
+        "strftime('%Y-%m-%dT%H:%M:%SZ',created_at),strftime('%Y-%m-%dT%H:%M:%SZ',updated_at) "
         "FROM users WHERE phone = ?"));
     query.addBindValue(phone);
     if (!query.exec()) {
@@ -48,7 +65,8 @@ bool UserRepository::findById(qint64 id, UserRecord *record, QString *error) con
     if (!db.isValid() || !db.isOpen()) return false;
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
-        "SELECT id, phone, nickname, avatar_path, balance_cents, status, created_at, updated_at "
+        "SELECT id, phone, nickname, avatar_path, balance_cents, status, "
+        "strftime('%Y-%m-%dT%H:%M:%SZ',created_at),strftime('%Y-%m-%dT%H:%M:%SZ',updated_at) "
         "FROM users WHERE id = ?"));
     query.addBindValue(id);
     if (!query.exec()) {
@@ -77,8 +95,9 @@ bool UserRepository::findOrCreate(const QString &phone, UserRecord *record, bool
     }
     QSqlQuery insert(db);
     insert.prepare(QStringLiteral(
-        "INSERT OR IGNORE INTO users(phone, nickname, avatar_path, balance_cents, status) "
-        "VALUES(?, ?, 'default://gray-avatar', 0, 'normal')"));
+        "INSERT OR IGNORE INTO users(phone, nickname, avatar_path, balance_cents, status,created_at,updated_at) "
+        "VALUES(?, ?, 'default://gray-avatar', 0, 'normal',"
+        "strftime('%Y-%m-%dT%H:%M:%SZ','now'),strftime('%Y-%m-%dT%H:%M:%SZ','now'))"));
     insert.addBindValue(phone);
     insert.addBindValue(QStringLiteral("用户%1").arg(phone.right(4)));
     if (!insert.exec()) {
@@ -97,17 +116,32 @@ bool UserRepository::findOrCreate(const QString &phone, UserRecord *record, bool
 bool UserRepository::updateProfile(qint64 userId, const QString &nickname,
                                    const QString &avatarPath, QString *error) const
 {
-    if (nickname.trimmed().isEmpty() || nickname.size() > 40) {
+    return updateProfileFields(userId, nickname, avatarPath, error);
+}
+
+bool UserRepository::updateProfileFields(qint64 userId, const std::optional<QString> &nickname,
+                                         const std::optional<QString> &avatarPath, QString *error) const
+{
+    if (!nickname && !avatarPath) {
+        if (error) *error = QStringLiteral("未提供资料更新字段");
+        return false;
+    }
+    if (nickname && (nickname->trimmed().isEmpty() || nickname->size() > 40)) {
         if (error) *error = QStringLiteral("昵称长度必须为1至40个字符");
         return false;
     }
     QSqlDatabase db = database()->database(error);
     if (!db.isValid() || !db.isOpen()) return false;
     QSqlQuery query(db);
-    query.prepare(QStringLiteral(
-        "UPDATE users SET nickname=?, avatar_path=?, updated_at=CURRENT_TIMESTAMP WHERE id=?"));
-    query.addBindValue(nickname.trimmed());
-    query.addBindValue(avatarPath);
+    // Omitted columns never enter the SET clause, so independent concurrent
+    // patches cannot write back stale values read by the service.
+    QStringList assignments;
+    if (nickname) assignments.append(QStringLiteral("nickname=?"));
+    if (avatarPath) assignments.append(QStringLiteral("avatar_path=?"));
+    assignments.append(QStringLiteral("updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')"));
+    query.prepare(QStringLiteral("UPDATE users SET %1 WHERE id=?").arg(assignments.join(',')));
+    if (nickname) query.addBindValue(nickname->trimmed());
+    if (avatarPath) query.addBindValue(*avatarPath);
     query.addBindValue(userId);
     if (!query.exec() || query.numRowsAffected() != 1) {
         if (error) *error = query.lastError().isValid()
@@ -127,7 +161,7 @@ bool UserRepository::setStatus(qint64 userId, const QString &status, QString *er
     if (!db.isValid() || !db.isOpen()) return false;
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
-        "UPDATE users SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?"));
+        "UPDATE users SET status=?, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?"));
     query.addBindValue(status);
     query.addBindValue(userId);
     if (!query.exec() || query.numRowsAffected() != 1) {
@@ -146,7 +180,8 @@ bool UserRepository::search(const QString &phoneKeyword, int limit, int offset,
     if (!db.isValid() || !db.isOpen()) return false;
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
-        "SELECT id, phone, nickname, avatar_path, balance_cents, status, created_at, updated_at "
+        "SELECT id, phone, nickname, avatar_path, balance_cents, status, "
+        "strftime('%Y-%m-%dT%H:%M:%SZ',created_at),strftime('%Y-%m-%dT%H:%M:%SZ',updated_at) "
         "FROM users WHERE phone LIKE ? ORDER BY id DESC LIMIT ? OFFSET ?"));
     query.addBindValue(QStringLiteral("%") + phoneKeyword + QStringLiteral("%"));
     query.addBindValue(qBound(1, limit, 200));

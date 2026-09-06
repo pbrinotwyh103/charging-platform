@@ -30,11 +30,15 @@ public slots:
     void showLoginPage();
     void showFeatureMessage(const QString &message);
     void showDemoWorkspace();
+    void showReservationCreated(const QJsonObject &reservation);
+    void showChargingSnapshot(const QJsonObject &snapshot);
+    void showChargingStopped(const QJsonObject &result);
 
 signals:
     void connectionRequested(const QString &host, quint16 port);
     void loginRequested(const QString &phone, const QString &host, quint16 port);
     void logoutRequested();
+    void reservationRequested(qint64 stationId, qint64 pileId);
 
 private:
     QLabel *m_statusLabel = nullptr;
@@ -51,4 +55,6 @@ private:
     StationDetailPage *m_stationDetailPage = nullptr;
     bool m_demoMode = false;
     QJsonArray m_demoStations;
+    QJsonObject m_pendingStation;
+    QJsonObject m_pendingPile;
 };

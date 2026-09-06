@@ -1,4 +1,5 @@
 #include "repositories/orderrepository.h"
+#include "repositories/walletrepository.h"
 
 #include "database/databasemanager.h"
 
@@ -10,8 +11,9 @@ namespace {
 QString orderColumns()
 {
     return QStringLiteral("id,order_no,user_id,station_id,pile_id,reservation_id,status,"
-        "started_at,stopped_at,duration_seconds,energy_wh,unit_price_cents,fee_cents,"
-        "stop_reason,created_at,updated_at");
+        "strftime('%Y-%m-%dT%H:%M:%SZ',started_at),strftime('%Y-%m-%dT%H:%M:%SZ',stopped_at),"
+        "duration_seconds,energy_wh,unit_price_cents,fee_cents,stop_reason,"
+        "strftime('%Y-%m-%dT%H:%M:%SZ',created_at),strftime('%Y-%m-%dT%H:%M:%SZ',updated_at),push_seq");
 }
 
 void readOrder(QSqlQuery &query, OrderRecord *record)
@@ -32,6 +34,7 @@ void readOrder(QSqlQuery &query, OrderRecord *record)
     record->stopReason = query.value(13).toString();
     record->createdAt = query.value(14).toString();
     record->updatedAt = query.value(15).toString();
+    record->pushSequence = query.value(16).toLongLong();
 }
 
 bool rollback(QSqlDatabase &db, const QString &message, QString *error)
@@ -48,11 +51,26 @@ bool OrderRepository::createChargingOrder(const QString &orderNo, qint64 userId,
 {
     QSqlDatabase db = database()->database(error);
     if (!db.isValid() || !db.isOpen()) return false;
-    if (!db.transaction()) {
-        if (error) *error = db.lastError().text();
+    QSqlQuery begin(db);
+    if (!begin.exec(QStringLiteral("BEGIN IMMEDIATE"))) {
+        if (error) *error = begin.lastError().text();
         return false;
     }
     QSqlQuery context(db);
+    QSqlQuery existing(db);
+    existing.prepare(QStringLiteral(
+        "SELECT id,user_id,pile_id,COALESCE(reservation_id,0) FROM charging_orders WHERE order_no=?"));
+    existing.addBindValue(orderNo);
+    if (!existing.exec()) return rollback(db, existing.lastError().text(), error);
+    if (existing.next()) {
+        if (existing.value(1).toLongLong() != userId || existing.value(2).toLongLong() != pileId
+            || existing.value(3).toLongLong() != reservationId)
+            return rollback(db, QStringLiteral("订单号已用于其他订单"), error);
+        const qint64 id = existing.value(0).toLongLong();
+        db.rollback();
+        if (orderId) *orderId = id;
+        return true;
+    }
     context.prepare(QStringLiteral(
         "SELECT p.station_id,p.status,s.price_cents_per_kwh,u.status "
         "FROM charging_piles p JOIN stations s ON s.id=p.station_id "
@@ -66,6 +84,13 @@ bool OrderRepository::createChargingOrder(const QString &orderNo, qint64 userId,
     if (context.value(3).toString() != QStringLiteral("normal")) {
         return rollback(db, QStringLiteral("冻结用户不能开始充电"), error);
     }
+    QSqlQuery activeReservation(db);
+    activeReservation.prepare(QStringLiteral(
+        "SELECT id FROM reservations WHERE user_id=? AND status='active' AND id<>? LIMIT 1"));
+    activeReservation.addBindValue(userId);
+    activeReservation.addBindValue(reservationId);
+    if (!activeReservation.exec()) return rollback(db, activeReservation.lastError().text(), error);
+    if (activeReservation.next()) return rollback(db, QStringLiteral("reservation_conflict"), error);
     const QString expectedPileStatus = reservationId > 0
         ? QStringLiteral("reserved") : QStringLiteral("idle");
     if (context.value(1).toString() != expectedPileStatus) {
@@ -74,9 +99,9 @@ bool OrderRepository::createChargingOrder(const QString &orderNo, qint64 userId,
     if (reservationId > 0) {
         QSqlQuery reservation(db);
         reservation.prepare(QStringLiteral(
-            "UPDATE reservations SET status='used',used_at=CURRENT_TIMESTAMP "
+            "UPDATE reservations SET status='used',used_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') "
             "WHERE id=? AND user_id=? AND pile_id=? AND status='active' "
-            "AND expires_at>CURRENT_TIMESTAMP"));
+            "AND julianday(expires_at)>julianday('now')"));
         reservation.addBindValue(reservationId);
         reservation.addBindValue(userId);
         reservation.addBindValue(pileId);
@@ -87,7 +112,7 @@ bool OrderRepository::createChargingOrder(const QString &orderNo, qint64 userId,
     }
     QSqlQuery occupy(db);
     occupy.prepare(QStringLiteral(
-        "UPDATE charging_piles SET status='charging',updated_at=CURRENT_TIMESTAMP "
+        "UPDATE charging_piles SET status='charging',updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') "
         "WHERE id=? AND status=?"));
     occupy.addBindValue(pileId);
     occupy.addBindValue(expectedPileStatus);
@@ -96,9 +121,26 @@ bool OrderRepository::createChargingOrder(const QString &orderNo, qint64 userId,
                                                          : QStringLiteral("电桩状态已变化"), error);
     }
     QSqlQuery insert(db);
+    // Recheck eligibility under the transaction's write ownership, including
+    // state changed at the pile/reservation write boundary.
+    QSqlQuery eligibility(db);
+    eligibility.prepare(QStringLiteral(
+        "SELECT u.status,u.balance_cents,s.status FROM users u "
+        "JOIN charging_piles p ON p.id=? JOIN stations s ON s.id=p.station_id WHERE u.id=?"));
+    eligibility.addBindValue(pileId);
+    eligibility.addBindValue(userId);
+    if (!eligibility.exec() || !eligibility.next()) return rollback(db, eligibility.lastError().text(), error);
+    if (eligibility.value(0).toString() != QStringLiteral("normal"))
+        return rollback(db, QStringLiteral("user_frozen"), error);
+    if (eligibility.value(1).toLongLong() <= 0)
+        return rollback(db, QStringLiteral("insufficient_balance"), error);
+    if (eligibility.value(2).toString() != QStringLiteral("online"))
+        return rollback(db, QStringLiteral("station_unavailable"), error);
     insert.prepare(QStringLiteral(
         "INSERT INTO charging_orders(order_no,user_id,station_id,pile_id,reservation_id,"
-        "status,started_at,unit_price_cents) VALUES(?,?,?,?,?,'charging',CURRENT_TIMESTAMP,?)"));
+        "status,started_at,unit_price_cents,created_at,updated_at) "
+        "VALUES(?,?,?,?,?,'charging',strftime('%Y-%m-%dT%H:%M:%SZ','now'),?,"
+        "strftime('%Y-%m-%dT%H:%M:%SZ','now'),strftime('%Y-%m-%dT%H:%M:%SZ','now'))"));
     insert.addBindValue(orderNo);
     insert.addBindValue(userId);
     insert.addBindValue(context.value(0));
@@ -113,6 +155,119 @@ bool OrderRepository::createChargingOrder(const QString &orderNo, qint64 userId,
         return false;
     }
     if (orderId) *orderId = id;
+    return true;
+}
+
+bool OrderRepository::stopAndSettle(qint64 orderId, qint64 durationSeconds, qint64 energyWh,
+                                    qint64 feeCents, const QString &finalStatus,
+                                    const QString &reason, qint64 *balanceAfterCents,
+                                    QString *error) const
+{
+    return WalletRepository(database()).settleOrder(
+        QStringLiteral("ORDER-PAYMENT-%1").arg(orderId), orderId, durationSeconds, energyWh,
+        feeCents, finalStatus, reason, balanceAfterCents, error);
+}
+
+bool OrderRepository::listActive(QList<OrderRecord> *records, QString *error) const
+{
+    records->clear();
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    if (!query.exec(QStringLiteral(
+        "SELECT %1 FROM charging_orders WHERE status='charging' ORDER BY id").arg(orderColumns()))) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    while (query.next()) {
+        OrderRecord record;
+        readOrder(query, &record);
+        records->append(record);
+    }
+    return true;
+}
+
+bool OrderRepository::visitSnapshot(const std::function<bool(const OrderRecord &)> &visitor,
+                                     QString *error) const
+{
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    query.setForwardOnly(true);
+    if (!query.exec(QStringLiteral("SELECT %1 FROM charging_orders ORDER BY julianday(created_at) DESC,id DESC")
+                        .arg(orderColumns()))) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    while (query.next()) {
+        OrderRecord record;
+        readOrder(query, &record);
+        if (!visitor(record)) {
+            if (error) *error = QStringLiteral("订单快照读取已中止");
+            return false;
+        }
+    }
+    if (query.lastError().isValid()) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    return true;
+}
+
+bool OrderRepository::list(const QString &status, int limit, int offset,
+                           QList<OrderRecord> *records, QString *error) const
+{
+    records->clear();
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    QString sql = QStringLiteral("SELECT %1 FROM charging_orders ").arg(orderColumns());
+    if (!status.isEmpty()) sql += QStringLiteral("WHERE status=? ");
+    sql += QStringLiteral("ORDER BY julianday(created_at) DESC,id DESC LIMIT ? OFFSET ?");
+    query.prepare(sql);
+    if (!status.isEmpty()) query.addBindValue(status);
+    query.addBindValue(qBound(1, limit, 200));
+    query.addBindValue(qMax(0, offset));
+    if (!query.exec()) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    while (query.next()) {
+        OrderRecord record;
+        readOrder(query, &record);
+        records->append(record);
+    }
+    return true;
+}
+
+bool OrderRepository::countByUser(qint64 userId, int *total, QString *error) const
+{
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral("SELECT COUNT(*) FROM charging_orders WHERE user_id=?"));
+    query.addBindValue(userId);
+    if (!query.exec() || !query.next()) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    if (total) *total = query.value(0).toInt();
+    return true;
+}
+
+bool OrderRepository::count(const QString &status, int *total, QString *error) const
+{
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral("SELECT COUNT(*) FROM charging_orders WHERE (?='' OR status=?)"));
+    query.addBindValue(status.isEmpty() ? QStringLiteral("") : status);
+    query.addBindValue(status);
+    if (!query.exec() || !query.next()) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    if (total) *total = query.value(0).toInt();
     return true;
 }
 
@@ -166,7 +321,7 @@ bool OrderRepository::updateProgress(qint64 orderId, qint64 durationSeconds,
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
         "UPDATE charging_orders SET duration_seconds=?,energy_wh=?,fee_cents=?,"
-        "updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='charging'"));
+        "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=? AND status='charging'"));
     query.addBindValue(qMax<qint64>(0, durationSeconds));
     query.addBindValue(qMax<qint64>(0, energyWh));
     query.addBindValue(qMax<qint64>(0, feeCents));
@@ -179,6 +334,43 @@ bool OrderRepository::updateProgress(qint64 orderId, qint64 durationSeconds,
     return true;
 }
 
+bool OrderRepository::updateProgressAndSequence(qint64 orderId, qint64 durationSeconds,
+                                                qint64 energyWh, qint64 feeCents,
+                                                qint64 *sequence, QString *error) const
+{
+    if (sequence) *sequence = 0;
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral(
+        "UPDATE charging_orders SET duration_seconds=?,energy_wh=?,fee_cents=?,push_seq=push_seq+1,"
+        "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=? AND status='charging' "
+        "AND (push_seq=0 OR duration_seconds<?) AND duration_seconds<=? AND energy_wh<=? "
+        "RETURNING push_seq"));
+    query.addBindValue(durationSeconds);
+    query.addBindValue(energyWh);
+    query.addBindValue(feeCents);
+    query.addBindValue(orderId);
+    query.addBindValue(durationSeconds);
+    query.addBindValue(durationSeconds);
+    query.addBindValue(energyWh);
+    if (!query.exec()) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    qint64 allocated = 0;
+    if (query.next()) allocated = query.value(0).toLongLong();
+    // Step RETURNING through completion so commit errors precede publication.
+    while (query.next()) {}
+    if (query.lastError().isValid()) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    query.finish();
+    if (sequence) *sequence = allocated;
+    return true;
+}
+
 bool OrderRepository::listByUser(qint64 userId, int limit, int offset,
                                  QList<OrderRecord> *records, QString *error) const
 {
@@ -187,7 +379,7 @@ bool OrderRepository::listByUser(qint64 userId, int limit, int offset,
     if (!db.isValid() || !db.isOpen()) return false;
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
-        "SELECT %1 FROM charging_orders WHERE user_id=? ORDER BY created_at DESC LIMIT ? OFFSET ?")
+        "SELECT %1 FROM charging_orders WHERE user_id=? ORDER BY julianday(created_at) DESC,id DESC LIMIT ? OFFSET ?")
         .arg(orderColumns()));
     query.addBindValue(userId);
     query.addBindValue(qBound(1, limit, 200));

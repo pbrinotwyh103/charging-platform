@@ -2,6 +2,7 @@
 #include "api/clientapi.h"
 #include "ui/usermainwindow.h"
 #include "pages/homepage.h"
+#include "pages/chargingpage.h"
 #include "pages/stationdetailpage.h"
 #include "pages/profilepage.h"
 
@@ -40,6 +41,8 @@ int main(int argc, char *argv[])
                      &window, &UserMainWindow::setLoginBusy);
     QObject::connect(&controller, &ClientApi::loginSucceeded,
                      &window, &UserMainWindow::showProfile);
+    QObject::connect(&controller, &ClientApi::profileReceived,
+                     window.findChild<ProfilePage *>(), &ProfilePage::setProfile);
     QObject::connect(&controller, &ClientApi::loginFailed,
                      &window, &UserMainWindow::showLoginError);
     QObject::connect(&controller, &ClientApi::loggedOut,
@@ -49,20 +52,31 @@ int main(int argc, char *argv[])
     if (!parser.isSet(demoOption)) {
         QObject::connect(window.findChild<HomePage *>(), &HomePage::stationsRequested, &controller, &ClientApi::requestStations);
         QObject::connect(window.findChild<StationDetailPage *>(), &StationDetailPage::pilesRequested, &controller, &ClientApi::requestPiles);
+        QObject::connect(&window, &UserMainWindow::reservationRequested, &controller, &ClientApi::createReservation);
+        QObject::connect(window.findChild<ChargingPage *>(), &ChargingPage::startChargingRequested, &controller, &ClientApi::startCharging);
+        QObject::connect(window.findChild<ChargingPage *>(), &ChargingPage::stopChargingRequested, &controller, &ClientApi::stopCharging);
     }
     QObject::connect(&controller, &ClientApi::stationsReceived, window.findChild<HomePage *>(), &HomePage::setStations);
     QObject::connect(&controller, &ClientApi::pilesReceived, window.findChild<StationDetailPage *>(), &StationDetailPage::setPiles);
     if (!parser.isSet(demoOption)) {
         QObject::connect(window.findChild<StationDetailPage *>(), &StationDetailPage::favoriteRequested,
-                         &controller, [&controller](qint64, bool) {
-            controller.requestUnsupported(QStringLiteral("收藏切换"));
-        });
+                         &controller, &ClientApi::toggleFavorite);
     }
     auto *profile = window.findChild<ProfilePage *>();
     if (!parser.isSet(demoOption)) {
-        QObject::connect(profile, &ProfilePage::nicknameUpdateRequested, &controller, [&controller](const QString &) { controller.requestUnsupported(QStringLiteral("昵称修改")); });
-        QObject::connect(profile, &ProfilePage::avatarUpdateRequested, &controller, [&controller](const QString &) { controller.requestUnsupported(QStringLiteral("头像上传")); });
-        QObject::connect(profile, &ProfilePage::rechargeRequested, &controller, [&controller](qint64) { controller.requestUnsupported(QStringLiteral("钱包充值")); });
+        QObject::connect(profile, &ProfilePage::nicknameUpdateRequested, &controller, &ClientApi::updateNickname);
+        QObject::connect(profile, &ProfilePage::avatarUpdateRequested, &controller, &ClientApi::updateAvatar);
+        QObject::connect(profile, &ProfilePage::rechargeRequested, &controller, &ClientApi::recharge);
+        QObject::connect(&controller, &ClientApi::walletChanged, profile, &ProfilePage::applyWalletResult);
+        QObject::connect(&controller, &ClientApi::walletChanged, &controller, [&controller] { controller.requestLedger(); });
+        QObject::connect(&controller, &ClientApi::ledgerReceived, profile, &ProfilePage::setLedger);
+        QObject::connect(&controller, &ClientApi::reservationCreated, &window, &UserMainWindow::showReservationCreated);
+        QObject::connect(&controller, &ClientApi::chargingSnapshotReceived, &window, &UserMainWindow::showChargingSnapshot);
+        QObject::connect(&controller, &ClientApi::chargingStopped, &window, &UserMainWindow::showChargingStopped);
+        QObject::connect(&controller, &ClientApi::loginSucceeded, &controller, [&controller] {
+            controller.requestLedger();
+            controller.requestActiveOrder();
+        });
     }
     if (parser.isSet(demoOption))
         window.showDemoWorkspace();

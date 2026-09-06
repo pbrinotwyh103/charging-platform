@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QWidget>
 
@@ -18,6 +19,8 @@ public:
     void setProfile(const QJsonObject &profile);
     void setDemoMode(bool enabled);
     void setFavoriteStation(const QString &name, bool favorited);
+    void applyWalletResult(const QJsonObject &result);
+    void setLedger(const QJsonArray &items);
 
 signals:
     void logoutRequested();

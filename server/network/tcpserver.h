@@ -15,6 +15,8 @@ public:
     bool listen(quint16 port, QString *error);
     int connectionCount() const;
     quint16 listeningPort() const;
+    QList<ClientSession *> sessionsForUser(qint64 userId) const;
+    QList<ClientSession *> administratorSessions() const;
     void closeExpiredSessions(qint64 timeoutMilliseconds);
 
 signals:

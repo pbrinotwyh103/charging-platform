@@ -4,6 +4,7 @@
 
 #include <QList>
 #include <QString>
+#include <functional>
 
 struct OrderRecord {
     qint64 id = 0;
@@ -19,6 +20,7 @@ struct OrderRecord {
     qint64 energyWh = 0;
     qint64 unitPriceCents = 0;
     qint64 feeCents = 0;
+    qint64 pushSequence = 0;
     QString stopReason;
     QString createdAt;
     QString updatedAt;
@@ -28,6 +30,17 @@ class OrderRepository final : public RepositoryBase
 {
 public:
     using RepositoryBase::RepositoryBase;
+    // One SQLite statement pins row membership and values for the whole visit.
+    // Return false from visitor to abort the scan.
+    bool visitSnapshot(const std::function<bool(const OrderRecord &)> &visitor, QString *error) const;
+    bool stopAndSettle(qint64 orderId, qint64 durationSeconds, qint64 energyWh,
+                       qint64 feeCents, const QString &finalStatus, const QString &reason,
+                       qint64 *balanceAfterCents, QString *error) const;
+    bool listActive(QList<OrderRecord> *records, QString *error) const;
+    bool countByUser(qint64 userId, int *total, QString *error) const;
+    bool list(const QString &status, int limit, int offset,
+              QList<OrderRecord> *records, QString *error) const;
+    bool count(const QString &status, int *total, QString *error) const;
 
     bool createChargingOrder(const QString &orderNo, qint64 userId, qint64 pileId,
                              qint64 reservationId, qint64 *orderId, QString *error) const;
@@ -35,6 +48,10 @@ public:
     bool findActiveByUser(qint64 userId, OrderRecord *record, QString *error) const;
     bool updateProgress(qint64 orderId, qint64 durationSeconds, qint64 energyWh,
                         qint64 feeCents, QString *error) const;
+    // Atomically persists progress and allocates its sequence. sequence=0 means
+    // this sample was already published or is older than persisted progress.
+    bool updateProgressAndSequence(qint64 orderId, qint64 durationSeconds, qint64 energyWh,
+                                   qint64 feeCents, qint64 *sequence, QString *error) const;
     bool listByUser(qint64 userId, int limit, int offset,
                     QList<OrderRecord> *records, QString *error) const;
 };

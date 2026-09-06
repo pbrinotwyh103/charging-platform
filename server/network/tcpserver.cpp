@@ -28,6 +28,27 @@ quint16 TcpServer::listeningPort() const
     return m_server.serverPort();
 }
 
+QList<ClientSession *> TcpServer::sessionsForUser(qint64 userId) const
+{
+    QList<ClientSession *> result;
+    for (auto *session : m_sessions) {
+        if (session->isAuthenticated() && session->role() == Charging::Role::User
+            && session->principalId() == userId)
+            result.append(session);
+    }
+    return result;
+}
+
+QList<ClientSession *> TcpServer::administratorSessions() const
+{
+    QList<ClientSession *> result;
+    for (auto *session : m_sessions) {
+        if (session->isAuthenticated() && session->role() == Charging::Role::Administrator)
+            result.append(session);
+    }
+    return result;
+}
+
 void TcpServer::closeExpiredSessions(qint64 timeoutMilliseconds)
 {
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
