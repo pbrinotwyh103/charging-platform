@@ -12,6 +12,7 @@
 #include "repositories/walletrepository.h"
 
 #include <QFile>
+#include <QDateTime>
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QtTest>
@@ -351,6 +352,158 @@ void DatabaseRepositoryTest::faultSettlementAndLegacyReplay()
     PileRecord pile;
     QVERIFY(piles.findById(1, &pile, &error));
     QCOMPARE(pile.status, QStringLiteral("idle"));
+}
+
+void DatabaseRepositoryTest::mixedFormatReservationExpiry()
+{
+    const qint64 userId = createUser(QStringLiteral("13800138024"));
+    ReservationRepository reservations(&m_database);
+    QString error;
+    qint64 reservationId = 0;
+    int expired = 0;
+    struct Case { const char *expiry; const char *now; int expected; };
+    const Case cases[] = {
+        {"2098-06-01T09:00:00Z", "2098-06-01 10:00:00", 1},
+        {"2098-06-01 11:00:00", "2098-06-01T10:00:00Z", 0},
+        {"2098-06-01T18:00:00+08:00", "2098-06-01 10:00:00", 1},
+        {"2098-06-01 10:00:00", "2098-06-01T10:00:00Z", 1}
+    };
+    for (const Case &entry : cases) {
+        QVERIFY(reservations.create(userId, 1, QString::fromLatin1(entry.expiry), &reservationId, &error));
+        QVERIFY(reservations.expireDue(QString::fromLatin1(entry.now), &expired, &error));
+        QCOMPARE(expired, entry.expected);
+        ReservationRecord reservation;
+        QVERIFY(reservations.findById(reservationId, &reservation, &error));
+        QCOMPARE(reservation.status, entry.expected ? QStringLiteral("expired") : QStringLiteral("active"));
+        PileRecord pile;
+        QVERIFY(PileRepository(&m_database).findById(1, &pile, &error));
+        QCOMPARE(pile.status, entry.expected ? QStringLiteral("idle") : QStringLiteral("reserved"));
+        if (!entry.expected) QVERIFY(reservations.cancel(reservationId, userId, &error));
+    }
+}
+
+void DatabaseRepositoryTest::isoExpiredReservationCannotStart()
+{
+    const qint64 userId = createUser(QStringLiteral("13800138025"));
+    ReservationRepository reservations(&m_database);
+    OrderRepository orders(&m_database);
+    QString error;
+    qint64 reservationId = 0, orderId = 0;
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    QVERIFY(reservations.create(userId, 1, now.addSecs(-1).toString(Qt::ISODate), &reservationId, &error));
+    QVERIFY(!orders.createChargingOrder(QStringLiteral("O-ISO-EXPIRED"), userId, 1,
+                                        reservationId, &orderId, &error));
+    ReservationRecord reservation;
+    QVERIFY(reservations.findById(reservationId, &reservation, &error));
+    QCOMPARE(reservation.status, QStringLiteral("active"));
+    QVERIFY(reservations.cancel(reservationId, userId, &error));
+    // Legacy SQL timestamps remain valid for a future reservation.
+    QVERIFY(reservations.create(userId, 1, now.addSecs(600).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")),
+                                &reservationId, &error));
+    QVERIFY(orders.createChargingOrder(QStringLiteral("O-LEGACY-FUTURE"), userId, 1,
+                                       reservationId, &orderId, &error));
+    QVERIFY(orders.stopAndSettle(orderId, 0, 0, 0, QStringLiteral("completed"),
+                                QStringLiteral("test_stop"), nullptr, &error));
+}
+
+void DatabaseRepositoryTest::repositoryUtcTimestamps()
+{
+    const qint64 userId = createUser(QStringLiteral("13800138026"));
+    QString error;
+    QSqlQuery fixture(m_database.database(&error));
+    fixture.prepare(QStringLiteral("UPDATE users SET created_at='2026-09-06 04:05:06', "
+        "updated_at='2026-09-06T12:05:06+08:00' WHERE id=?"));
+    fixture.addBindValue(userId);
+    QVERIFY(fixture.exec());
+    UserRecord user;
+    QVERIFY(UserRepository(&m_database).findById(userId, &user, &error));
+    QCOMPARE(user.createdAt, QStringLiteral("2026-09-06T04:05:06Z"));
+    QCOMPARE(user.updatedAt, QStringLiteral("2026-09-06T04:05:06Z"));
+
+    auto isUtc = [](const QString &value) {
+        const QDateTime parsed = QDateTime::fromString(value, Qt::ISODate);
+        return value.endsWith(QLatin1Char('Z')) && value.contains(QLatin1Char('T'))
+            && parsed.isValid() && parsed.offsetFromUtc() == 0;
+    };
+    StationRecord station;
+    QVERIFY(StationRepository(&m_database).findById(1, &station, &error));
+    QVERIFY(isUtc(station.createdAt));
+    QVERIFY(isUtc(station.updatedAt));
+    PileRepository piles(&m_database);
+    QVERIFY(piles.updateHeartbeat(1, &error));
+    PileRecord pile;
+    QVERIFY(piles.findById(1, &pile, &error));
+    QVERIFY(isUtc(pile.lastHeartbeatAt));
+    QVERIFY(isUtc(pile.updatedAt));
+
+    ReservationRepository reservations(&m_database);
+    qint64 reservationId = 0;
+    QVERIFY(reservations.create(userId, 1, QStringLiteral("2099-01-01 12:00:00"), &reservationId, &error));
+    ReservationRecord reservation;
+    QVERIFY(reservations.findById(reservationId, &reservation, &error));
+    QCOMPARE(reservation.expiresAt, QStringLiteral("2099-01-01T12:00:00Z"));
+    QVERIFY(isUtc(reservation.reservedAt));
+    QVERIFY(reservation.usedAt.isEmpty());
+    OrderRepository orders(&m_database);
+    qint64 orderId = 0;
+    QVERIFY(orders.createChargingOrder(QStringLiteral("O-UTC"), userId, 1, reservationId, &orderId, &error));
+    QVERIFY(reservations.findById(reservationId, &reservation, &error));
+    QVERIFY(isUtc(reservation.usedAt));
+    QVERIFY(orders.stopAndSettle(orderId, 0, 0, 0, QStringLiteral("completed"),
+                                QStringLiteral("test_stop"), nullptr, &error));
+    OrderRecord order;
+    QVERIFY(orders.findById(orderId, &order, &error));
+    QVERIFY(isUtc(order.startedAt));
+    QVERIFY(isUtc(order.stoppedAt));
+    QVERIFY(isUtc(order.createdAt));
+    QVERIFY(isUtc(order.updatedAt));
+    QList<WalletRecord> ledger;
+    QVERIFY(WalletRepository(&m_database).listByUser(userId, 20, 0, &ledger, &error));
+    QCOMPARE(ledger.size(), 1);
+    QVERIFY(isUtc(ledger.first().createdAt));
+    fixture.prepare(QStringLiteral("SELECT o.stopped_at,o.updated_at,w.created_at,u.updated_at,p.updated_at "
+        "FROM charging_orders o JOIN wallet_records w ON w.order_id=o.id "
+        "JOIN users u ON u.id=o.user_id JOIN charging_piles p ON p.id=o.pile_id WHERE o.id=?"));
+    fixture.addBindValue(orderId);
+    QVERIFY(fixture.exec());
+    QVERIFY(fixture.next());
+    for (int column = 0; column < 5; ++column) QVERIFY(isUtc(fixture.value(column).toString()));
+}
+
+void DatabaseRepositoryTest::mixedFormatPagination()
+{
+    const qint64 userId = createUser(QStringLiteral("13800138027"));
+    OrderRepository orders(&m_database);
+    WalletRepository wallet(&m_database);
+    QString error;
+    qint64 ids[2] = {};
+    const QString dates[] = {QStringLiteral("2098-06-01 11:00:00"), QStringLiteral("2098-06-01T09:00:00Z")};
+    for (int index = 0; index < 2; ++index) {
+        QVERIFY(orders.createChargingOrder(QStringLiteral("O-TIME-PAGE-%1").arg(index), userId, 1, 0,
+                                           &ids[index], &error));
+        QVERIFY(orders.stopAndSettle(ids[index], 0, 0, 0, QStringLiteral("completed"),
+                                    QStringLiteral("test_stop"), nullptr, &error));
+        QSqlQuery fixture(m_database.database(&error));
+        fixture.prepare(QStringLiteral("UPDATE charging_orders SET created_at=? WHERE id=?"));
+        fixture.addBindValue(dates[index]);
+        fixture.addBindValue(ids[index]);
+        QVERIFY(fixture.exec());
+        fixture.prepare(QStringLiteral("UPDATE wallet_records SET created_at=? WHERE order_id=?"));
+        fixture.addBindValue(dates[index]);
+        fixture.addBindValue(ids[index]);
+        QVERIFY(fixture.exec());
+    }
+    QList<OrderRecord> page;
+    QVERIFY(orders.listByUser(userId, 1, 0, &page, &error));
+    QCOMPARE(page.size(), 1);
+    QCOMPARE(page.first().id, ids[0]);
+    QVERIFY(orders.list(QStringLiteral("completed"), 1, 0, &page, &error));
+    QCOMPARE(page.size(), 1);
+    QCOMPARE(page.first().id, ids[0]);
+    QList<WalletRecord> ledger;
+    QVERIFY(wallet.listByUser(userId, 1, 0, &ledger, &error));
+    QCOMPARE(ledger.size(), 1);
+    QCOMPARE(ledger.first().orderId, ids[0]);
 }
 
 void DatabaseRepositoryTest::alarmControlAndPushRecords()

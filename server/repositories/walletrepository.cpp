@@ -35,7 +35,7 @@ bool WalletRepository::findByRecordNo(const QString &recordNo, WalletRecord *rec
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
         "SELECT id,record_no,user_id,order_id,record_type,amount_cents,balance_after_cents,"
-        "status,created_at FROM wallet_records WHERE record_no=?"));
+        "status,strftime('%Y-%m-%dT%H:%M:%SZ',created_at) FROM wallet_records WHERE record_no=?"));
     query.addBindValue(recordNo);
     if (!query.exec()) {
         if (error) *error = query.lastError().text();
@@ -170,7 +170,7 @@ bool WalletRepository::settleOrder(const QString &recordNo, qint64 orderId,
         return rollback(db, QStringLiteral("进行中的订单不存在"), error);
     QSqlQuery debit(db);
     debit.prepare(QStringLiteral(
-        "UPDATE users SET balance_cents=balance_cents-?,updated_at=CURRENT_TIMESTAMP "
+        "UPDATE users SET balance_cents=balance_cents-?,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') "
         "WHERE id=? AND balance_cents>=?"));
     debit.addBindValue(feeCents);
     debit.addBindValue(userId);
@@ -187,7 +187,7 @@ bool WalletRepository::settleOrder(const QString &recordNo, qint64 orderId,
     QSqlQuery wallet(db);
     wallet.prepare(QStringLiteral(
         "INSERT INTO wallet_records(record_no,user_id,order_id,record_type,amount_cents,"
-        "balance_after_cents) VALUES(?,?,?,'charge_payment',?,?)"));
+        "balance_after_cents,created_at) VALUES(?,?,?,'charge_payment',?,?,strftime('%Y-%m-%dT%H:%M:%SZ','now'))"));
     wallet.addBindValue(recordNo);
     wallet.addBindValue(userId);
     wallet.addBindValue(orderId);
@@ -196,8 +196,8 @@ bool WalletRepository::settleOrder(const QString &recordNo, qint64 orderId,
     if (!wallet.exec()) return rollback(db, wallet.lastError().text(), error);
     QSqlQuery finish(db);
     finish.prepare(QStringLiteral(
-        "UPDATE charging_orders SET status=?,stopped_at=CURRENT_TIMESTAMP,duration_seconds=?,"
-        "energy_wh=?,fee_cents=?,stop_reason=?,updated_at=CURRENT_TIMESTAMP "
+        "UPDATE charging_orders SET status=?,stopped_at=strftime('%Y-%m-%dT%H:%M:%SZ','now'),duration_seconds=?,"
+        "energy_wh=?,fee_cents=?,stop_reason=?,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') "
         "WHERE id=? AND status='charging'"));
     finish.addBindValue(finalStatus);
     finish.addBindValue(qMax<qint64>(0, durationSeconds));
@@ -211,7 +211,7 @@ bool WalletRepository::settleOrder(const QString &recordNo, qint64 orderId,
     QSqlQuery release(db);
     release.prepare(QStringLiteral(
         "UPDATE charging_piles SET status='idle',total_charge_count=total_charge_count+1,"
-        "total_charge_seconds=total_charge_seconds+?,updated_at=CURRENT_TIMESTAMP "
+        "total_charge_seconds=total_charge_seconds+?,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') "
         "WHERE id=? AND (status='charging' OR (?='fault_stopped' AND status IN ('fault','offline')))"));
     release.addBindValue(qMax<qint64>(0, durationSeconds));
     release.addBindValue(pileId);
@@ -237,8 +237,8 @@ bool WalletRepository::listByUser(qint64 userId, int limit, int offset,
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
         "SELECT id,record_no,user_id,order_id,record_type,amount_cents,balance_after_cents,"
-        "status,created_at FROM wallet_records WHERE user_id=? "
-        "ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?"));
+        "status,strftime('%Y-%m-%dT%H:%M:%SZ',created_at) FROM wallet_records WHERE user_id=? "
+        "ORDER BY julianday(created_at) DESC,id DESC LIMIT ? OFFSET ?"));
     query.addBindValue(userId);
     query.addBindValue(qBound(1, limit, 200));
     query.addBindValue(qMax(0, offset));

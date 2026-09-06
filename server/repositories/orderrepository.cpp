@@ -11,8 +11,9 @@ namespace {
 QString orderColumns()
 {
     return QStringLiteral("id,order_no,user_id,station_id,pile_id,reservation_id,status,"
-        "started_at,stopped_at,duration_seconds,energy_wh,unit_price_cents,fee_cents,"
-        "stop_reason,created_at,updated_at");
+        "strftime('%Y-%m-%dT%H:%M:%SZ',started_at),strftime('%Y-%m-%dT%H:%M:%SZ',stopped_at),"
+        "duration_seconds,energy_wh,unit_price_cents,fee_cents,stop_reason,"
+        "strftime('%Y-%m-%dT%H:%M:%SZ',created_at),strftime('%Y-%m-%dT%H:%M:%SZ',updated_at)");
 }
 
 void readOrder(QSqlQuery &query, OrderRecord *record)
@@ -91,7 +92,7 @@ bool OrderRepository::createChargingOrder(const QString &orderNo, qint64 userId,
         reservation.prepare(QStringLiteral(
             "UPDATE reservations SET status='used',used_at=CURRENT_TIMESTAMP "
             "WHERE id=? AND user_id=? AND pile_id=? AND status='active' "
-            "AND expires_at>CURRENT_TIMESTAMP"));
+        "AND julianday(expires_at)>julianday('now')"));
         reservation.addBindValue(reservationId);
         reservation.addBindValue(userId);
         reservation.addBindValue(pileId);
@@ -169,7 +170,7 @@ bool OrderRepository::list(const QString &status, int limit, int offset,
     QSqlQuery query(db);
     QString sql = QStringLiteral("SELECT %1 FROM charging_orders ").arg(orderColumns());
     if (!status.isEmpty()) sql += QStringLiteral("WHERE status=? ");
-    sql += QStringLiteral("ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?");
+    sql += QStringLiteral("ORDER BY julianday(created_at) DESC,id DESC LIMIT ? OFFSET ?");
     query.prepare(sql);
     if (!status.isEmpty()) query.addBindValue(status);
     query.addBindValue(qBound(1, limit, 200));
@@ -288,7 +289,7 @@ bool OrderRepository::listByUser(qint64 userId, int limit, int offset,
     if (!db.isValid() || !db.isOpen()) return false;
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
-        "SELECT %1 FROM charging_orders WHERE user_id=? ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?")
+        "SELECT %1 FROM charging_orders WHERE user_id=? ORDER BY julianday(created_at) DESC,id DESC LIMIT ? OFFSET ?")
         .arg(orderColumns()));
     query.addBindValue(userId);
     query.addBindValue(qBound(1, limit, 200));

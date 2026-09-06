@@ -78,7 +78,49 @@ The tests verify original-balance replay, mismatched recharge key rejection, dup
 ## Concerns and integration notes
 
 - Full top-level build remains unverified because the installed Qt lacks webenginewidgets; database target compiles and passes independently.
-- Existing reservation timestamp comparisons are textual against SQLite CURRENT_TIMESTAMP. Later services should supply compatible SQL UTC timestamps or separately normalize comparisons before passing ISO 8601 Z values, especially same-day expiration.
+- The original mixed-format reservation timestamp concern was addressed in review fix round 1 below.
 - Existing database integer/error/output-pointer conventions are preserved; null record/list pointers are not supported.
 - SQLite concurrent write contention may return a database error for one competing attempt; retrying the same business key is safe and cannot double-apply effects.
 - Settlement deliberately releases fault/offline piles to idle when finalStatus is fault_stopped, following the Task 2 brief. Any desired persistent unavailable status must be coordinated by the later device/service layer.
+
+## Review fix round 1 — timestamp compatibility
+
+Addressed both blocking review findings without schema or service changes.
+
+### Changes
+
+- Reservation consumption and expiry compare julianday values, accepting legacy SQL UTC strings, UTC ISO 8601 Z strings, and explicit timezone offsets as actual instants.
+- User, wallet, reservation, order, station, and pile read queries project timestamps through SQLite strftime to UTC ISO 8601 with T/Z, at the existing seconds precision. Nullable timestamps remain empty in records.
+- Settlement writes stopped_at, order/user/pile updated_at, and payment ledger created_at as UTC ISO 8601 Z values.
+- Order and wallet pagination sort normalized instants with the existing ID tie-breaker. This is necessary when old rows and new settlement rows coexist.
+
+### RED evidence
+
+- Added mixedFormatReservationExpiry before changing production: an ISO 09:00Z expiry compared with a same-day SQL 10:00 cutoff incorrectly returned expired=0 instead of 1.
+- Ran isoExpiredReservationCannotStart independently: the repository incorrectly allowed starting an ISO reservation that had expired one second earlier.
+- Ran repositoryUtcTimestamps independently: a legacy created_at read returned 2026-09-06 04:05:06 instead of 2026-09-06T04:05:06Z.
+- Initial UTC write changes exposed a pre-existing ordering assumption in atomicSettlementAndRecovery: the later recharge sorted below an earlier payment because of their different stored formats.
+- Added mixedFormatPagination before changing order sort queries: the 09:00 ISO order was incorrectly placed before the 11:00 legacy order (actual ID 2, expected ID 1).
+
+### GREEN evidence
+
+Built in an ignored shadow directory:
+
+    mkdir -p build/task-2-review
+    cd build/task-2-review
+    qmake ../../tests/database-repository-tests.pro -spec macx-clang CONFIG+=debug
+    make -s -j4
+    ../bin/database_repository_tests -v1
+
+Result: 16 passed, 0 failed, 0 skipped, 30 ms. git diff --check passed.
+
+New tests cover both same-day format directions, expiry equality, timezone offsets, expired ISO start rejection, future legacy start acceptance, canonical output from all six repositories, nullable timestamps, raw persisted settlement timestamps across four tables, and mixed-format pagination.
+
+### Self-review and remaining concerns
+
+- Comparison uses julianday rather than formatting, so timezone offsets and fractional instants retain comparison semantics.
+- All timestamp fields in the six Task 2 record types are projected consistently; no record layout or interface signature changed.
+- SQLite strftime defaults to UTC and preserves null as null; Qt converts nullable result strings to the existing empty-string representation.
+- Exposed timestamps use seconds precision, consistent with existing SQLite timestamp generation and charging duration fields.
+- Normalized ORDER BY expressions may need an expression index for much larger datasets; adding a schema/index migration is outside this review fix.
+- Full top-level Qt WebEngine build limitation remains unchanged. No other review blockers remain identified in this scope.

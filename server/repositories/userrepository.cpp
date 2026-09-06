@@ -42,7 +42,8 @@ bool UserRepository::findByPhone(const QString &phone, UserRecord *record, QStri
     if (!db.isValid() || !db.isOpen()) return false;
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
-        "SELECT id, phone, nickname, avatar_path, balance_cents, status, created_at, updated_at "
+        "SELECT id, phone, nickname, avatar_path, balance_cents, status, "
+        "strftime('%Y-%m-%dT%H:%M:%SZ',created_at),strftime('%Y-%m-%dT%H:%M:%SZ',updated_at) "
         "FROM users WHERE phone = ?"));
     query.addBindValue(phone);
     if (!query.exec()) {
@@ -63,7 +64,8 @@ bool UserRepository::findById(qint64 id, UserRecord *record, QString *error) con
     if (!db.isValid() || !db.isOpen()) return false;
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
-        "SELECT id, phone, nickname, avatar_path, balance_cents, status, created_at, updated_at "
+        "SELECT id, phone, nickname, avatar_path, balance_cents, status, "
+        "strftime('%Y-%m-%dT%H:%M:%SZ',created_at),strftime('%Y-%m-%dT%H:%M:%SZ',updated_at) "
         "FROM users WHERE id = ?"));
     query.addBindValue(id);
     if (!query.exec()) {
@@ -161,7 +163,8 @@ bool UserRepository::search(const QString &phoneKeyword, int limit, int offset,
     if (!db.isValid() || !db.isOpen()) return false;
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
-        "SELECT id, phone, nickname, avatar_path, balance_cents, status, created_at, updated_at "
+        "SELECT id, phone, nickname, avatar_path, balance_cents, status, "
+        "strftime('%Y-%m-%dT%H:%M:%SZ',created_at),strftime('%Y-%m-%dT%H:%M:%SZ',updated_at) "
         "FROM users WHERE phone LIKE ? ORDER BY id DESC LIMIT ? OFFSET ?"));
     query.addBindValue(QStringLiteral("%") + phoneKeyword + QStringLiteral("%"));
     query.addBindValue(qBound(1, limit, 200));

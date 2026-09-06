@@ -23,7 +23,8 @@ void readPile(QSqlQuery &query, PileRecord *record)
 QString pileColumns()
 {
     return QStringLiteral("id,station_id,pile_code,charge_type,power_kw,status,"
-                          "total_charge_count,total_charge_seconds,last_heartbeat_at,updated_at");
+                          "total_charge_count,total_charge_seconds,"
+                          "strftime('%Y-%m-%dT%H:%M:%SZ',last_heartbeat_at),strftime('%Y-%m-%dT%H:%M:%SZ',updated_at)");
 }
 }
 

@@ -79,7 +79,8 @@ bool ReservationRepository::findById(qint64 reservationId, ReservationRecord *re
     if (!db.isValid() || !db.isOpen()) return false;
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
-        "SELECT id,user_id,pile_id,status,reserved_at,expires_at,used_at "
+        "SELECT id,user_id,pile_id,status,strftime('%Y-%m-%dT%H:%M:%SZ',reserved_at),"
+        "strftime('%Y-%m-%dT%H:%M:%SZ',expires_at),strftime('%Y-%m-%dT%H:%M:%SZ',used_at) "
         "FROM reservations WHERE id=?"));
     query.addBindValue(reservationId);
     if (!query.exec()) {
@@ -98,7 +99,8 @@ bool ReservationRepository::findActiveByUser(qint64 userId, ReservationRecord *r
     if (!db.isValid() || !db.isOpen()) return false;
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
-        "SELECT id,user_id,pile_id,status,reserved_at,expires_at,used_at "
+        "SELECT id,user_id,pile_id,status,strftime('%Y-%m-%dT%H:%M:%SZ',reserved_at),"
+        "strftime('%Y-%m-%dT%H:%M:%SZ',expires_at),strftime('%Y-%m-%dT%H:%M:%SZ',used_at) "
         "FROM reservations WHERE user_id=? AND status='active' ORDER BY id DESC LIMIT 1"));
     query.addBindValue(userId);
     if (!query.exec()) {
@@ -176,7 +178,7 @@ bool ReservationRepository::expireDue(const QString &now, int *expiredCount,
     }
     QSqlQuery update(db);
     update.prepare(QStringLiteral(
-        "UPDATE reservations SET status='expired' WHERE status='active' AND expires_at<=?"));
+        "UPDATE reservations SET status='expired' WHERE status='active' AND julianday(expires_at)<=julianday(?)"));
     update.addBindValue(now);
     if (!update.exec()) return rollback(db, update.lastError().text(), error);
     const int count = update.numRowsAffected();

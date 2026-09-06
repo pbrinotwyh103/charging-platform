@@ -28,7 +28,7 @@ QString stationSelect()
         "SELECT s.id,s.name,s.address,s.longitude,s.latitude,s.price_cents_per_kwh,s.status,"
         "COUNT(p.id),COALESCE(SUM(CASE WHEN p.status='idle' THEN 1 ELSE 0 END),0),"
         "COALESCE(SUM(CASE WHEN p.status NOT IN ('offline','disabled') THEN 1 ELSE 0 END),0),"
-        "s.created_at,s.updated_at FROM stations s "
+        "strftime('%Y-%m-%dT%H:%M:%SZ',s.created_at),strftime('%Y-%m-%dT%H:%M:%SZ',s.updated_at) FROM stations s "
         "LEFT JOIN charging_piles p ON p.station_id=s.id ");
 }
 }

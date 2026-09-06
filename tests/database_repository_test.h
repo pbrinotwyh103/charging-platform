@@ -19,6 +19,10 @@ private slots:
     void atomicSettlementAndRecovery();
     void repositoryPagination();
     void faultSettlementAndLegacyReplay();
+    void mixedFormatReservationExpiry();
+    void isoExpiredReservationCannotStart();
+    void repositoryUtcTimestamps();
+    void mixedFormatPagination();
     void alarmControlAndPushRecords();
     void backupAndRestore();
 
