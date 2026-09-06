@@ -35,11 +35,13 @@ class RecordingSocket final : public QTcpSocket {
 public:
     RecordingSocket() { QIODevice::open(QIODevice::ReadWrite); setSocketState(ConnectedState); }
     QList<Message> messages;
+    QList<QByteArray> writes;
     bool failWrites = false;
 protected:
     qint64 writeData(const char *data, qint64 size) override {
         if (failWrites) return -1;
         QByteArray buffer(data, size);
+        writes.append(buffer);
         const auto decoded = Charging::PacketCodec::tryDecode(buffer);
         if (decoded.status == Charging::DecodeStatus::Complete) messages.append(decoded.message);
         return size;
@@ -60,6 +62,14 @@ bool takeRequestSlot(ClientSession &session, quint32 id)
     if (!session.markRequestStarted(id)) return false;
     session.finishRequest(id);
     return true;
+}
+
+QJsonObject paddedAdminPayload(qsizetype targetBytes)
+{
+    QJsonObject payload{{"action", "dashboard.summary"}};
+    const auto originalBytes = QJsonDocument(payload).toJson(QJsonDocument::Compact).size();
+    payload.insert("action", payload.value("action").toString() + QString(targetBytes - originalBytes, ' '));
+    return payload;
 }
 }
 
@@ -540,6 +550,224 @@ void BusinessIntegrationTest::directSessionReportsQueueFailure()
     QCOMPARE(socket->messages.size(), 1);
     ClientSession disconnected(new QTcpSocket);
     QVERIFY(!disconnected.send(MessageType::ChargingStoppedPush, 0));
+}
+
+void BusinessIntegrationTest::directLoginCannotSurviveAuthenticationAba()
+{
+    DatabaseManager database;
+    ServiceRegistry services;
+    QString error;
+    QVERIFY2(database.open(m_databasePath, &error), qPrintable(error));
+    QVERIFY2(services.initialize(&database, &error), qPrintable(error));
+    const auto existing = services.auth()->loginUser("13800138802");
+    QVERIFY(existing.succeeded());
+    MessageDispatcher dispatcher(&services);
+    auto *socket = new RecordingSocket;
+    ClientSession session(socket);
+    // Login A must insert a new user and waits for the writer lock; login B
+    // reads an existing user and can finish while A is still pending.
+    QSqlQuery lock(database.database());
+    QVERIFY(lock.exec("BEGIN IMMEDIATE"));
+    dispatcher.dispatch(&session, packet(MessageType::UserLoginRequest, 101,
+                                        {{"phone", "13800138801"}}));
+    dispatcher.dispatch(&session, packet(MessageType::UserLoginRequest, 102,
+                                        {{"phone", "13800138802"}}));
+    QTRY_COMPARE_WITH_TIMEOUT(socket->messages.size(), 1, 3000);
+    QCOMPARE(socket->messages.first().header.requestId, quint32(102));
+    QCOMPARE(socket->messages.first().header.statusCode, ErrorCode::Success);
+    QCOMPARE(session.principalId(), existing.principalId);
+    dispatcher.dispatch(&session, packet(MessageType::LogoutRequest, 103));
+    QCOMPARE(socket->messages.last().header.statusCode, ErrorCode::Success);
+    QVERIFY(session.sessionId().isEmpty());
+    QVERIFY(lock.exec("ROLLBACK"));
+    QTRY_COMPARE_WITH_TIMEOUT(socket->messages.size(), 3, 3000);
+    QCOMPARE(socket->messages.last().header.requestId, quint32(101));
+    QCOMPARE(socket->messages.last().header.statusCode, ErrorCode::SessionExpired);
+    QVERIFY(!socket->messages.last().payload.contains("phone"));
+    QVERIFY(!session.isAuthenticated());
+    QVERIFY(takeRequestSlot(session, 101));
+}
+
+void BusinessIntegrationTest::directAnonymousClearInvalidatesLogin_data()
+{
+    QTest::addColumn<bool>("logoutRequest");
+    QTest::addColumn<bool>("deadline");
+    QTest::newRow("clear-completion") << false << false;
+    QTest::newRow("logout-completion") << true << false;
+    QTest::newRow("clear-deadline") << false << true;
+    QTest::newRow("logout-deadline") << true << true;
+}
+
+void BusinessIntegrationTest::directAnonymousClearInvalidatesLogin()
+{
+    QFETCH(bool, logoutRequest);
+    QFETCH(bool, deadline);
+    DatabaseManager database;
+    ServiceRegistry services;
+    QString error;
+    QVERIFY2(database.open(m_databasePath, &error), qPrintable(error));
+    QVERIFY2(services.initialize(&database, &error), qPrintable(error));
+    MessageDispatcher dispatcher(&services, nullptr, deadline ? 50 : 10000);
+    auto *socket = new RecordingSocket;
+    ClientSession session(socket);
+    QSqlQuery lock(database.database());
+    QVERIFY(lock.exec("BEGIN IMMEDIATE"));
+    dispatcher.dispatch(&session, packet(MessageType::UserLoginRequest, 104,
+                                        {{"phone", "13800138801"}}));
+    if (logoutRequest) {
+        dispatcher.dispatch(&session, packet(MessageType::LogoutRequest, 105));
+        QCOMPARE(socket->messages.last().header.statusCode, ErrorCode::Unauthorized);
+        socket->messages.clear();
+    } else {
+        session.clearAuthentication();
+    }
+    QVERIFY(session.sessionId().isEmpty());
+    if (!deadline) QVERIFY(lock.exec("ROLLBACK"));
+    QTRY_COMPARE_WITH_TIMEOUT(socket->messages.size(), 1, 3000);
+    if (deadline) QVERIFY(lock.exec("ROLLBACK"));
+    QCOMPARE(socket->messages.last().header.statusCode, ErrorCode::SessionExpired);
+    QCOMPARE(socket->messages.last().header.requestId, quint32(104));
+    QTRY_VERIFY_WITH_TIMEOUT(takeRequestSlot(session, 104), 3000);
+    QCOMPARE(socket->messages.size(), 1);
+    QVERIFY(!session.isAuthenticated());
+}
+
+void BusinessIntegrationTest::directOutboundEnvelopeBoundaries_data()
+{
+    QTest::addColumn<int>("delta");
+    QTest::addColumn<int>("status");
+    QTest::newRow("below-limit") << -1 << int(ErrorCode::Success);
+    QTest::newRow("at-limit") << 0 << int(ErrorCode::Success);
+    QTest::newRow("oversized-success") << 1 << int(ErrorCode::Success);
+    QTest::newRow("oversized-error") << 1 << int(ErrorCode::ValidationFailed);
+}
+
+void BusinessIntegrationTest::directOutboundEnvelopeBoundaries()
+{
+    QFETCH(int, delta);
+    QFETCH(int, status);
+    auto *socket = new RecordingSocket;
+    ClientSession session(socket);
+    // The literal JSON {"message":""} contributes exactly 14 UTF-8 bytes.
+    const QJsonObject payload{{"message", QString(Charging::MessageHeader::MaxPayloadLength - 14 + delta, 'x')}};
+    QVERIFY(session.send(MessageType::AdminCommandResponse, 201, payload, ErrorCode(status)));
+    QCOMPARE(socket->writes.size(), 1);
+    auto bytes = socket->writes.first();
+    const auto decoded = Charging::PacketCodec::tryDecode(bytes);
+    QCOMPARE(decoded.status, Charging::DecodeStatus::Complete);
+    QCOMPARE(decoded.message.header.messageType, MessageType::AdminCommandResponse);
+    QCOMPARE(decoded.message.header.requestId, quint32(201));
+    if (delta <= 0) {
+        QCOMPARE(decoded.message.header.payloadLength, quint32(Charging::MessageHeader::MaxPayloadLength + delta));
+        QCOMPARE(decoded.message.header.statusCode, ErrorCode(status));
+        QCOMPARE(decoded.message.payload, payload);
+    } else {
+        QCOMPARE(decoded.message.header.statusCode, ErrorCode::InternalError);
+        QCOMPARE(decoded.message.payload.value("reason").toString(), QString("response_too_large"));
+        QVERIFY(!decoded.message.payload.value("message").toString().isEmpty());
+        QVERIFY(decoded.message.header.payloadLength < 1024);
+    }
+}
+
+void BusinessIntegrationTest::directPaddedAdminRequestIsBounded()
+{
+    DatabaseManager database;
+    ServiceRegistry services;
+    QString error;
+    QVERIFY2(database.open(m_databasePath, &error), qPrintable(error));
+    QVERIFY2(services.initialize(&database, &error), qPrintable(error));
+    MessageDispatcher dispatcher(&services);
+    auto *socket = new RecordingSocket;
+    ClientSession session(socket);
+    session.authenticate(Charging::Role::Administrator, 1, "admin");
+    for (const auto spare : {4096, 0}) {
+        const auto payload = paddedAdminPayload(Charging::MessageHeader::MaxPayloadLength - spare);
+        auto incoming = Charging::PacketCodec::encode(MessageType::AdminCommandRequest, 202, payload);
+        const auto request = Charging::PacketCodec::tryDecode(incoming);
+        QCOMPARE(request.status, Charging::DecodeStatus::Complete);
+        QCOMPARE(request.message.header.payloadLength, quint32(Charging::MessageHeader::MaxPayloadLength - spare));
+        socket->writes.clear();
+        dispatcher.dispatch(&session, request.message);
+        QTRY_COMPARE_WITH_TIMEOUT(socket->writes.size(), 1, 3000);
+        auto outgoing = socket->writes.first();
+        const auto response = Charging::PacketCodec::tryDecode(outgoing);
+        QCOMPARE(response.status, Charging::DecodeStatus::Complete);
+        QCOMPARE(response.message.header.messageType, MessageType::AdminCommandResponse);
+        QCOMPARE(response.message.header.requestId, quint32(202));
+        if (spare) {
+            QCOMPARE(response.message.header.statusCode, ErrorCode::Success);
+            QCOMPARE(response.message.payload.value("action"), payload.value("action"));
+        } else {
+            QCOMPARE(response.message.header.statusCode, ErrorCode::InternalError);
+            QCOMPARE(response.message.payload.value("reason").toString(), QString("response_too_large"));
+            QVERIFY(!response.message.payload.contains("action"));
+        }
+        QVERIFY(takeRequestSlot(session, 202));
+    }
+    dispatcher.dispatch(&session, packet(MessageType::Ping, 203));
+    QCOMPARE(socket->messages.last().header.messageType, MessageType::Pong);
+}
+
+void BusinessIntegrationTest::directOversizedPushIsRejected()
+{
+    auto *socket = new RecordingSocket;
+    ClientSession session(socket);
+    const QJsonObject oversized{{"message", QString(Charging::MessageHeader::MaxPayloadLength, 'x')}};
+    for (const auto type : {MessageType::ChargingProgressPush, MessageType::ChargingStoppedPush,
+                            MessageType::AlarmPush, MessageType::DeviceStatusPush}) {
+        QVERIFY(!session.send(type, 0, oversized));
+        QVERIFY(socket->writes.isEmpty());
+    }
+}
+
+void BusinessIntegrationTest::paddedAdminRequestIsBounded()
+{
+    ClientConnection admin;
+    loginAdmin(admin);
+    for (const auto spare : {4096, 0}) {
+        const auto payload = paddedAdminPayload(Charging::MessageHeader::MaxPayloadLength - spare);
+        const auto result = request(admin, MessageType::AdminCommandRequest, MessageType::AdminCommandResponse,
+                                    payload, spare ? ErrorCode::Success : ErrorCode::InternalError, 204);
+        QVERIFY(result.header.payloadLength <= Charging::MessageHeader::MaxPayloadLength);
+        if (!spare) QCOMPARE(result.payload.value("reason").toString(), QString("response_too_large"));
+    }
+    request(admin, MessageType::Ping, MessageType::Pong);
+}
+
+void BusinessIntegrationTest::oversizedChargingPushIsAudited()
+{
+    {
+        ClientConnection user;
+        login(user);
+        request(user, MessageType::WalletRechargeRequest, MessageType::WalletRechargeResponse,
+                {{"amountCents", 10000}, {"transactionId", "oversized-push"}});
+        const auto reservation = request(user, MessageType::ReservationCreateRequest, MessageType::ReservationCreateResponse,
+                                         {{"stationId", 1}, {"pileId", 1}}).payload;
+        request(user, MessageType::ChargingStartRequest, MessageType::ChargingStartResponse,
+                {{"reservationId", reservation.value("reservationId")}});
+    }
+    m_server.reset();
+    // Restoring a real persisted order exercises the normal tick/delivery/audit
+    // path with oversized device/order data, without exposing a test API.
+    const auto started = QDateTime::currentDateTimeUtc().addSecs(-3).toString(Qt::ISODate);
+    sql(QString("UPDATE charging_orders SET order_no='%1', started_at='%2' WHERE status='charging'")
+        .arg(QString(Charging::MessageHeader::MaxPayloadLength, 'x'), started));
+    m_server = std::make_unique<ServerApplication>();
+    QString error;
+    QVERIFY2(m_server->start(0, m_databasePath, &error), qPrintable(error));
+    ClientConnection user, admin;
+    login(user);
+    loginAdmin(admin);
+    QSignalSpy userMessages(&user, &ClientConnection::messageReceived), adminMessages(&admin, &ClientConnection::messageReceived);
+    triggerJob("chargingTick");
+    QTRY_VERIFY_WITH_TIMEOUT(sql("SELECT COUNT(*) FROM push_records WHERE result='failed'").toInt() >= 2, 3000);
+    QVERIFY(sql("SELECT COUNT(*) FROM push_records WHERE result='failed' AND target_role='user'").toInt() >= 1);
+    QVERIFY(sql("SELECT COUNT(*) FROM push_records WHERE result='failed' AND target_role='administrator'").toInt() >= 1);
+    QVERIFY(userMessages.isEmpty());
+    QVERIFY(adminMessages.isEmpty());
+    QCOMPARE(sql("SELECT status FROM charging_orders").toString(), QString("charging"));
+    QVERIFY(sql("SELECT energy_wh FROM charging_orders").toInt() > 0);
+    request(user, MessageType::UserProfileRequest, MessageType::UserProfileResponse);
 }
 
 QTEST_GUILESS_MAIN(BusinessIntegrationTest)

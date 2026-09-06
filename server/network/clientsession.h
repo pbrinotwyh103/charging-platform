@@ -17,6 +17,7 @@ public:
     QString peerDescription() const;
     // True means the complete packet entered the socket's outgoing queue;
     // application-level receipt is not acknowledged by the wire protocol.
+    // Oversized responses queue a bounded error; oversized pushes return false.
     bool send(Charging::MessageType type,
               quint32 requestId,
               const QJsonObject &payload = {},
@@ -30,6 +31,7 @@ public:
     qint64 principalId() const;
     QString identity() const;
     QString sessionId() const;
+    quint64 authenticationGeneration() const;
     void authenticate(Charging::Role role, qint64 principalId, const QString &identity);
     void clearAuthentication();
 
@@ -54,6 +56,7 @@ private:
     qint64 m_principalId = 0;
     QString m_identity;
     QString m_sessionId;
+    quint64 m_authenticationGeneration = 0;
     qint64 m_lastActivityAt = 0;
     QSet<quint32> m_inFlightRequests;
     QList<qint64> m_failedLoginTimes;

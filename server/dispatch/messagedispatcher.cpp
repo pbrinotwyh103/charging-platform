@@ -150,13 +150,18 @@ void MessageDispatcher::dispatch(ClientSession *session, const Charging::Message
         }
         return;
     }
-    if (!session->isAuthenticated()) {
-        sendError(session, response, requestId, ErrorCode::Unauthorized);
+    if (type == MessageType::LogoutRequest) {
+        const bool wasAuthenticated = session->isAuthenticated();
+        session->clearAuthentication();
+        if (!wasAuthenticated) {
+            sendError(session, response, requestId, ErrorCode::Unauthorized);
+            return;
+        }
+        session->send(response, requestId, {{"message", QStringLiteral("已安全退出")}});
         return;
     }
-    if (type == MessageType::LogoutRequest) {
-        session->clearAuthentication();
-        session->send(response, requestId, {{"message", QStringLiteral("已安全退出")}});
+    if (!session->isAuthenticated()) {
+        sendError(session, response, requestId, ErrorCode::Unauthorized);
         return;
     }
     const auto requiredRole = type == MessageType::AdminCommandRequest ? Role::Administrator : Role::User;
@@ -200,17 +205,19 @@ void MessageDispatcher::executeAsync(ClientSession *session, MessageType respons
 {
     QPointer<ClientSession> guard(session);
     const auto sessionId = session->sessionId();
+    const auto generation = session->authenticationGeneration();
     struct State { bool replied = false; bool completed = false; };
     const auto state = std::make_shared<State>();
     auto *watcher = new QFutureWatcher<RequestResult>(this);
     auto *timeout = new QTimer(watcher);
     timeout->setSingleShot(true);
     connect(timeout, &QTimer::timeout, this,
-            [this, guard, state, responseType, requestId, sessionId] {
+            [this, guard, state, responseType, requestId, sessionId, generation] {
         if (!guard || state->replied) return;
         state->replied = true;
         sendError(guard, responseType, requestId,
-                  guard->sessionId() == sessionId ? ErrorCode::RequestTimeout : ErrorCode::SessionExpired);
+                  guard->authenticationGeneration() == generation && guard->sessionId() == sessionId
+                      ? ErrorCode::RequestTimeout : ErrorCode::SessionExpired);
         // A timeout does not cancel a database mutation. Keep the ID reserved
         // until the worker finishes, and suppress its eventual late response.
     });
@@ -218,7 +225,7 @@ void MessageDispatcher::executeAsync(ClientSession *session, MessageType respons
         if (guard && !state->completed) guard->finishRequest(requestId);
     });
     connect(watcher, &QFutureWatcher<RequestResult>::finished, this,
-            [this, watcher, timeout, guard, state, responseType, requestId, sessionId, loginRole] {
+            [this, watcher, timeout, guard, state, responseType, requestId, sessionId, generation, loginRole] {
         timeout->stop();
         auto result = watcher->result();
         watcher->deleteLater();
@@ -227,7 +234,7 @@ void MessageDispatcher::executeAsync(ClientSession *session, MessageType respons
         guard->finishRequest(requestId);
         if (state->replied) return;
         state->replied = true;
-        if (guard->sessionId() != sessionId) {
+        if (guard->authenticationGeneration() != generation || guard->sessionId() != sessionId) {
             sendError(guard, responseType, requestId, ErrorCode::SessionExpired);
             return;
         }

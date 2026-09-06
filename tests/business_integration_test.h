@@ -27,6 +27,15 @@ private slots:
     void directTimeoutKeepsRequestReserved();
     void directAdminScopeAndDisconnect();
     void directSessionReportsQueueFailure();
+    void directLoginCannotSurviveAuthenticationAba();
+    void directAnonymousClearInvalidatesLogin_data();
+    void directAnonymousClearInvalidatesLogin();
+    void directOutboundEnvelopeBoundaries_data();
+    void directOutboundEnvelopeBoundaries();
+    void directPaddedAdminRequestIsBounded();
+    void directOversizedPushIsRejected();
+    void paddedAdminRequestIsBounded();
+    void oversizedChargingPushIsAudited();
 
 private:
     void connectClient(Charging::ClientConnection &client);
