@@ -15,6 +15,9 @@ SOURCES += service_test.cpp \
     ../server/services/billingservice.cpp \
     ../server/services/chargingservice.cpp \
     ../server/services/alarmservice.cpp \
+    ../server/services/adminservice.cpp \
+    ../server/services/statisticsservice.cpp \
+    ../server/repositories/controlrecordrepository.cpp \
     ../server/repositories/alarmrepository.cpp \
     ../server/database/databasemanager.cpp \
     ../server/repositories/userrepository.cpp \

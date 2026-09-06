@@ -27,6 +27,7 @@ HEADERS += \
     repositories/userrepository.h \
     repositories/walletrepository.h \
     services/adminservice.h \
+    services/adminservicehelpers.h \
     services/alarmservice.h \
     services/authservice.h \
     services/billingservice.h \
@@ -72,6 +73,8 @@ SOURCES += \
     services/billingservice.cpp \
     services/chargingservice.cpp \
     services/alarmservice.cpp \
+    services/adminservice.cpp \
+    services/statisticsservice.cpp \
     services/serviceregistry.cpp
 
 RESOURCES += resources/database.qrc

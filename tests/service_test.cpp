@@ -14,6 +14,8 @@
 #include "repositories/walletrepository.h"
 #include "repositories/alarmrepository.h"
 #include "services/chargingservice.h"
+#include "services/adminservice.h"
+#include "services/statisticsservice.h"
 #include <limits>
 #include <QBuffer>
 #include <QDateTime>
@@ -1050,6 +1052,454 @@ void ServiceTest::chargingNormalStopRetryAfterPileFailure()
         QCOMPARE(payload.value("balanceCents").toInt(), 9880);
         QVERIFY(service.tick(now.addSecs(60)).isEmpty());
     }
+}
+
+namespace
+{
+struct AdminFixture
+{
+    QTemporaryDir directory;
+    DatabaseManager database;
+    QString error;
+    bool open()
+    {
+        if (!database.open(directory.filePath("admin.db"), &error))
+            return false;
+        QSqlQuery query(database.database());
+        return query.exec(
+            "INSERT INTO admins(id,username,password_hash,password_salt) VALUES(1,'test','hash','salt')");
+    }
+    qint64 user(const QString &phone = "13800138901")
+    {
+        UserRecord record;
+        bool created;
+        if (!UserRepository(&database).findOrCreate(phone, &record, &created, &error))
+            return 0;
+        if (!UserService(&database)
+                 .recharge(record.id, {{"amountCents", 10000}, {"transactionId", phone}})
+                 .succeeded())
+            return 0;
+        return record.id;
+    }
+};
+} // namespace
+
+void ServiceTest::adminQueriesStatisticsAndExport()
+{
+    AdminFixture f;
+    QVERIFY(f.open());
+    const auto user = f.user();
+    QVERIFY(user > 0);
+    OrderRepository orders(&f.database);
+    qint64 first, second, balance;
+    QVERIFY(orders.createChargingOrder("admin,\"first\"", user, 1, 0, &first, &f.error));
+    QVERIFY(orders.stopAndSettle(first, 60, 1000, 120, "completed", "user_stop", &balance, &f.error));
+    QVERIFY(orders.createChargingOrder("admin-second", user, 1, 0, &second, &f.error));
+    QVERIFY(
+        orders.stopAndSettle(second, 120, 2000, 240, "fault_stopped", "device_fault", &balance, &f.error));
+    AdminService admin(&f.database);
+    auto summary = admin.execute(1, 1, {{"action", "dashboard.summary"}}, nullptr);
+    QVERIFY(summary.succeeded());
+    QCOMPARE(summary.payload.value("totalRevenueCents").toInt(), 360);
+    QCOMPARE(summary.payload.value("totalOrderCount").toInt(), 2);
+    QCOMPARE(summary.payload.value("pileStatus").toObject().value("total").toInt(), 3);
+    QCOMPARE(summary.payload.value("revenueMetrics").toObject().value("todayRevenueCents").toInt(), 360);
+    QCOMPARE(StatisticsService(&f.database).summary({}).payload.value("totalRevenueCents").toInt(), 360);
+    auto trend = admin.execute(1, 2, {{"action", "revenue.trend"}, {"days", 7}}, nullptr);
+    QVERIFY(trend.succeeded());
+    QCOMPARE(trend.payload.value("points").toArray().size(), 7);
+    QCOMPARE(trend.payload.value("points").toArray().last().toObject().value("revenueCents").toInt(), 360);
+    QCOMPARE(
+        admin.execute(1, 3, {{"action", "dashboard.revenue"}, {"days", 7}}, nullptr).payload.value("points"),
+        trend.payload.value("points"));
+    for (const auto &action : QStringList{"station.list", "pile.list", "user.list", "order.list",
+                                          "alarm.list", "charging.active.list", "stations.list", "piles.list",
+                                          "users.list", "orders.list", "alarms.list"})
+    {
+        auto result = admin.execute(1, 4, {{"action", action}, {"page", 1}, {"pageSize", 1}}, nullptr);
+        QVERIFY2(result.succeeded(), qPrintable(action));
+        QCOMPARE(result.payload.value("page").toInt(), 1);
+        QCOMPARE(result.payload.value("pageSize").toInt(), 1);
+        QVERIFY(result.payload.contains("total"));
+        QVERIFY(result.payload.value("items").toArray().size() <= 1);
+    }
+    auto page = admin.execute(1, 5, {{"action", "order.list"}, {"page", 2}, {"pageSize", 1}}, nullptr);
+    QCOMPARE(page.payload.value("total").toInt(), 2);
+    QCOMPARE(page.payload.value("items").toArray().first().toObject().value("orderId").toInt(), int(first));
+    auto filtered = admin.execute(
+        1, 6,
+        {{"action", "orders.list"}, {"orderNo", "second"}, {"phone", "8901"}, {"status", "fault_stopped"}},
+        nullptr);
+    QCOMPARE(filtered.payload.value("total").toInt(), 1);
+    QCOMPARE(filtered.payload.value("items").toArray().first().toObject().value("stationName").toString(),
+             QString("软件园充电站"));
+    QCOMPARE(admin.execute(1, 7, {{"action", "pile.status.summary"}}, nullptr).payload.value("total").toInt(),
+             3);
+    const auto exported = admin.execute(1, 8, {{"action", "report.export"}}, nullptr);
+    QVERIFY(exported.succeeded());
+    QVERIFY(exported.payload.value("filename").toString().endsWith(".csv"));
+    const QByteArray bytes = exported.payload.value("content").toString().toUtf8();
+    QVERIFY(bytes.startsWith(QByteArray::fromHex("efbbbf")));
+    QVERIFY(bytes.contains("\"admin,\"\"first\"\"\""));
+    QVERIFY(bytes.contains("admin-second"));
+    QCOMPARE(exported.payload.value("total").toInt(), 2);
+    QCOMPARE(admin.execute(1, 9, {{"action", "stations.list"}, {"keyword", "星海"}}, nullptr)
+                 .payload.value("total")
+                 .toInt(),
+             1);
+    QCOMPARE(
+        admin.execute(1, 10, {{"action", "piles.list"}, {"stationId", 0}, {"status", "available"}}, nullptr)
+            .payload.value("total")
+            .toInt(),
+        3);
+}
+
+void ServiceTest::adminMaintenanceAndAliases()
+{
+    AdminFixture f;
+    QVERIFY(f.open());
+    AdminService admin(&f.database);
+    QJsonObject station{{"action", "station.create"}, {"name", "测试站"}, {"address", "测试地址"},
+                        {"longitude", 121.5},         {"latitude", 38.8}, {"priceCentsPerKwh", 150},
+                        {"status", "online"}};
+    const auto created = admin.execute(1, 1, station, nullptr);
+    QVERIFY(created.succeeded());
+    const auto id = created.payload.value("stationId");
+    QCOMPARE(admin.execute(1, 2, {{"action", "station.detail"}, {"stationId", id}}, nullptr)
+                 .payload.value("name")
+                 .toString(),
+             QString("测试站"));
+    QCOMPARE(admin.execute(1, 3, {{"action", "stations.detail"}, {"stationId", id}}, nullptr)
+                 .payload.value("name")
+                 .toString(),
+             QString("测试站"));
+    QVERIFY(
+        admin.execute(1, 4, {{"action", "station.update"}, {"stationId", id}, {"name", "新站名"}}, nullptr)
+            .succeeded());
+    QVERIFY(admin
+                .execute(1, 5, {{"action", "stations.update"}, {"stationId", id}, {"priceCentsPerKwh", 200}},
+                         nullptr)
+                .succeeded());
+    StationRecord saved;
+    QVERIFY(StationRepository(&f.database).findById(qint64(id.toDouble()), &saved, &f.error));
+    QCOMPARE(saved.name, QString("新站名"));
+    QCOMPARE(saved.priceCentsPerKwh, 200);
+    station.insert("action", "stations.create");
+    QVERIFY(admin.execute(1, 6, station, nullptr).succeeded());
+    QCOMPARE(admin.execute(1, 7, {{"action", "piles.detail"}, {"pileId", 1}}, nullptr)
+                 .payload.value("pileCode")
+                 .toString(),
+             QString("DL-SP-001"));
+    AlarmRecord alarm;
+    alarm.pileId = 1;
+    alarm.alarmType = "temperature_high";
+    alarm.severity = "critical";
+    alarm.message = "温度过高";
+    qint64 alarmId;
+    QVERIFY(AlarmRepository(&f.database).insert(alarm, &alarmId, &f.error));
+    auto detail = admin.execute(1, 8, {{"action", "alarms.detail"}, {"alarmId", double(alarmId)}}, nullptr);
+    QCOMPARE(detail.payload.value("message").toString(), QString("温度过高"));
+    QVERIFY(admin
+                .execute(1, 9,
+                         {{"action", "alarm.handle"}, {"alarmId", double(alarmId)}, {"status", "resolved"}},
+                         nullptr)
+                .succeeded());
+    auto resolved = admin.execute(
+        1, 10, {{"action", "alarm.list"}, {"status", "resolved"}, {"severity", "critical"}}, nullptr);
+    QCOMPARE(resolved.payload.value("total").toInt(), 1);
+    QCOMPARE(resolved.payload.value("items").toArray().first().toObject().value("handledByAdminId").toInt(),
+             1);
+    QVERIFY(resolved.payload.value("items")
+                .toArray()
+                .first()
+                .toObject()
+                .value("recoveredAt")
+                .toString()
+                .endsWith('Z'));
+    QVERIFY(admin
+                .execute(1, 11,
+                         {{"action", "alarm.handle"}, {"alarmId", double(alarmId)}, {"status", "resolved"}},
+                         nullptr)
+                .succeeded());
+}
+
+void ServiceTest::adminControlConflictsAndAudits()
+{
+    AdminFixture f;
+    QVERIFY(f.open());
+    AdminService admin(&f.database);
+    const auto user = f.user();
+    const auto reserved = ReservationService(&f.database).create(user, {{"stationId", 1}, {"pileId", 1}});
+    QVERIFY(reserved.succeeded());
+    QCOMPARE(admin.execute(1, 1, {{"action", "pile.disable"}, {"pileId", 1}}, nullptr).reason,
+             QString("command_conflict"));
+    // Even if a device reports idle, the persisted active reservation forbids disabling it.
+    QVERIFY(PileRepository(&f.database).updateStatus(1, "reserved", "idle", &f.error));
+    QCOMPARE(admin.execute(1, 2, {{"action", "pile.disable"}, {"pileId", 1}}, nullptr).error,
+             ErrorCode::Conflict);
+    QVERIFY(ReservationService(&f.database)
+                .cancel(user, {{"reservationId", reserved.payload.value("reservationId")}})
+                .succeeded());
+    QVERIFY(admin.execute(1, 3, {{"action", "pile.disable"}, {"pileId", 1}}, nullptr).succeeded());
+    QVERIFY(admin.execute(1, 4, {{"action", "pile.enable"}, {"pileId", 1}}, nullptr).succeeded());
+    auto restart = admin.execute(1, 5, {{"action", "pile.restart"}, {"pileId", 1}}, nullptr);
+    QVERIFY(restart.succeeded());
+    QVERIFY(!restart.payload.value("lastHeartbeatAt").toString().isEmpty());
+    QVERIFY(admin.execute(1, 6, {{"action", "piles.control"}, {"pileId", 1}, {"command", "disable"}}, nullptr)
+                .succeeded());
+    QVERIFY(admin.execute(1, 7, {{"action", "piles.control"}, {"pileId", 1}, {"command", "enable"}}, nullptr)
+                .succeeded());
+    QCOMPARE(admin.execute(1, 8, {{"action", "pile.restart"}, {"pileId", 99999}}, nullptr).error,
+             ErrorCode::NotFound);
+    QCOMPARE(admin.execute(1, 9, {{"action", "pile.enable"}, {"pileId", "bad"}}, nullptr).error,
+             ErrorCode::ValidationFailed);
+    QSqlQuery query(f.database.database());
+    QVERIFY(query.exec(
+        "SELECT COUNT(*),SUM(result='success'),SUM(result='failure') FROM device_control_records"));
+    QVERIFY(query.next());
+    QCOMPARE(query.value(0).toInt(), 9);
+    QCOMPARE(query.value(1).toInt(), 5);
+    QCOMPARE(query.value(2).toInt(), 4);
+    query.finish();
+    QVERIFY(query.exec(
+        "SELECT admin_id,pile_id,request_id,detail FROM device_control_records WHERE request_id=8"));
+    QVERIFY(query.next());
+    QCOMPARE(query.value(0).toInt(), 1);
+    QVERIFY(query.value(1).isNull());
+    QCOMPARE(query.value(2).toInt(), 8);
+    QVERIFY(query.value(3).toString().contains("99999"));
+}
+
+void ServiceTest::adminRemoteStopAndFreeze()
+{
+    AdminFixture f;
+    QVERIFY(f.open());
+    const auto user = f.user();
+    const auto reserved = ReservationService(&f.database).create(user, {{"stationId", 1}, {"pileId", 1}});
+    QDateTime now;
+    ChargingService charging(&f.database, [&] { return now; });
+    const auto started = charging.start(user, {{"reservationId", reserved.payload.value("reservationId")}});
+    QVERIFY(started.succeeded());
+    now = QDateTime::fromString(started.payload.value("startedAt").toString(), Qt::ISODate).addSecs(60);
+    const auto orderId = started.payload.value("orderId");
+    AdminService admin(&f.database);
+    QVERIFY(
+        admin.execute(1, 1, {{"action", "user.freeze"}, {"userId", double(user)}}, &charging).succeeded());
+    QCOMPARE(OrderService(&f.database).active(user).payload.value("status").toString(), QString("charging"));
+    QCOMPARE(admin.execute(1, 2, {{"action", "pile.restart"}, {"pileId", 1}}, &charging).error,
+             ErrorCode::Conflict);
+    QCOMPARE(admin.execute(1, 3, {{"action", "pile.disable"}, {"pileId", 1}}, &charging).error,
+             ErrorCode::Conflict);
+    // A stale device status must not let an active order through the guard.
+    QVERIFY(PileRepository(&f.database).updateStatus(1, "charging", "idle", &f.error));
+    QCOMPARE(admin.execute(1, 4, {{"action", "pile.restart"}, {"pileId", 1}}, &charging).error,
+             ErrorCode::Conflict);
+    QVERIFY(PileRepository(&f.database).updateStatus(1, "idle", "charging", &f.error));
+    auto stopped =
+        admin.execute(1, 5, {{"action", "pile.stop"}, {"pileId", 1}, {"orderId", orderId}}, &charging);
+    QVERIFY(stopped.succeeded());
+    QCOMPARE(stopped.payload.value("feeCents").toInt(), 120);
+    QCOMPARE(stopped.payload.value("balanceCents").toInt(), 9880);
+    auto repeated =
+        admin.execute(1, 5, {{"action", "pile.stop"}, {"pileId", 1}, {"orderId", orderId}}, &charging);
+    QCOMPARE(repeated.payload.value("feeCents").toInt(), 120);
+    QVERIFY(admin.execute(1, 6, {{"action", "charging.stop"}, {"orderId", orderId}}, &charging).succeeded());
+    QCOMPARE(ReservationService(&f.database).create(user, {{"stationId", 1}, {"pileId", 1}}).reason,
+             QString("user_frozen"));
+    QVERIFY(
+        admin.execute(1, 7, {{"action", "user.unfreeze"}, {"userId", double(user)}}, &charging).succeeded());
+    QVERIFY(admin
+                .execute(1, 8, {{"action", "users.freeze"}, {"userId", double(user)}, {"frozen", true}},
+                         &charging)
+                .succeeded());
+    QVERIFY(admin
+                .execute(1, 9, {{"action", "users.freeze"}, {"userId", double(user)}, {"frozen", false}},
+                         &charging)
+                .succeeded());
+    UserRecord finalUser;
+    QVERIFY(UserRepository(&f.database).findById(user, &finalUser, &f.error));
+    QCOMPARE(finalUser.status, QString("normal"));
+    QSqlQuery query(f.database.database());
+    QVERIFY(query.exec("SELECT COUNT(*) FROM wallet_records WHERE record_type='charge_payment'"));
+    QVERIFY(query.next());
+    QCOMPARE(query.value(0).toInt(), 1);
+    query.finish();
+    QVERIFY(query.exec(
+        "SELECT COUNT(*) FROM device_control_records WHERE command_type='pile.stop' AND order_id=" +
+        QString::number(qint64(orderId.toDouble()))));
+    QVERIFY(query.next());
+    QVERIFY(query.value(0).toInt() >= 2);
+}
+
+void ServiceTest::adminValidationAndDatabaseFailures()
+{
+    AdminFixture f;
+    QVERIFY(f.open());
+    AdminService admin(&f.database);
+    QCOMPARE(admin.execute(0, 1, {{"action", "dashboard.summary"}}, nullptr).error, ErrorCode::Unauthorized);
+    QCOMPARE(admin.execute(1, 1, {{"action", "unknown"}}, nullptr).error, ErrorCode::UnsupportedMessage);
+    for (const auto &action : QStringList{"station.list", "pile.list", "alarm.list", "user.list",
+                                          "order.list", "charging.active.list"})
+        for (const auto &invalidPage : QList<QJsonObject>{{{"page", 0}},
+                                                          {{"page", 1.5}},
+                                                          {{"pageSize", 0}},
+                                                          {{"pageSize", 101}},
+                                                          {{"pageSize", "20"}}})
+        {
+            auto payload = invalidPage;
+            payload.insert("action", action);
+            QCOMPARE(admin.execute(1, 1, payload, nullptr).error, ErrorCode::ValidationFailed);
+        }
+    for (const auto &payload :
+         QList<QJsonObject>{{{"action", "station.create"}, {"name", "missing"}},
+                            {{"action", "station.update"}, {"stationId", 1}, {"longitude", 181}},
+                            {{"action", "user.freeze"}, {"userId", 0}},
+                            {{"action", "revenue.trend"}, {"days", 0}},
+                            {{"action", "order.list"}, {"from", "2026-99-01"}},
+                            {{"action", "alarm.handle"}, {"alarmId", 1}, {"status", "bad"}}})
+        QCOMPARE(admin.execute(1, 1, payload, nullptr).error, ErrorCode::ValidationFailed);
+    for (const auto &payload :
+         QList<QJsonObject>{{{"action", "station.detail"}, {"stationId", 99999}},
+                            {{"action", "station.update"}, {"stationId", 99999}, {"name", "abc"}},
+                            {{"action", "user.freeze"}, {"userId", 99999}},
+                            {{"action", "alarm.handle"}, {"alarmId", 99999}, {"status", "resolved"}}})
+        QCOMPARE(admin.execute(1, 1, payload, nullptr).error, ErrorCode::NotFound);
+    QCOMPARE(AdminService().execute(1, 1, {{"action", "station.list"}}, nullptr).error,
+             ErrorCode::DatabaseError);
+    QCOMPARE(StatisticsService().summary({}).error, ErrorCode::DatabaseError);
+    QSqlQuery query(f.database.database());
+    QVERIFY(query.exec("CREATE TRIGGER reject_admin_control BEFORE UPDATE ON charging_piles BEGIN SELECT "
+                       "RAISE(ABORT,'control failure'); END"));
+    QCOMPARE(admin.execute(1, 22, {{"action", "pile.disable"}, {"pileId", 1}}, nullptr).error,
+             ErrorCode::DatabaseError);
+    QVERIFY(query.exec("DROP TRIGGER reject_admin_control"));
+    QVERIFY(query.exec("SELECT result FROM device_control_records WHERE request_id=22"));
+    QVERIFY(query.next());
+    QCOMPARE(query.value(0).toString(), QString("failure"));
+    query.finish();
+    QVERIFY(query.exec("CREATE TRIGGER reject_admin_audit BEFORE INSERT ON device_control_records BEGIN "
+                       "SELECT RAISE(ABORT,'audit failure'); END"));
+    QCOMPARE(admin.execute(1, 23, {{"action", "pile.disable"}, {"pileId", 1}}, nullptr).error,
+             ErrorCode::DatabaseError);
+    QVERIFY(query.exec("DROP TRIGGER reject_admin_audit"));
+    PileRecord pile;
+    QVERIFY(PileRepository(&f.database).findById(1, &pile, &f.error));
+    QCOMPARE(pile.status, QString("idle"));
+}
+
+void ServiceTest::adminControlReplayAndClientMetadata()
+{
+    AdminFixture f;
+    QVERIFY(f.open());
+    const auto user = f.user();
+    AdminService admin(&f.database);
+    const auto list = admin.execute(1, 1, {{"action", "piles.list"}, {"pageSize", 1}, {"page", 2}}, nullptr);
+    QCOMPARE(list.payload.value("meta").toObject().value("page").toInt(), 2);
+    QCOMPARE(list.payload.value("meta").toObject().value("totalPages").toInt(), 3);
+    QCOMPARE(list.payload.value("items").toArray().first().toObject().value("status").toString(),
+             QString("idle"));
+    QCOMPARE(admin.execute(1, 2, {{"action", "pile.list"}}, nullptr)
+                 .payload.value("items")
+                 .toArray()
+                 .first()
+                 .toObject()
+                 .value("status")
+                 .toString(),
+             QString("available"));
+    const auto reservation = ReservationService(&f.database).create(user, {{"stationId", 1}, {"pileId", 1}});
+    QDateTime now;
+    ChargingService charging(&f.database, [&] { return now; });
+    auto started = charging.start(user, {{"reservationId", reservation.payload.value("reservationId")}});
+    QVERIFY(started.succeeded());
+    now = QDateTime::fromString(started.payload.value("startedAt").toString(), Qt::ISODate).addSecs(60);
+    const QJsonObject stop{{"action", "piles.control"}, {"pileId", 1}, {"command", "stop"}};
+    auto first = admin.execute(1, 3, stop, &charging);
+    auto repeated = admin.execute(1, 3, stop, &charging);
+    QVERIFY(first.succeeded());
+    QVERIFY(repeated.succeeded());
+    QCOMPARE(repeated.payload.value("feeCents").toInt(), 120);
+    QCOMPARE(repeated.payload.value("orderId"), started.payload.value("orderId"));
+    QSqlQuery query(f.database.database());
+    QVERIFY(query.exec("SELECT COUNT(*) FROM wallet_records WHERE record_type='charge_payment'"));
+    QVERIFY(query.next());
+    QCOMPARE(query.value(0).toInt(), 1);
+    query.finish();
+    const QJsonObject restart{{"action", "piles.control"}, {"pileId", 1}, {"command", "restart"}};
+    QVERIFY(admin.execute(1, 4, restart, &charging).succeeded());
+    QVERIFY(query.exec("UPDATE charging_piles SET last_heartbeat_at='2020-01-01T00:00:00Z' WHERE id=1"));
+    QVERIFY(admin.execute(1, 4, restart, &charging).succeeded());
+    PileRecord pile;
+    QVERIFY(PileRepository(&f.database).findById(1, &pile, &f.error));
+    QCOMPARE(pile.lastHeartbeatAt, QString("2020-01-01T00:00:00Z"));
+    QCOMPARE(
+        admin.execute(1, 5, {{"action", "piles.control"}, {"pileId", 1}, {"command", "invalid"}}, &charging)
+            .error,
+        ErrorCode::ValidationFailed);
+    QCOMPARE(admin.execute(1, 6, {{"action", "pile.stop"}, {"pileId", 1}}, &charging).reason,
+             QString("order_not_active"));
+    auto active = ReservationService(&f.database).create(user, {{"stationId", 1}, {"pileId", 1}});
+    started = charging.start(user, {{"reservationId", active.payload.value("reservationId")}});
+    QVERIFY(started.succeeded());
+    const auto orderId = qint64(started.payload.value("orderId").toDouble());
+    QVERIFY(OrderRepository(&f.database).updateProgress(orderId, 30, 500, 60, &f.error));
+    auto summary = admin.execute(1, 7, {{"action", "dashboard.summary"}}, &charging);
+    QCOMPARE(summary.payload.value("totalOrderCount").toInt(), 2);
+    QCOMPARE(summary.payload.value("activeOrderCount").toInt(), 1);
+    QCOMPARE(summary.payload.value("totalRevenueCents").toInt(), 120);
+    QCOMPARE(
+        admin.execute(1, 8, {{"action", "pile.stop"}, {"pileId", 2}, {"orderId", double(orderId)}}, &charging)
+            .error,
+        ErrorCode::Conflict);
+    QCOMPARE(admin.execute(1, 9, {{"action", "pile.stop"}, {"pileId", 1}}, nullptr).error,
+             ErrorCode::InternalError);
+    QVERIFY(query.exec("SELECT pile_id,order_id FROM device_control_records WHERE request_id=8"));
+    QVERIFY(query.next());
+    QCOMPARE(query.value(0).toInt(), 2);
+    QCOMPARE(query.value(1).toLongLong(), orderId);
+}
+
+void ServiceTest::adminAlarmDetailSurvivesListFilters()
+{
+    AdminFixture f;
+    QVERIFY(f.open());
+    AlarmRecord alarm;
+    alarm.pileId = 1;
+    alarm.alarmType = "temperature_high";
+    alarm.severity = "critical";
+    alarm.message = "过热";
+    qint64 id;
+    QVERIFY(AlarmRepository(&f.database).insert(alarm, &id, &f.error));
+    const auto detail =
+        AdminService(&f.database)
+            .execute(1, 1, {{"action", "alarms.detail"}, {"alarmId", double(id)}, {"severity", "warning"}},
+                     nullptr);
+    QVERIFY(detail.succeeded());
+    QCOMPARE(detail.payload.value("alarmId").toInt(), int(id));
+    QCOMPARE(detail.payload.value("message").toString(), QString("过热"));
+}
+
+void ServiceTest::adminControlReplayIsScopedToConnection()
+{
+    AdminFixture f;
+    QVERIFY(f.open());
+    AdminService admin(&f.database);
+    QVERIFY(admin
+                .execute(1, 10,
+                         {{"action", "pile.disable"}, {"pileId", 1}, {"_requestScope", "connection-A"}},
+                         nullptr)
+                .succeeded());
+    QVERIFY(admin
+                .execute(1, 11, {{"action", "pile.enable"}, {"pileId", 1}, {"_requestScope", "connection-A"}},
+                         nullptr)
+                .succeeded());
+    QVERIFY(admin
+                .execute(1, 10,
+                         {{"action", "pile.disable"}, {"pileId", 1}, {"_requestScope", "connection-B"}},
+                         nullptr)
+                .succeeded());
+    PileRecord pile;
+    QVERIFY(PileRepository(&f.database).findById(1, &pile, &f.error));
+    QCOMPARE(pile.status, QString("disabled"));
 }
 
 QTEST_GUILESS_MAIN(ServiceTest)

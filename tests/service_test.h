@@ -43,6 +43,14 @@ private slots:
     void chargingProgressFailureDoesNotPublish();
     void chargingSequenceSurvivesRestart();
     void chargingNormalStopRetryAfterPileFailure();
+    void adminQueriesStatisticsAndExport();
+    void adminMaintenanceAndAliases();
+    void adminControlConflictsAndAudits();
+    void adminRemoteStopAndFreeze();
+    void adminValidationAndDatabaseFailures();
+    void adminControlReplayAndClientMetadata();
+    void adminAlarmDetailSurvivesListFilters();
+    void adminControlReplayIsScopedToConnection();
 private:
     qint64 createUser(const QString &phone);
     QTemporaryDir m_directory;
