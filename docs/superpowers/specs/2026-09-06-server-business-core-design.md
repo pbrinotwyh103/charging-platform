@@ -95,13 +95,19 @@
 
 ## 充电运行时与状态机
 
-`ChargingService` 管理活动会话，状态流转为：
+`ChargingService` 管理活动订单会话。预约发生在订单创建之前，必须区分各实体状态：
 
 ```text
-idle -> reserved -> charging -> stopping -> completed | fault_stopped -> idle
+预约：active -> used | cancelled | expired
+电桩：idle -> reserved -> charging -> 结算释放
+订单运行时：charging -> stopping -> completed | fault_stopped
 ```
 
-数据库电桩不新增瞬时 `stopping` 值；它是服务端运行时状态。每秒 tick 更新时长，每次按
+订单在开始充电时创建，订单表仅允许 charging/completed/fault_stopped/cancelled；
+reserved 不属于订单状态，stopping 仅为服务端运行时状态，不持久化到电桩、预约或订单表。
+当前结算释放将 charging/fault/offline 的桩改为 idle，其他状态保持原值。
+这是当前实现限制：故障/离线桩在异常结算后不会继续保持不可用状态。
+每秒 tick 更新时长，每次按
 电桩额定功率计算增量电量，并按 `feeCents = floor(energyWh * priceCentsPerKwh / 1000)`
 计算累计费用。该规则确保计费只使用整数并且重复 tick 不会累计舍入误差。
 
@@ -132,6 +138,11 @@ idle -> reserved -> charging -> stopping -> completed | fault_stopped -> idle
 列表接口使用 `page`、`pageSize`、`total`。冻结用户只限制新预约与新订单，不强制终止已在
 充电的订单。停用电桩与活动预约或订单互斥；重启仅允许非充电桩；远程停止复用订单停止与
 结算流程。所有远程控制记录操作者、目标、订单、请求号、结果和详情。
+
+当前 device_control_records 覆盖管理员电桩控制尝试；用户及系统自动开始/停止信息保存在
+订单、钱包和告警中，没有全部写为该表的逐条控制记录。重启/启用/停用的状态更新与最终审计
+结果在同一事务提交。远程停止先提交订单结算，再完成最终审计；审计失败可能返回 DatabaseError，
+但不回滚已完成的订单与扣款。原会话范围、requestId、action 和目标的重试仍绑定首次订单。
 
 CSV 导出由服务端返回 UTF-8（带 BOM）的文本内容和建议文件名，不直接写入客户端文件系统。
 

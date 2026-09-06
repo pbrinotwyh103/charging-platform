@@ -100,8 +100,16 @@ cd build
 
 需求边界：第 23 项目前为固定单价，没有分时电价。第 37 项没有自动恢复通知，充满由停止推送表示。
 第 38/46 项为模拟设备状态与计费控制，没有真实设备 ACK。
-第 39 项 control_records 目前记录管理员电桩控制；用户开始/停止与系统自动停止留存在订单/钱包/告警中，
+第 39 项 device_control_records 目前记录管理员电桩控制；用户开始/停止与系统自动停止留存在订单/钱包/告警中，
 尚非所有来源统一的逐条控制审计。第 47 项查询仍返回不可用状态，客户端负责展示与选择限制。
+
+订单从 charging 开始创建；此前的 reserved 是桩状态，预约本身为 active。
+stopping 只存在于运行时，订单表允许 charging/completed/fault_stopped/cancelled。
+故障结算目前将 charging/fault/offline 的桩恢复为 idle（公开 available），其他状态保持原值；
+这是实现限制，异常结束不保证桩继续处于故障/离线隔离状态。
+pile.restart/enable/disable 的设备状态与最终审计结果在同一事务中提交；pile.stop 的结算先于最终审计，
+审计失败可在已扣款、订单已结束之后返回 DatabaseError。原会话范围、请求号、action 和目标的重试
+保持绑定首次订单，不会误停同桩后续订单。此行为由 adminStopRetryAfterAuditFailureKeepsOriginalOrder 覆盖。
 
 ## 本次验证记录
 

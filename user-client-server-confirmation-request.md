@@ -124,13 +124,17 @@ type=fast/slow；status=available/reserved/charging/offline/fault/disabled（数
 预约 durationMinutes 默认 15、允许整数 5–30，服务端生成 expiresAt，不接受客户端指定到期时间。
 不指定桩时选择站内空闲桩。一用户最多一个活动预约或充电订单；用户余额必须大于 0。
 预约状态 active/used/cancelled/expired。取消他人预约为 1102；已过期为 1202/reservation_expired。
-定时任务每 60 秒清理到期预约，创建和开始路径也验证过期，释放桩时不覆盖故障等不可用状态。
+定时任务每 60 秒清理到期预约，创建和开始路径也验证过期。预约取消/过期仅释放仍为 reserved 的桩，
+不覆盖故障等不可用状态；订单结算的释放行为不同，见下文。
 
 订单快照字段为 orderId, orderNo, seq, userId, stationId, pileId, reservationId, status,
 startedAt, stoppedAt, durationSec, energyWh, energyKwh, priceCentsPerKwh, payableCents,
 feeCents, stopReason, createdAt, updatedAt。payableCents 是 feeCents 的兼容同值字段，
-不是待付款标志；没有 pendingPayment 等字段。当前流转为 reserved → charging → 内存 stopping
-→ completed/fault_stopped；数据库还保留 cancelled，用户接口不创建这种订单。
+不是待付款标志；没有 pendingPayment 等字段。预约先使桩进入 reserved，此时尚未创建订单；
+开始充电才创建 status=charging 的订单并把桩改为 charging。
+订单运行时流转为 charging → 内存 stopping → completed/fault_stopped；
+订单表仅允许 charging/completed/fault_stopped/cancelled，用户接口不创建 cancelled 订单。
+reserved 属于电桩状态，active/used/cancelled/expired 属于预约状态，stopping 不写入这两张表或订单表。
 活动订单从持久层查询，结算重试期间可能仍返回 charging；不能据此断言设备仍在运行。
 停止成功已完成钱包扣款和电桩状态更新，不包含对账中/待付款阶段。
 
@@ -150,7 +154,9 @@ seq 对同一订单严格递增并持久化，重启后继续；客户端按 ord
 模拟电量依额定功率和总时长计算，避免逐 tick 舍入累积。自动停止不超支。
 stopReason 为 user_stop、admin_stop、fully_charged、insufficient_balance、device_fault、
 device_offline、over_temperature、over_current、connection_lost。
-前四种通常 completed；设备/传感器异常为 fault_stopped，故障桩保留不可用状态。
+前四种通常 completed；设备/传感器异常为 fault_stopped。
+当前结算将 charging/fault/offline 的桩改为数据库 idle（公开 available），其他状态保持原值。
+这是当前实现限制：故障/离线桩在异常结算后不会保持不可用，故障停止不能被解释为已隔离设备。
 
 默认传感器为模拟器：已连接、25°C、400V 下的额定电流、60000Wh 充满阈值。
 温度 >60°C、电流超过 powerKw*1000/400、无效传感器值、设备 fault/offline 或连接丢失触发严重告警。
@@ -211,9 +217,13 @@ command=stop/restart/enable/disable。以 piles. 开头的旧 action 返回空�
 重启/停用/启用与活动预约、充电订单互斥，冲突为 command_conflict；停用后 disabled，
 启用仅允许 disabled/available 并变为 available；重启将 fault/offline 恢复 available，
 available 保持原状，disabled 重启后仍 disabled。冻结限制新预约和新订单，不强制停掉已有订单。
-管理员电桩控制记录操作者、目标、订单、requestId、结果和详情；状态更改与控制审计完成在事务中提交。
-当前 control_records 覆盖管理员电桩控制尝试；用户开始/停止及系统自动停止通过订单、钱包、告警留痕，
-没有逐条新增对应 control_records，不能将其描述为所有控制来源统一审计。
+管理员电桩控制记录操作者、目标、订单、requestId、结果和详情。
+pile.restart/enable/disable 的状态更改与最终审计结果在同一事务中提交；pile.stop 则先提交订单结算，
+再写最终审计结果。若后一步失败，可能返回 DatabaseError(2001)，但订单已完成结算、费用已扣减，
+不能把该错误当作订单仍在充电的证明。同一会话范围内用原 requestId/action/目标重试，
+仍绑定首次记录的订单，不会改停该桩后来创建的订单；跨连接不共享这一重放范围。
+当前 device_control_records 覆盖管理员电桩控制尝试；用户开始/停止及系统自动停止通过订单、钱包、告警留痕，
+没有逐条新增对应 device_control_records，不能将其描述为所有控制来源统一审计。
 
 ## 五、联调示例
 
@@ -284,6 +294,12 @@ message（通常为“操作成功”；alarm.detail/handle 保留告警本身�
 
 ```json
 {"header":{"messageType":3021,"requestId":46,"statusCode":3002},"payload":{"message":"请求超时，请重试"}}
+```
+
+管理员停止已结算、但最终审计写入失败时的响应；应查订单/流水或在原会话范围重试：
+
+```json
+{"header":{"messageType":5011,"requestId":47,"statusCode":2001},"payload":{"action":"pile.stop","message":"数据处理失败"}}
 ```
 
 进度和正常停止推送，payload 为节选；示例 60kW、120 cents/kWh 运行 60 秒产生 1kWh、120 cents：
