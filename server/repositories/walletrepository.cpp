@@ -197,7 +197,7 @@ bool WalletRepository::settleOrder(const QString &recordNo, qint64 orderId,
     QSqlQuery finish(db);
     finish.prepare(QStringLiteral(
         "UPDATE charging_orders SET status=?,stopped_at=strftime('%Y-%m-%dT%H:%M:%SZ','now'),duration_seconds=?,"
-        "energy_wh=?,fee_cents=?,stop_reason=?,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') "
+        "energy_wh=?,fee_cents=?,stop_reason=?,push_seq=push_seq+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') "
         "WHERE id=? AND status='charging'"));
     finish.addBindValue(finalStatus);
     finish.addBindValue(qMax<qint64>(0, durationSeconds));

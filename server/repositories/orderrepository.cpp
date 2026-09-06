@@ -13,7 +13,7 @@ QString orderColumns()
     return QStringLiteral("id,order_no,user_id,station_id,pile_id,reservation_id,status,"
         "strftime('%Y-%m-%dT%H:%M:%SZ',started_at),strftime('%Y-%m-%dT%H:%M:%SZ',stopped_at),"
         "duration_seconds,energy_wh,unit_price_cents,fee_cents,stop_reason,"
-        "strftime('%Y-%m-%dT%H:%M:%SZ',created_at),strftime('%Y-%m-%dT%H:%M:%SZ',updated_at)");
+        "strftime('%Y-%m-%dT%H:%M:%SZ',created_at),strftime('%Y-%m-%dT%H:%M:%SZ',updated_at),push_seq");
 }
 
 void readOrder(QSqlQuery &query, OrderRecord *record)
@@ -34,6 +34,7 @@ void readOrder(QSqlQuery &query, OrderRecord *record)
     record->stopReason = query.value(13).toString();
     record->createdAt = query.value(14).toString();
     record->updatedAt = query.value(15).toString();
+    record->pushSequence = query.value(16).toLongLong();
 }
 
 bool rollback(QSqlDatabase &db, const QString &message, QString *error)
@@ -303,6 +304,43 @@ bool OrderRepository::updateProgress(qint64 orderId, qint64 durationSeconds,
             ? query.lastError().text() : QStringLiteral("进行中的订单不存在");
         return false;
     }
+    return true;
+}
+
+bool OrderRepository::updateProgressAndSequence(qint64 orderId, qint64 durationSeconds,
+                                                qint64 energyWh, qint64 feeCents,
+                                                qint64 *sequence, QString *error) const
+{
+    if (sequence) *sequence = 0;
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral(
+        "UPDATE charging_orders SET duration_seconds=?,energy_wh=?,fee_cents=?,push_seq=push_seq+1,"
+        "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=? AND status='charging' "
+        "AND (push_seq=0 OR duration_seconds<?) AND duration_seconds<=? AND energy_wh<=? "
+        "RETURNING push_seq"));
+    query.addBindValue(durationSeconds);
+    query.addBindValue(energyWh);
+    query.addBindValue(feeCents);
+    query.addBindValue(orderId);
+    query.addBindValue(durationSeconds);
+    query.addBindValue(durationSeconds);
+    query.addBindValue(energyWh);
+    if (!query.exec()) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    qint64 allocated = 0;
+    if (query.next()) allocated = query.value(0).toLongLong();
+    // Step RETURNING through completion so commit errors precede publication.
+    while (query.next()) {}
+    if (query.lastError().isValid()) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    query.finish();
+    if (sequence) *sequence = allocated;
     return true;
 }
 

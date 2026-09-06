@@ -754,8 +754,7 @@ void ServiceTest::chargingProgressAndIdempotentStop()
     QCOMPARE(events.first().payload.value("feeCents").toInt(), 121);
     QCOMPARE(events.first().payload.value("seq").toInt(), 1);
     events = service.tick(now);
-    QCOMPARE(events.first().payload.value("feeCents").toInt(), 121);
-    QCOMPARE(events.first().payload.value("seq").toInt(), 2);
+    QVERIFY(events.isEmpty());
     now = now.addSecs(1);
     const QJsonObject stop{{"orderId", started.payload.value("orderId")}};
     const auto stopped = service.stop(user, Charging::Role::User, stop);
@@ -768,7 +767,7 @@ void ServiceTest::chargingProgressAndIdempotentStop()
     events = service.tick(now);
     QCOMPARE(events.size(), 1);
     QCOMPARE(events.first().type, Charging::MessageType::ChargingStoppedPush);
-    QCOMPARE(events.first().payload.value("seq").toInt(), 3);
+    QCOMPARE(events.first().payload.value("seq").toInt(), 2);
     QVERIFY(service.tick(now.addSecs(1)).isEmpty());
 }
 
@@ -863,7 +862,7 @@ void ServiceTest::chargingRestoreAndPersistedProgress()
     QCOMPARE(events.first().payload.value("energyWh").toInt(), 1000);
     QVERIFY(OrderRepository(&m_database).findById(id, &order, &error));
     QCOMPARE(order.energyWh, qint64(1000));
-    QCOMPARE(service.tick(now.addSecs(-50)).first().payload.value("energyWh").toInt(), 1000);
+    QVERIFY(service.tick(now.addSecs(-50)).isEmpty());
     QVERIFY(PileRepository(&m_database).updateStatus(1, "charging", "offline", &error));
     ChargingService restarted(&m_database, [&] { return now; });
     QVERIFY(restarted.restore().succeeded());
@@ -960,6 +959,97 @@ void ServiceTest::chargingProgressFailureDoesNotPublish()
     QCOMPARE(events.first().payload.value("seq").toInt(), 1);
     QCOMPARE(events.first().payload.value("energyWh").toInt(), 1000);
     QVERIFY(service.stop(user, Charging::Role::User, {{"orderId", started.payload.value("orderId")}}).succeeded());
+}
+
+void ServiceTest::chargingSequenceSurvivesRestart()
+{
+    const auto user = createUser("13800138308");
+    QVERIFY(UserService(&m_database).recharge(user, {{"amountCents", 10000}, {"transactionId", "charging-sequence"}}).succeeded());
+    const auto reservation = ReservationService(&m_database).create(user, {{"stationId", 1}, {"pileId", 1}});
+    qint64 orderId;
+    QDateTime now;
+    {
+        ChargingService first(&m_database, [&] { return now; });
+        const auto started = first.start(user, {{"reservationId", reservation.payload.value("reservationId")}});
+        QVERIFY(started.succeeded());
+        orderId = qint64(started.payload.value("orderId").toDouble());
+        now = QDateTime::fromString(started.payload.value("startedAt").toString(), Qt::ISODate).addSecs(60);
+        const auto events = first.tick(now);
+        QCOMPARE(events.size(), 1);
+        QCOMPARE(events.first().payload.value("seq").toInt(), 1);
+    }
+    for (int expected = 2; expected <= 4; ++expected) {
+        DatabaseManager reopened;
+        QString error;
+        QVERIFY(reopened.open(m_database.databasePath(), &error));
+        ChargingService restarted(&reopened, [&] { return now; });
+        QVERIFY(restarted.restore().succeeded());
+        QVERIFY(restarted.tick(now).isEmpty());
+        QVERIFY(restarted.tick(now.addSecs(-1)).isEmpty());
+        now = now.addSecs(1);
+        const auto events = restarted.tick(now);
+        QCOMPARE(events.size(), 1);
+        QCOMPARE(events.first().payload.value("seq").toInt(), expected);
+    }
+    ChargingService final(&m_database, [&] { return now; });
+    QVERIFY(final.restore().succeeded());
+    QSqlQuery query(m_database.database());
+    QVERIFY(query.exec("CREATE TRIGGER fail_sequence BEFORE UPDATE OF push_seq ON charging_orders BEGIN SELECT RAISE(ABORT,'sequence failed'); END"));
+    QVERIFY(final.tick(now.addSecs(1)).isEmpty());
+    QVERIFY(query.exec("SELECT push_seq,energy_wh FROM charging_orders WHERE id=" + QString::number(orderId)));
+    QVERIFY(query.next());
+    QCOMPARE(query.value(0).toInt(), 4);
+    QCOMPARE(query.value(1).toInt(), 1050);
+    query.finish();
+    const QJsonObject stop{{"orderId", double(orderId)}};
+    QCOMPARE(final.stop(user, Charging::Role::User, stop).error, ErrorCode::DatabaseError);
+    QVERIFY(query.exec("DROP TRIGGER fail_sequence"));
+    const auto stopped = final.stop(user, Charging::Role::User, stop);
+    QVERIFY(stopped.succeeded());
+    QCOMPARE(stopped.payload.value("seq").toInt(), 5);
+    const auto events = final.tick(now);
+    QCOMPARE(events.size(), 1);
+    QCOMPARE(events.first().payload.value("seq").toInt(), 5);
+    ChargingService afterStop(&m_database);
+    QCOMPARE(afterStop.stop(user, Charging::Role::User, stop).payload.value("seq").toInt(), 5);
+}
+
+void ServiceTest::chargingNormalStopRetryAfterPileFailure()
+{
+    for (int i = 0; i < 4; ++i) {
+        const auto user = createUser(QString("1380013834%1").arg(i));
+        QVERIFY(UserService(&m_database).recharge(user, {{"amountCents", 10000},
+            {"transactionId", QString("charging-late-fault-%1").arg(i)}}).succeeded());
+        const auto reservation = ReservationService(&m_database).create(user, {{"stationId", 1}, {"pileId", 1}});
+        QDateTime now;
+        ChargingService service(&m_database, [&] { return now; });
+        const auto started = service.start(user, {{"reservationId", reservation.payload.value("reservationId")}});
+        QVERIFY(started.succeeded());
+        const auto orderId = qint64(started.payload.value("orderId").toDouble());
+        const QJsonObject stop{{"orderId", double(orderId)}};
+        now = QDateTime::fromString(started.payload.value("startedAt").toString(), Qt::ISODate).addSecs(60);
+        QSqlQuery query(m_database.database());
+        QVERIFY(query.exec("CREATE TRIGGER fail_late_fault BEFORE INSERT ON wallet_records WHEN NEW.record_type='charge_payment' BEGIN SELECT RAISE(ABORT,'temporary failure'); END"));
+        QCOMPARE(service.stop(user, i < 2 ? Charging::Role::User : Charging::Role::Administrator, stop).error, ErrorCode::DatabaseError);
+        QString error;
+        QVERIFY(PileRepository(&m_database).updateStatus(1, "charging", i % 2 ? "fault" : "offline", &error));
+        auto events = service.tick(now.addSecs(30));
+        QCOMPARE(events.size(), 1);
+        QCOMPARE(events.first().type, Charging::MessageType::AlarmPush);
+        QVERIFY(service.tick(now.addSecs(40)).isEmpty());
+        QVERIFY(query.exec("DROP TRIGGER fail_late_fault"));
+        events = service.tick(now.addSecs(50));
+        QCOMPARE(events.size(), 1);
+        QCOMPARE(events.first().type, Charging::MessageType::ChargingStoppedPush);
+        const auto payload = events.first().payload;
+        QCOMPARE(payload.value("status").toString(), QString("fault_stopped"));
+        QCOMPARE(payload.value("stopReason").toString(), i % 2 ? QString("device_fault") : QString("device_offline"));
+        QCOMPARE(payload.value("durationSec").toInt(), 60);
+        QCOMPARE(payload.value("energyWh").toInt(), 1000);
+        QCOMPARE(payload.value("feeCents").toInt(), 120);
+        QCOMPARE(payload.value("balanceCents").toInt(), 9880);
+        QVERIFY(service.tick(now.addSecs(60)).isEmpty());
+    }
 }
 
 QTEST_GUILESS_MAIN(ServiceTest)

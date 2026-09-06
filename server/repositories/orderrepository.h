@@ -19,6 +19,7 @@ struct OrderRecord {
     qint64 energyWh = 0;
     qint64 unitPriceCents = 0;
     qint64 feeCents = 0;
+    qint64 pushSequence = 0;
     QString stopReason;
     QString createdAt;
     QString updatedAt;
@@ -43,6 +44,10 @@ public:
     bool findActiveByUser(qint64 userId, OrderRecord *record, QString *error) const;
     bool updateProgress(qint64 orderId, qint64 durationSeconds, qint64 energyWh,
                         qint64 feeCents, QString *error) const;
+    // Atomically persists progress and allocates its sequence. sequence=0 means
+    // this sample was already published or is older than persisted progress.
+    bool updateProgressAndSequence(qint64 orderId, qint64 durationSeconds, qint64 energyWh,
+                                   qint64 feeCents, qint64 *sequence, QString *error) const;
     bool listByUser(qint64 userId, int limit, int offset,
                     QList<OrderRecord> *records, QString *error) const;
 };

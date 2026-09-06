@@ -41,6 +41,8 @@ private slots:
     void chargingStartRechecksEligibilityAtWrite();
     void chargingRestoreUnavailablePile();
     void chargingProgressFailureDoesNotPublish();
+    void chargingSequenceSurvivesRestart();
+    void chargingNormalStopRetryAfterPileFailure();
 private:
     qint64 createUser(const QString &phone);
     QTemporaryDir m_directory;

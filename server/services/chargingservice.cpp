@@ -38,6 +38,7 @@ void ChargingService::remember(const OrderRecord &order)
     if (m_sessions.contains(order.id)) return;
     Session session;
     session.order = order;
+    session.seq = order.pushSequence;
     session.baseDuration = order.durationSeconds;
     session.baseEnergy = order.energyWh;
     session.updatedAt = QDateTime::fromString(order.startedAt, Qt::ISODate).addSecs(order.durationSeconds);
@@ -151,8 +152,12 @@ ServiceResult ChargingService::sample(Session &session, const QDateTime &now, co
     }
     if (!alarm.isEmpty()) reason = alarm;
     if (reason.isEmpty()) {
-        if (!OrderRepository(database()).updateProgress(candidate.id, candidate.durationSeconds,
-            candidate.energyWh, candidate.feeCents, &error)) return databaseError();
+        qint64 sequence = 0;
+        if (!OrderRepository(database()).updateProgressAndSequence(candidate.id, candidate.durationSeconds,
+            candidate.energyWh, candidate.feeCents, &sequence, &error)) return databaseError();
+        if (!sequence) return {}; // Same/older second: no new progress event.
+        candidate.pushSequence = sequence;
+        session.seq = sequence;
     }
     session.order = candidate;
     session.updatedAt = qMax(session.updatedAt, now.toUTC());
@@ -170,6 +175,20 @@ ServiceResult ChargingService::sample(Session &session, const QDateTime &now, co
 
 ServiceResult ChargingService::settle(Session &session)
 {
+    // Retrying a normal stop must notice a later device failure, while retaining
+    // the frozen final duration/Wh/fee from the original stop request.
+    if (session.finalStatus == "completed") {
+        PileRecord pile;
+        QString error;
+        if (!PileRepository(database()).findById(session.order.pileId, &pile, &error)) return databaseError();
+        if (!pile.id) return databaseError();
+        if (pile.status != "charging") {
+            session.finalStatus = "fault_stopped";
+            session.reason = pile.status == "fault" ? "device_fault"
+                : pile.status == "offline" ? "device_offline" : "connection_lost";
+            session.alarmType = session.reason;
+        }
+    }
     if (!session.alarmType.isEmpty()) {
         const auto alarm = AlarmService(database()).raiseOnce(session.order.pileId, session.order.id,
             session.alarmType, "critical", QStringLiteral("充电异常：%1").arg(session.alarmType));
@@ -181,7 +200,7 @@ ServiceResult ChargingService::settle(Session &session)
     auto result = BillingService(database()).settle(session.order.id, session.order.durationSeconds,
         session.order.energyWh, session.finalStatus, session.reason);
     if (result.succeeded()) {
-        result.payload.insert("seq", double(++session.seq));
+        session.seq = qint64(result.payload.value("seq").toDouble());
         result.payload.insert("updatedAt", session.updatedAt.toUTC().toString(Qt::ISODate));
         m_pending.append({Charging::MessageType::ChargingStoppedPush, session.order.userId, result.payload});
     }
@@ -224,8 +243,7 @@ QList<ChargingEvent> ChargingService::tick(const QDateTime &now)
             if (it->stopping) {
                 result = settle(it.value());
                 if (result.succeeded()) { it = m_sessions.erase(it); continue; }
-            } else {
-                result.payload.insert("seq", double(++it->seq));
+            } else if (!result.payload.isEmpty()) {
                 m_pending.append({Charging::MessageType::ChargingProgressPush, it->order.userId, result.payload});
             }
             ++it;

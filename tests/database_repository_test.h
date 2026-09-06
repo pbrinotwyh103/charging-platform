@@ -12,6 +12,7 @@ class DatabaseRepositoryTest final : public QObject
 private slots:
     void initTestCase();
     void schemaAndIntegrity();
+    void upgradeLegacyChargingSequence();
     void profileStationAndFavoriteOperations();
     void reservationRulesAndExpiry();
     void chargingSettlementAndRollback();

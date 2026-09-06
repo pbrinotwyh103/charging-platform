@@ -42,7 +42,7 @@ qint64 DatabaseRepositoryTest::createUser(const QString &phone)
 void DatabaseRepositoryTest::schemaAndIntegrity()
 {
     QString error;
-    QCOMPARE(m_database.schemaVersion(&error), 3);
+    QCOMPARE(m_database.schemaVersion(&error), 4);
     QVERIFY2(m_database.checkIntegrity(&error), qPrintable(error));
     QSqlQuery query(m_database.database(&error));
     QVERIFY2(query.exec(QStringLiteral("PRAGMA foreign_keys")), qPrintable(query.lastError().text()));
@@ -53,6 +53,63 @@ void DatabaseRepositoryTest::schemaAndIntegrity()
         "AND name='idx_one_active_reservation_per_user'")));
     QVERIFY(query.next());
     QCOMPARE(query.value(0).toInt(), 1);
+}
+
+void DatabaseRepositoryTest::upgradeLegacyChargingSequence()
+{
+    const auto path = m_temporaryDirectory.filePath("legacy-sequence.db");
+    const QString connection = "legacy-sequence-fixture";
+    {
+        auto legacy = QSqlDatabase::addDatabase("QSQLITE", connection);
+        legacy.setDatabaseName(path);
+        QVERIFY(legacy.open());
+        QSqlQuery query(legacy);
+        for (const auto &resource : {":/database/schema.sql", ":/database/seed.sql",
+                                     ":/database/migrations/003_repository_indexes.sql"}) {
+            QFile file(resource);
+            QVERIFY(file.open(QIODevice::ReadOnly));
+            QString script;
+            for (QString line : QString::fromUtf8(file.readAll()).split('\n')) {
+                const int comment = line.indexOf("--");
+                if (comment >= 0) line.truncate(comment);
+                script += line + '\n';
+            }
+            for (const auto &statement : script.split(';', Qt::SkipEmptyParts)) {
+                if (statement.trimmed().isEmpty()) continue;
+                QVERIFY2(query.exec(statement), qPrintable(query.lastError().text()));
+            }
+        }
+        QVERIFY(query.exec("INSERT INTO schema_version(version) VALUES(3)"));
+        QVERIFY(query.exec("INSERT INTO users(id,phone,nickname,balance_cents) VALUES(1001,'13800138999','legacy',10000)"));
+        QVERIFY(query.exec("UPDATE charging_piles SET status='charging' WHERE id=1"));
+        QVERIFY(query.exec("INSERT INTO charging_orders(id,order_no,user_id,station_id,pile_id,status,started_at,duration_seconds,energy_wh,unit_price_cents,fee_cents) VALUES(1001,'legacy-sequence',1001,1,1,'charging','2026-09-06T00:00:00Z',60,1000,120,120)"));
+        QVERIFY(query.exec("CREATE TRIGGER fail_version_four BEFORE INSERT ON schema_version WHEN NEW.version=4 BEGIN SELECT RAISE(ABORT,'migration interrupted'); END"));
+    }
+    QSqlDatabase::removeDatabase(connection);
+    DatabaseManager upgraded;
+    QString error;
+    // The column and migration version must roll back together if recording fails.
+    QVERIFY(!upgraded.open(path, &error));
+    QSqlQuery query(upgraded.database());
+    QVERIFY(query.exec("PRAGMA table_info(charging_orders)"));
+    while (query.next()) QVERIFY(query.value(1).toString() != "push_seq");
+    query.finish();
+    QCOMPARE(upgraded.schemaVersion(&error), 3);
+    QVERIFY(query.exec("DROP TRIGGER fail_version_four"));
+    QVERIFY2(upgraded.initializeSchema(&error), qPrintable(error));
+    QCOMPARE(upgraded.schemaVersion(&error), 4);
+    QVERIFY(query.exec("SELECT push_seq,duration_seconds,energy_wh,fee_cents FROM charging_orders WHERE id=1001"));
+    QVERIFY(query.next());
+    QCOMPARE(query.value(0).toInt(), 0);
+    QCOMPARE(query.value(1).toInt(), 60);
+    QCOMPARE(query.value(2).toInt(), 1000);
+    QCOMPARE(query.value(3).toInt(), 120);
+    query.finish();
+    QVERIFY(query.exec("UPDATE charging_orders SET push_seq=9 WHERE id=1001"));
+    QVERIFY(upgraded.initializeSchema(&error));
+    QVERIFY(query.exec("SELECT push_seq FROM charging_orders WHERE id=1001"));
+    QVERIFY(query.next());
+    QCOMPARE(query.value(0).toInt(), 9);
 }
 
 void DatabaseRepositoryTest::profileStationAndFavoriteOperations()

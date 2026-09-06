@@ -7,7 +7,7 @@ using namespace ServiceHelpers;
 
 QJsonObject OrderService::snapshot(const OrderRecord &order)
 {
-    return {{"orderId", double(order.id)}, {"orderNo", order.orderNo},
+    return {{"orderId", double(order.id)}, {"orderNo", order.orderNo}, {"seq", double(order.pushSequence)},
         {"userId", double(order.userId)}, {"stationId", double(order.stationId)},
         {"pileId", double(order.pileId)}, {"reservationId", double(order.reservationId)},
         {"status", order.status}, {"startedAt", order.startedAt}, {"stoppedAt", order.stoppedAt},

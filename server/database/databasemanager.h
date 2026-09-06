@@ -23,7 +23,8 @@ public:
 
 private:
     bool configureConnection(QSqlDatabase &database, QString *error) const;
-    bool executeScript(QSqlDatabase &database, const QString &resourcePath, QString *error) const;
+    bool executeScript(QSqlDatabase &database, const QString &resourcePath, QString *error,
+                       int migrationVersion = 0) const;
     bool applyMigrations(QSqlDatabase &database, QString *error) const;
     bool checkIntegrity(QSqlDatabase &database, QString *error) const;
     void closeAllConnections();
