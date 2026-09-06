@@ -13,7 +13,9 @@
 #include <QImage>
 #include <QJsonArray>
 #include <QSqlQuery>
+#include <QSemaphore>
 #include <QtTest>
+#include <future>
 
 using Charging::ErrorCode;
 
@@ -102,6 +104,49 @@ void ServiceTest::avatarValidationAndPersistence()
     UserRecord updated;
     QVERIFY(UserRepository(&m_database).findById(id, &updated, &error));
     QCOMPARE(updated.avatarPath, user.avatarPath);
+}
+
+void ServiceTest::concurrentIndependentProfileUpdates()
+{
+    const auto id = createUser("13800138109");
+    const QString avatar = imageBase64();
+    for (int iteration = 0; iteration < 32; ++iteration) {
+        QSemaphore ready;
+        QSemaphore start;
+        const QString nickname = QString("并发车主%1").arg(iteration);
+        auto update = [&](QJsonObject payload) {
+            // Open each real worker connection before releasing both requests.
+            m_database.database();
+            ready.release();
+            start.acquire();
+            return UserService(&m_database).updateProfile(id, payload);
+        };
+        auto nicknameRequest = std::async(std::launch::async, update, QJsonObject{{"nickname", nickname}});
+        auto avatarRequest = std::async(std::launch::async, update, QJsonObject{{"avatarBase64", avatar}});
+        ready.acquire(2);
+        start.release(2);
+        const auto nicknameResult = nicknameRequest.get();
+        const auto avatarResult = avatarRequest.get();
+        QVERIFY(nicknameResult.succeeded());
+        QVERIFY(avatarResult.succeeded());
+        UserRecord user;
+        QString error;
+        QVERIFY(UserRepository(&m_database).findById(id, &user, &error));
+        QCOMPARE(user.nickname, nickname);
+        QCOMPARE(user.avatarPath, avatarResult.payload.value("avatar").toString());
+        QVERIFY(QFile::exists(m_directory.filePath(user.avatarPath)));
+    }
+}
+
+void ServiceTest::profileResponseReflectsCommittedRow()
+{
+    const auto id = createUser("13800138110");
+    QSqlQuery query(m_database.database());
+    QVERIFY(query.exec("CREATE TRIGGER enrich_profile AFTER UPDATE OF nickname ON users BEGIN UPDATE users SET balance_cents=123 WHERE id=NEW.id; END"));
+    const auto result = UserService(&m_database).updateProfile(id, {{"nickname", "更新后资料"}});
+    QVERIFY(query.exec("DROP TRIGGER enrich_profile"));
+    QVERIFY(result.succeeded());
+    QCOMPARE(result.payload.value("balanceCents").toInt(), 123);
 }
 
 void ServiceTest::avatarDatabaseFailureKeepsOldFile()

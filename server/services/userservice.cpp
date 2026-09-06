@@ -86,24 +86,28 @@ ServiceResult UserService::updateProfile(qint64 userId, const QJsonObject &paylo
     QString error;
     if (!users.findById(userId, &user, &error)) return databaseError();
     if (!user.id) return failure(Charging::ErrorCode::NotFound, QStringLiteral("用户不存在"));
-    if (changeNickname) user.nickname = nickname;
+    std::optional<QString> newAvatarPath;
     QString newFile;
     if (changeAvatar) {
         const QDir root = QFileInfo(database()->databasePath()).absoluteDir();
         if (!root.mkpath("avatars"))
             return failure(Charging::ErrorCode::InternalError, QStringLiteral("头像保存失败"));
-        user.avatarPath = QString("avatars/%1.%2").arg(QUuid::createUuid().toString(QUuid::WithoutBraces), extension);
-        newFile = root.filePath(user.avatarPath);
+        newAvatarPath = QString("avatars/%1.%2").arg(QUuid::createUuid().toString(QUuid::WithoutBraces), extension);
+        newFile = root.filePath(*newAvatarPath);
         QSaveFile output(newFile);
         output.setDirectWriteFallback(false);
         if (!output.open(QIODevice::WriteOnly) || output.write(imageBytes) != imageBytes.size()
             || !output.commit())
             return failure(Charging::ErrorCode::InternalError, QStringLiteral("头像保存失败"));
     }
-    if (!users.updateProfile(userId, user.nickname, user.avatarPath, &error)) {
+    const std::optional<QString> newNickname = changeNickname
+        ? std::optional<QString>(nickname) : std::nullopt;
+    if (!users.updateProfileFields(userId, newNickname, newAvatarPath, &error)) {
         if (!newFile.isEmpty()) QFile::remove(newFile);
         return databaseError();
     }
+    // The update has committed: a read failure must not delete its live avatar.
+    if (!users.findById(userId, &user, &error)) return databaseError();
     ServiceResult result;
     result.payload = profile(user);
     return result;

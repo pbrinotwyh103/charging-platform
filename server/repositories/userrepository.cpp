@@ -4,6 +4,7 @@
 
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QStringList>
 
 namespace {
 
@@ -115,17 +116,32 @@ bool UserRepository::findOrCreate(const QString &phone, UserRecord *record, bool
 bool UserRepository::updateProfile(qint64 userId, const QString &nickname,
                                    const QString &avatarPath, QString *error) const
 {
-    if (nickname.trimmed().isEmpty() || nickname.size() > 40) {
+    return updateProfileFields(userId, nickname, avatarPath, error);
+}
+
+bool UserRepository::updateProfileFields(qint64 userId, const std::optional<QString> &nickname,
+                                         const std::optional<QString> &avatarPath, QString *error) const
+{
+    if (!nickname && !avatarPath) {
+        if (error) *error = QStringLiteral("未提供资料更新字段");
+        return false;
+    }
+    if (nickname && (nickname->trimmed().isEmpty() || nickname->size() > 40)) {
         if (error) *error = QStringLiteral("昵称长度必须为1至40个字符");
         return false;
     }
     QSqlDatabase db = database()->database(error);
     if (!db.isValid() || !db.isOpen()) return false;
     QSqlQuery query(db);
-    query.prepare(QStringLiteral(
-        "UPDATE users SET nickname=?, avatar_path=?, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?"));
-    query.addBindValue(nickname.trimmed());
-    query.addBindValue(avatarPath);
+    // Omitted columns never enter the SET clause, so independent concurrent
+    // patches cannot write back stale values read by the service.
+    QStringList assignments;
+    if (nickname) assignments.append(QStringLiteral("nickname=?"));
+    if (avatarPath) assignments.append(QStringLiteral("avatar_path=?"));
+    assignments.append(QStringLiteral("updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')"));
+    query.prepare(QStringLiteral("UPDATE users SET %1 WHERE id=?").arg(assignments.join(',')));
+    if (nickname) query.addBindValue(nickname->trimmed());
+    if (avatarPath) query.addBindValue(*avatarPath);
     query.addBindValue(userId);
     if (!query.exec() || query.numRowsAffected() != 1) {
         if (error) *error = query.lastError().isValid()

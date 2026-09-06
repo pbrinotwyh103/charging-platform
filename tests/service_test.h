@@ -10,6 +10,8 @@ class ServiceTest : public QObject
 private slots:
     void initTestCase();
     void profileValidationAndPartialUpdate();
+    void concurrentIndependentProfileUpdates();
+    void profileResponseReflectsCommittedRow();
     void avatarValidationAndPersistence();
     void avatarDatabaseFailureKeepsOldFile();
     void rechargeBoundsAndIdempotency();
