@@ -10,10 +10,15 @@ SOURCES += service_test.cpp \
     ../server/services/userservice.cpp \
     ../server/services/stationservice.cpp \
     ../server/services/pileservice.cpp \
+    ../server/services/reservationservice.cpp \
+    ../server/services/orderservice.cpp \
+    ../server/services/billingservice.cpp \
     ../server/database/databasemanager.cpp \
     ../server/repositories/userrepository.cpp \
     ../server/repositories/walletrepository.cpp \
     ../server/repositories/stationrepository.cpp \
     ../server/repositories/pilerepository.cpp \
+    ../server/repositories/reservationrepository.cpp \
+    ../server/repositories/orderrepository.cpp \
     ../server/repositories/favoriterepository.cpp
 RESOURCES += ../server/resources/database.qrc

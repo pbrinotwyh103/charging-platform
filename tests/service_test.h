@@ -19,6 +19,15 @@ private slots:
     void nearbyTextSearchAndCoordinates();
     void pileStatusAndFavoriteIdempotency();
     void databaseFailures();
+    void reservationSelectionAndDuration();
+    void reservationValidationAndConflicts();
+    void reservationCancelAndExpiry();
+    void reservationWriteFailureRollsBack();
+    void activeOrderAndSettlement();
+    void billingRoundingAndValidation();
+    void settlementFailureRollsBack();
+    void reservationTransactionRechecksEligibility();
+    void expiryPreservesUnavailablePiles();
 private:
     qint64 createUser(const QString &phone);
     QTemporaryDir m_directory;

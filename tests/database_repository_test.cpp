@@ -97,6 +97,8 @@ void DatabaseRepositoryTest::reservationRulesAndExpiry()
     const qint64 firstUser = createUser(QStringLiteral("13800138002"));
     const qint64 secondUser = createUser(QStringLiteral("13800138003"));
     QString error;
+    QVERIFY(WalletRepository(&m_database).recharge("R-RESERVATION-1", firstUser, 100, nullptr, &error));
+    QVERIFY(WalletRepository(&m_database).recharge("R-RESERVATION-2", secondUser, 100, nullptr, &error));
     UserRepository users(&m_database);
     ReservationRepository reservations(&m_database);
     QVERIFY(users.setStatus(firstUser, QStringLiteral("frozen"), &error));
@@ -412,6 +414,7 @@ void DatabaseRepositoryTest::isoExpiredReservationCannotStart()
     QString error;
     qint64 reservationId = 0, orderId = 0;
     const QDateTime now = QDateTime::currentDateTimeUtc();
+    QVERIFY(WalletRepository(&m_database).recharge("R-EXPIRY", userId, 100, nullptr, &error));
     QVERIFY(reservations.create(userId, 1, now.addSecs(-1).toString(Qt::ISODate), &reservationId, &error));
     QVERIFY(!orders.createChargingOrder(QStringLiteral("O-ISO-EXPIRED"), userId, 1,
                                         reservationId, &orderId, &error));
@@ -432,8 +435,8 @@ void DatabaseRepositoryTest::repositoryUtcTimestamps()
 {
     QString error;
     QSqlQuery fixture(m_database.database(&error));
-    QVERIFY(fixture.exec(QStringLiteral("INSERT INTO users(phone,nickname,created_at,updated_at) "
-        "VALUES('13800138026','legacy','2026-09-06 04:05:06','2026-09-06T12:05:06+08:00')")));
+    QVERIFY(fixture.exec(QStringLiteral("INSERT INTO users(phone,nickname,balance_cents,created_at,updated_at) "
+        "VALUES('13800138026','legacy',100,'2026-09-06 04:05:06','2026-09-06T12:05:06+08:00')")));
     const qint64 userId = fixture.lastInsertId().toLongLong();
     UserRecord user;
     QVERIFY(UserRepository(&m_database).findById(userId, &user, &error));

@@ -67,6 +67,9 @@ SOURCES += \
     services/userservice.cpp \
     services/stationservice.cpp \
     services/pileservice.cpp \
+    services/reservationservice.cpp \
+    services/orderservice.cpp \
+    services/billingservice.cpp \
     services/serviceregistry.cpp
 
 RESOURCES += resources/database.qrc

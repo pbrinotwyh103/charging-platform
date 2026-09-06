@@ -6,6 +6,13 @@
 #include "services/stationservice.h"
 #include "services/pileservice.h"
 #include "services/serviceresult.h"
+#include "services/reservationservice.h"
+#include "services/orderservice.h"
+#include "services/billingservice.h"
+#include "repositories/reservationrepository.h"
+#include "repositories/orderrepository.h"
+#include "repositories/walletrepository.h"
+#include <limits>
 #include <QBuffer>
 #include <QDateTime>
 #include <QDir>
@@ -298,6 +305,257 @@ void ServiceTest::databaseFailures()
     QCOMPARE(stations.nearby(1, {}).error, ErrorCode::DatabaseError);
     QCOMPARE(stations.toggleFavorite(1, {{"stationId", 1}, {"favorited", true}}).error, ErrorCode::DatabaseError);
     QCOMPARE(piles.listForStation({{"stationId", 1}}).error, ErrorCode::DatabaseError);
+}
+
+void ServiceTest::reservationSelectionAndDuration()
+{
+    const auto id = createUser("13800138201");
+    QVERIFY(UserService(&m_database).recharge(id, {{"amountCents", 1000}, {"transactionId", "reserve-selection"}}).succeeded());
+    ReservationService service(&m_database);
+    auto result = service.create(id, {{"stationId", 1}});
+    QVERIFY(result.succeeded());
+    QCOMPARE(result.payload.value("stationId").toInt(), 1);
+    const auto pileId = result.payload.value("pileId").toInt();
+    QVERIFY(pileId == 1 || pileId == 2);
+    QCOMPARE(result.payload.value("status").toString(), QString("active"));
+    QVERIFY(qAbs(QDateTime::fromString(result.payload.value("reservedAt").toString(), Qt::ISODate)
+                 .secsTo(QDateTime::fromString(result.payload.value("expiresAt").toString(), Qt::ISODate)) - 900) <= 1);
+    PileRecord pile;
+    QString error;
+    QVERIFY(PileRepository(&m_database).findById(pileId, &pile, &error));
+    QCOMPARE(pile.status, QString("reserved"));
+    QVERIFY(service.cancel(id, {{"reservationId", result.payload.value("reservationId")}}).succeeded());
+    for (int minutes : {5, 30}) {
+        result = service.create(id, {{"stationId", 1}, {"pileId", 2}, {"durationMinutes", minutes}});
+        QVERIFY(result.succeeded());
+        QCOMPARE(result.payload.value("pileId").toInt(), 2);
+        const auto expiry = QDateTime::fromString(result.payload.value("expiresAt").toString(), Qt::ISODate);
+        QVERIFY(qAbs(QDateTime::currentDateTimeUtc().secsTo(expiry) - minutes * 60) <= 1);
+        QVERIFY(service.cancel(id, {{"reservationId", result.payload.value("reservationId")}}).succeeded());
+    }
+}
+
+void ServiceTest::reservationValidationAndConflicts()
+{
+    const auto id = createUser("13800138202");
+    ReservationService service(&m_database);
+    for (const QJsonObject &bad : QList<QJsonObject>{{}, {{"stationId", "1"}}, {{"stationId", 1.5}},
+             {{"stationId", 1}, {"pileId", 0}}, {{"stationId", 1}, {"pileId", "1"}},
+             {{"stationId", 1}, {"durationMinutes", 4}}, {{"stationId", 1}, {"durationMinutes", 31}},
+             {{"stationId", 1}, {"durationMinutes", 5.5}}, {{"stationId", 1}, {"durationMinutes", "15"}}})
+        QCOMPARE(service.create(id, bad).error, ErrorCode::ValidationFailed);
+    auto result = service.create(id, {{"stationId", 1}});
+    QCOMPARE(result.error, ErrorCode::Conflict);
+    QCOMPARE(result.reason, QString("insufficient_balance"));
+    QString error;
+    QVERIFY(UserRepository(&m_database).setStatus(id, "frozen", &error));
+    result = service.create(id, {{"stationId", 1}});
+    QCOMPARE(result.error, ErrorCode::Conflict);
+    QCOMPARE(result.reason, QString("user_frozen"));
+    QVERIFY(UserRepository(&m_database).setStatus(id, "normal", &error));
+    QVERIFY(UserService(&m_database).recharge(id, {{"amountCents", 1000}, {"transactionId", "reserve-conflicts"}}).succeeded());
+    QCOMPARE(service.create(999999, {{"stationId", 1}}).error, ErrorCode::NotFound);
+    QCOMPARE(service.create(id, {{"stationId", 999999}}).error, ErrorCode::NotFound);
+    QCOMPARE(service.create(id, {{"stationId", 1}, {"pileId", 999999}}).error, ErrorCode::NotFound);
+    QCOMPARE(service.create(id, {{"stationId", 1}, {"pileId", 3}}).error, ErrorCode::ValidationFailed);
+    QVERIFY(PileRepository(&m_database).updateStatus(1, "idle", "offline", &error));
+    result = service.create(id, {{"stationId", 1}, {"pileId", 1}});
+    QCOMPARE(result.error, ErrorCode::Conflict);
+    QCOMPARE(result.reason, QString("pile_unavailable"));
+    result = service.create(id, {{"stationId", 1}});
+    QVERIFY(result.succeeded());
+    QCOMPARE(result.payload.value("pileId").toInt(), 2);
+    const auto reservationId = result.payload.value("reservationId");
+    result = service.create(id, {{"stationId", 2}});
+    QCOMPARE(result.error, ErrorCode::Conflict);
+    QCOMPARE(result.reason, QString("reservation_conflict"));
+    const auto other = createUser("13800138203");
+    QVERIFY(UserService(&m_database).recharge(other, {{"amountCents", 100}, {"transactionId", "reserve-other"}}).succeeded());
+    result = service.create(other, {{"stationId", 1}});
+    QCOMPARE(result.error, ErrorCode::Conflict);
+    QCOMPARE(result.reason, QString("pile_unavailable"));
+    QVERIFY(service.cancel(id, {{"reservationId", reservationId}}).succeeded());
+    QVERIFY(PileRepository(&m_database).updateStatus(1, "offline", "idle", &error));
+}
+
+void ServiceTest::reservationCancelAndExpiry()
+{
+    const auto id = createUser("13800138204");
+    QVERIFY(UserService(&m_database).recharge(id, {{"amountCents", 1000}, {"transactionId", "reserve-cancel"}}).succeeded());
+    ReservationService service(&m_database);
+    auto created = service.create(id, {{"stationId", 1}, {"pileId", 1}});
+    QVERIFY(created.succeeded());
+    const QJsonObject request{{"reservationId", created.payload.value("reservationId")}};
+    QCOMPARE(service.cancel(id, {}).error, ErrorCode::ValidationFailed);
+    QCOMPARE(service.cancel(id, {{"reservationId", "1"}}).error, ErrorCode::ValidationFailed);
+    QCOMPARE(service.cancel(id, {{"reservationId", 999999}}).error, ErrorCode::NotFound);
+    QCOMPARE(service.cancel(createUser("13800138205"), request).error, ErrorCode::Forbidden);
+    QVERIFY(service.cancel(id, request).succeeded());
+    QCOMPARE(service.cancel(id, request).payload.value("status").toString(), QString("cancelled"));
+    PileRecord pile;
+    QString error;
+    QVERIFY(PileRepository(&m_database).findById(1, &pile, &error));
+    QCOMPARE(pile.status, QString("idle"));
+    created = service.create(id, {{"stationId", 1}, {"pileId", 1}});
+    QVERIFY(created.succeeded());
+    const auto expiry = QDateTime::fromString(created.payload.value("expiresAt").toString(), Qt::ISODate);
+    QCOMPARE(service.expireDue(QDateTime()).error, ErrorCode::ValidationFailed);
+    QCOMPARE(service.expireDue(expiry.addSecs(-1)).payload.value("expiredCount").toInt(), 0);
+    QCOMPARE(service.expireDue(expiry).payload.value("expiredCount").toInt(), 1);
+    QCOMPARE(service.expireDue(expiry).payload.value("expiredCount").toInt(), 0);
+    const auto expired = service.cancel(id, {{"reservationId", created.payload.value("reservationId")}});
+    QCOMPARE(expired.error, ErrorCode::Conflict);
+    QCOMPARE(expired.reason, QString("reservation_expired"));
+    QVERIFY(PileRepository(&m_database).findById(1, &pile, &error));
+    QCOMPARE(pile.status, QString("idle"));
+}
+
+void ServiceTest::reservationWriteFailureRollsBack()
+{
+    const auto id = createUser("13800138206");
+    QVERIFY(UserService(&m_database).recharge(id, {{"amountCents", 100}, {"transactionId", "reserve-failure"}}).succeeded());
+    QSqlQuery query(m_database.database());
+    QVERIFY(query.exec("CREATE TRIGGER reject_reservation BEFORE INSERT ON reservations BEGIN SELECT RAISE(ABORT,'test reservation failure'); END"));
+    const auto result = ReservationService(&m_database).create(id, {{"stationId", 1}, {"pileId", 1}});
+    QVERIFY(query.exec("DROP TRIGGER reject_reservation"));
+    QCOMPARE(result.error, ErrorCode::DatabaseError);
+    PileRecord pile;
+    QString error;
+    QVERIFY(PileRepository(&m_database).findById(1, &pile, &error));
+    QCOMPARE(pile.status, QString("idle"));
+}
+
+void ServiceTest::activeOrderAndSettlement()
+{
+    const auto id = createUser("13800138207");
+    QVERIFY(UserService(&m_database).recharge(id, {{"amountCents", 1000}, {"transactionId", "order-settle"}}).succeeded());
+    OrderService service(&m_database);
+    QCOMPARE(service.active(id).payload, QJsonObject({{"active", false}}));
+    QCOMPARE(service.active(999999).error, ErrorCode::NotFound);
+    const auto reservation = ReservationService(&m_database).create(id, {{"stationId", 1}, {"pileId", 1}});
+    QVERIFY(reservation.succeeded());
+    QString error;
+    qint64 orderId = 0;
+    OrderRepository orders(&m_database);
+    QVERIFY(orders.createChargingOrder("service-order-1", id, 1, reservation.payload.value("reservationId").toInt(), &orderId, &error));
+    QVERIFY(orders.updateProgress(orderId, 120, 1234, 148, &error));
+    auto result = service.active(id);
+    QVERIFY(result.succeeded());
+    QCOMPARE(result.payload.value("active").toBool(), true);
+    QCOMPARE(result.payload.value("orderId").toDouble(), double(orderId));
+    QCOMPARE(result.payload.value("status").toString(), QString("charging"));
+    QCOMPARE(result.payload.value("payableCents").toInt(), 148);
+    QCOMPARE(result.payload.value("energyKwh").toDouble(), 1.234);
+    QCOMPARE(result.payload.value("durationSec").toInt(), 120);
+    QVERIFY(result.payload.value("startedAt").toString().endsWith('Z'));
+    auto conflict = ReservationService(&m_database).create(id, {{"stationId", 2}});
+    QCOMPARE(conflict.error, ErrorCode::Conflict);
+    QCOMPARE(conflict.reason, QString("order_conflict"));
+    BillingService billing(&m_database);
+    result = billing.settle(orderId, 121, 1240, "completed", "user_stop");
+    QVERIFY(result.succeeded());
+    QCOMPARE(result.payload.value("status").toString(), QString("completed"));
+    QCOMPARE(result.payload.value("payableCents").toInt(), 148);
+    QCOMPARE(result.payload.value("balanceCents").toInt(), 852);
+    QCOMPARE(result.payload.value("stopReason").toString(), QString("user_stop"));
+    QVERIFY(result.payload.value("stoppedAt").toString().endsWith('Z'));
+    QVERIFY(UserService(&m_database).recharge(id, {{"amountCents", 100}, {"transactionId", "after-settle"}}).succeeded());
+    QCOMPARE(billing.settle(orderId, 999, 9999, "fault_stopped", "fault").payload, result.payload);
+    QCOMPARE(service.active(id).payload, QJsonObject({{"active", false}}));
+    PileRecord pile;
+    QVERIFY(PileRepository(&m_database).findById(1, &pile, &error));
+    QCOMPARE(pile.status, QString("idle"));
+    QCOMPARE(pile.totalChargeCount, 1);
+    UserRecord user;
+    QVERIFY(UserRepository(&m_database).findById(id, &user, &error));
+    QCOMPARE(user.balanceCents, qint64(952));
+}
+
+void ServiceTest::billingRoundingAndValidation()
+{
+    QCOMPARE(BillingService::feeCents(0, 120), qint64(0));
+    QCOMPARE(BillingService::feeCents(8, 120), qint64(0));
+    QCOMPARE(BillingService::feeCents(9, 120), qint64(1));
+    QCOMPARE(BillingService::feeCents(1234, 120), qint64(148));
+    QCOMPARE(BillingService::feeCents(999, 999), qint64(998));
+    // Multiplication overflows qint64 even though the final amount fits.
+    QCOMPARE(BillingService::feeCents(1000000000000000000LL, 120), qint64(120000000000000000LL));
+    QCOMPARE(BillingService::feeCents(-1, 120), qint64(-1));
+    QCOMPARE(BillingService::feeCents(1000, -1), qint64(-1));
+    QCOMPARE(BillingService::feeCents(std::numeric_limits<qint64>::max(), 1001), qint64(-1));
+    BillingService service(&m_database);
+    QCOMPARE(service.settle(999999, 1, 1, "completed", "user_stop").error, ErrorCode::NotFound);
+    QCOMPARE(service.settle(1, -1, 1, "completed", "user_stop").error, ErrorCode::ValidationFailed);
+    QCOMPARE(service.settle(1, 1, -1, "completed", "user_stop").error, ErrorCode::ValidationFailed);
+    QCOMPARE(service.settle(1, 1, 1, "charging", "user_stop").error, ErrorCode::ValidationFailed);
+    DatabaseManager unavailable;
+    QCOMPARE(ReservationService(&unavailable).create(1, {{"stationId", 1}}).error, ErrorCode::DatabaseError);
+    QCOMPARE(ReservationService(&unavailable).cancel(1, {{"reservationId", 1}}).error, ErrorCode::DatabaseError);
+    QCOMPARE(ReservationService(&unavailable).expireDue(QDateTime::currentDateTimeUtc()).error, ErrorCode::DatabaseError);
+    QCOMPARE(OrderService(&unavailable).active(1).error, ErrorCode::DatabaseError);
+    QCOMPARE(BillingService(&unavailable).settle(1, 1, 1, "completed", "user_stop").error, ErrorCode::DatabaseError);
+}
+
+void ServiceTest::settlementFailureRollsBack()
+{
+    const auto id = createUser("13800138208");
+    QVERIFY(UserService(&m_database).recharge(id, {{"amountCents", 100}, {"transactionId", "settle-failure"}}).succeeded());
+    QString error;
+    qint64 orderId;
+    QVERIFY(OrderRepository(&m_database).createChargingOrder("service-order-failure", id, 1, 0, &orderId, &error));
+    BillingService billing(&m_database);
+    auto result = billing.settle(orderId, 60, 1000, "completed", "user_stop");
+    QCOMPARE(result.error, ErrorCode::Conflict);
+    QCOMPARE(result.reason, QString("insufficient_balance"));
+    QSqlQuery query(m_database.database());
+    QVERIFY(query.exec("CREATE TRIGGER reject_payment BEFORE INSERT ON wallet_records WHEN NEW.record_type='charge_payment' BEGIN SELECT RAISE(ABORT,'test payment failure'); END"));
+    result = billing.settle(orderId, 60, 500, "completed", "user_stop");
+    QVERIFY(query.exec("DROP TRIGGER reject_payment"));
+    QCOMPARE(result.error, ErrorCode::DatabaseError);
+    UserRecord user;
+    QVERIFY(UserRepository(&m_database).findById(id, &user, &error));
+    QCOMPARE(user.balanceCents, qint64(100));
+    QCOMPARE(OrderService(&m_database).active(id).payload.value("status").toString(), QString("charging"));
+    PileRecord pile;
+    QVERIFY(PileRepository(&m_database).findById(1, &pile, &error));
+    QCOMPARE(pile.status, QString("charging"));
+    QVERIFY(billing.settle(orderId, 60, 500, "fault_stopped", "device_fault").succeeded());
+}
+
+void ServiceTest::reservationTransactionRechecksEligibility()
+{
+    const auto id = createUser("13800138209");
+    ReservationRepository reservations(&m_database);
+    QString error;
+    qint64 reservationId = 0;
+    const auto expires = QDateTime::currentDateTimeUtc().addSecs(900).toString(Qt::ISODate);
+    // These repository calls represent a service precheck that became stale before its write.
+    QVERIFY(!reservations.create(id, 2, expires, &reservationId, &error));
+    QVERIFY(UserService(&m_database).recharge(id, {{"amountCents", 100}, {"transactionId", "reserve-recheck"}}).succeeded());
+    qint64 orderId = 0;
+    QVERIFY(OrderRepository(&m_database).createChargingOrder("service-order-recheck", id, 1, 0, &orderId, &error));
+    QVERIFY(!reservations.create(id, 2, expires, &reservationId, &error));
+    PileRecord pile;
+    QVERIFY(PileRepository(&m_database).findById(2, &pile, &error));
+    QCOMPARE(pile.status, QString("idle"));
+    QVERIFY(BillingService(&m_database).settle(orderId, 0, 0, "completed", "user_stop").succeeded());
+}
+
+void ServiceTest::expiryPreservesUnavailablePiles()
+{
+    const auto id = createUser("13800138210");
+    QVERIFY(UserService(&m_database).recharge(id, {{"amountCents", 100}, {"transactionId", "reserve-fault"}}).succeeded());
+    ReservationService service(&m_database);
+    const auto created = service.create(id, {{"stationId", 1}, {"pileId", 2}});
+    QVERIFY(created.succeeded());
+    QString error;
+    QVERIFY(PileRepository(&m_database).updateStatus(2, "reserved", "fault", &error));
+    const auto expires = QDateTime::fromString(created.payload.value("expiresAt").toString(), Qt::ISODate);
+    QVERIFY(service.expireDue(expires).succeeded());
+    PileRecord pile;
+    QVERIFY(PileRepository(&m_database).findById(2, &pile, &error));
+    QCOMPARE(pile.status, QString("fault"));
+    QVERIFY(PileRepository(&m_database).updateStatus(2, "fault", "idle", &error));
 }
 
 QTEST_GUILESS_MAIN(ServiceTest)

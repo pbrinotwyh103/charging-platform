@@ -36,7 +36,9 @@ bool ReservationRepository::create(qint64 userId, qint64 pileId, const QString &
     }
 
     QSqlQuery user(db);
-    user.prepare(QStringLiteral("SELECT status FROM users WHERE id=?"));
+    user.prepare(QStringLiteral(
+        "SELECT status,balance_cents,EXISTS(SELECT 1 FROM charging_orders o "
+        "WHERE o.user_id=users.id AND o.status='charging') FROM users WHERE id=?"));
     user.addBindValue(userId);
     if (!user.exec() || !user.next()) {
         return rollback(db, user.lastError().isValid() ? user.lastError().text()
@@ -45,6 +47,10 @@ bool ReservationRepository::create(qint64 userId, qint64 pileId, const QString &
     if (user.value(0).toString() != QStringLiteral("normal")) {
         return rollback(db, QStringLiteral("冻结用户不能创建预约"), error);
     }
+    if (user.value(1).toLongLong() <= 0)
+        return rollback(db, QStringLiteral("钱包余额不足"), error);
+    if (user.value(2).toBool())
+        return rollback(db, QStringLiteral("用户已有充电订单"), error);
 
     QSqlQuery reservePile(db);
     reservePile.prepare(QStringLiteral(
