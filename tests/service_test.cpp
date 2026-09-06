@@ -16,6 +16,7 @@
 #include "services/chargingservice.h"
 #include "services/adminservice.h"
 #include "services/statisticsservice.h"
+#include "protocol/packetcodec.h"
 #include <limits>
 #include <QBuffer>
 #include <QDateTime>
@@ -23,6 +24,7 @@
 #include <QFile>
 #include <QImage>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QSqlQuery>
 #include <QSemaphore>
 #include <QtTest>
@@ -1500,6 +1502,266 @@ void ServiceTest::adminControlReplayIsScopedToConnection()
     PileRecord pile;
     QVERIFY(PileRepository(&f.database).findById(1, &pile, &f.error));
     QCOMPARE(pile.status, QString("disabled"));
+}
+
+void ServiceTest::adminStopRetryAfterAuditFailureKeepsOriginalOrder()
+{
+    for (bool blockRecoveryInsert : {false, true})
+    {
+        AdminFixture f;
+        QVERIFY(f.open());
+        const auto user = f.user();
+        const auto reservation =
+            ReservationService(&f.database).create(user, {{"stationId", 1}, {"pileId", 1}});
+        QDateTime now;
+        ChargingService charging(&f.database, [&] { return now; });
+        const auto first =
+            charging.start(user, {{"reservationId", reservation.payload.value("reservationId")}});
+        QVERIFY(first.succeeded());
+        now = QDateTime::fromString(first.payload.value("startedAt").toString(), Qt::ISODate).addSecs(60);
+        QSqlQuery query(f.database.database());
+        QVERIFY(query.exec("CREATE TRIGGER reject_final_audit BEFORE UPDATE ON device_control_records BEGIN "
+                           "SELECT RAISE(ABORT,'audit update failure'); END"));
+        if (blockRecoveryInsert)
+            QVERIFY(query.exec(
+                "CREATE TRIGGER reject_recovery_audit BEFORE INSERT ON device_control_records WHEN "
+                "NEW.result!='pending' BEGIN SELECT RAISE(ABORT,'audit recovery failure'); END"));
+        const QJsonObject request{{"action", "pile.stop"}, {"pileId", 1}, {"_requestScope", "audit-retry"}};
+        QCOMPARE(AdminService(&f.database).execute(1, 81, request, &charging).error,
+                 ErrorCode::DatabaseError);
+        OrderRecord original;
+        QVERIFY(OrderRepository(&f.database)
+                    .findById(qint64(first.payload.value("orderId").toDouble()), &original, &f.error));
+        QCOMPARE(original.status, QString("completed"));
+        QCOMPARE(original.feeCents, 120);
+        QVERIFY(query.exec("DROP TRIGGER reject_final_audit"));
+        if (blockRecoveryInsert)
+            QVERIFY(query.exec("DROP TRIGGER reject_recovery_audit"));
+        const auto secondReservation =
+            ReservationService(&f.database).create(user, {{"stationId", 1}, {"pileId", 1}});
+        const auto second =
+            charging.start(user, {{"reservationId", secondReservation.payload.value("reservationId")}});
+        QVERIFY(second.succeeded());
+        if (blockRecoveryInsert)
+            QCOMPARE(AdminService(&f.database).execute(1, 81, request, nullptr).error,
+                     ErrorCode::InternalError);
+        // Reconstruct both services to prove the old target is persisted, not only in memory.
+        ChargingService restarted(&f.database, [&] { return now; });
+        const auto retry = AdminService(&f.database).execute(1, 81, request, &restarted);
+        QVERIFY(retry.succeeded());
+        QCOMPARE(retry.payload.value("orderId"), first.payload.value("orderId"));
+        QCOMPARE(retry.payload.value("feeCents").toInt(), 120);
+        QCOMPARE(retry.payload.value("balanceCents").toInt(), 9880);
+        QCOMPARE(OrderService(&f.database).active(user).payload.value("orderId"),
+                 second.payload.value("orderId"));
+        QVERIFY(query.exec("SELECT COUNT(*) FROM wallet_records WHERE record_type='charge_payment'"));
+        QVERIFY(query.next());
+        QCOMPARE(query.value(0).toInt(), 1);
+        query.finish();
+        QVERIFY(query.exec("SELECT COUNT(*) FROM device_control_records WHERE request_id=81 AND order_id=" +
+                           QString::number(qint64(second.payload.value("orderId").toDouble()))));
+        QVERIFY(query.next());
+        QCOMPARE(query.value(0).toInt(), 0);
+    }
+}
+
+void ServiceTest::adminRestartRejectsEveryActiveReservation()
+{
+    for (const auto &status : QStringList{"reserved", "idle", "offline", "fault"})
+    {
+        AdminFixture f;
+        QVERIFY(f.open());
+        const auto reservation =
+            ReservationService(&f.database).create(f.user(), {{"stationId", 1}, {"pileId", 1}});
+        QVERIFY(reservation.succeeded());
+        QVERIFY(PileRepository(&f.database).updateStatus(1, "reserved", status, &f.error));
+        const auto result =
+            AdminService(&f.database).execute(1, 1, {{"action", "pile.restart"}, {"pileId", 1}}, nullptr);
+        QCOMPARE(result.error, ErrorCode::Conflict);
+        QCOMPARE(result.reason, QString("command_conflict"));
+        PileRecord pile;
+        QVERIFY(PileRepository(&f.database).findById(1, &pile, &f.error));
+        QCOMPARE(pile.status, status);
+    }
+}
+
+void ServiceTest::adminDeviceChangeRollsBackWithAudit()
+{
+    AdminFixture f;
+    QVERIFY(f.open());
+    QSqlQuery query(f.database.database());
+    QVERIFY(query.exec("CREATE TRIGGER reject_final_audit BEFORE UPDATE ON device_control_records BEGIN "
+                       "SELECT RAISE(ABORT,'audit failure'); END"));
+    QCOMPARE(
+        AdminService(&f.database).execute(1, 1, {{"action", "pile.disable"}, {"pileId", 1}}, nullptr).error,
+        ErrorCode::DatabaseError);
+    PileRecord pile;
+    QVERIFY(PileRepository(&f.database).findById(1, &pile, &f.error));
+    QCOMPARE(pile.status, QString("idle"));
+}
+
+void ServiceTest::adminRepositorySnapshotsSurviveConcurrentChanges()
+{
+    AdminFixture f;
+    QVERIFY(f.open());
+    const auto user = f.user();
+    QSqlQuery seed(f.database.database());
+    QVERIFY(seed.exec(
+        QString(
+            "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<250) "
+            "INSERT INTO "
+            "charging_orders(order_no,user_id,station_id,pile_id,status,started_at,stopped_at,unit_price_"
+            "cents,fee_cents) "
+            "SELECT 'snapshot-'||x,%1,1,1,'completed','2026-01-01T00:00:00Z','2026-01-01T00:01:00Z',120,120 "
+            "FROM n")
+            .arg(user)));
+    QVERIFY(seed.exec("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<250) "
+                      "INSERT INTO alarms(pile_id,alarm_type,severity,message,status) SELECT "
+                      "1,'test','warning','snapshot-'||x,'open' FROM n"));
+    DatabaseManager writer;
+    QVERIFY(writer.open(f.database.databasePath(), &f.error));
+    QSqlQuery change(writer.database());
+    QSet<qint64> orderIds;
+    qint64 revenue = 0;
+    bool changedOrders = false;
+    QVERIFY(
+        OrderRepository(&f.database)
+            .visitSnapshot(
+                [&](const OrderRecord &order)
+                {
+                    orderIds.insert(order.id);
+                    revenue += order.feeCents;
+                    if (orderIds.size() == 200)
+                    {
+                        changedOrders =
+                            change.exec(
+                                "UPDATE charging_orders SET status='cancelled',fee_cents=999 WHERE id=1") &&
+                            change.exec(QString("INSERT INTO "
+                                                "charging_orders(order_no,user_id,station_id,pile_id,status,"
+                                                "started_at,unit_price_cents,fee_cents) "
+                                                "VALUES('snapshot-new',%1,1,1,'completed','2026-01-01T00:00:"
+                                                "00Z',120,777)")
+                                            .arg(user));
+                    }
+                    return true;
+                },
+                &f.error));
+    QVERIFY(changedOrders);
+    QCOMPARE(orderIds.size(), 250);
+    QVERIFY(orderIds.contains(1));
+    QVERIFY(!orderIds.contains(251));
+    QCOMPARE(revenue, 30000);
+    QSet<qint64> alarmIds;
+    bool changedAlarms = false;
+    QVERIFY(AlarmRepository(&f.database)
+                .visitSnapshot(
+                    "open",
+                    [&](const AlarmRecord &alarm)
+                    {
+                        alarmIds.insert(alarm.id);
+                        if (alarm.status != "open")
+                            return false;
+                        if (alarmIds.size() == 200)
+                        {
+                            changedAlarms =
+                                change.exec("UPDATE alarms SET status='resolved' WHERE id=1") &&
+                                change.exec("INSERT INTO alarms(pile_id,alarm_type,severity,message,status) "
+                                            "VALUES(1,'test','warning','new','open')");
+                        }
+                        return true;
+                    },
+                    &f.error));
+    QVERIFY(changedAlarms);
+    QCOMPARE(alarmIds.size(), 250);
+    QVERIFY(alarmIds.contains(1));
+    QVERIFY(!alarmIds.contains(251));
+    const auto orders =
+        AdminService(&f.database)
+            .execute(1, 1, {{"action", "order.list"}, {"page", 3}, {"pageSize", 100}}, nullptr);
+    QCOMPARE(orders.payload.value("total").toInt(), 251);
+    QCOMPARE(orders.payload.value("items").toArray().size(), 51);
+    const auto alarms =
+        AdminService(&f.database)
+            .execute(1, 2, {{"action", "alarm.list"}, {"status", "open"}, {"page", 3}, {"pageSize", 100}},
+                     nullptr);
+    QCOMPARE(alarms.payload.value("total").toInt(), 250);
+    QCOMPARE(alarms.payload.value("items").toArray().size(), 50);
+}
+
+void ServiceTest::adminStatisticsRejectsOverflow()
+{
+    AdminFixture f;
+    QVERIFY(f.open());
+    const auto user = f.user();
+    QSqlQuery query(f.database.database());
+    query.prepare("INSERT INTO "
+                  "charging_orders(order_no,user_id,station_id,pile_id,status,started_at,stopped_at,unit_"
+                  "price_cents,fee_cents,energy_wh) "
+                  "VALUES(?,?,1,1,'completed',strftime('%Y-%m-%dT%H:%M:%SZ','now'),strftime('%Y-%m-%dT%H:%M:%"
+                  "SZ','now'),120,?,1000)");
+    for (int i = 0; i < 2; ++i)
+    {
+        query.bindValue(0, QString("overflow-%1").arg(i));
+        query.bindValue(1, user);
+        query.bindValue(2, std::numeric_limits<qint64>::max() - 10);
+        QVERIFY(query.exec());
+    }
+    StatisticsService stats(&f.database);
+    QCOMPARE(stats.summary({}).reason, QString("statistics_overflow"));
+    QCOMPARE(stats.revenueTrend({}).reason, QString("statistics_overflow"));
+    QVERIFY(query.exec("UPDATE charging_orders SET fee_cents=120,energy_wh=9223372036854775797"));
+    QCOMPARE(stats.summary({}).reason, QString("statistics_overflow"));
+}
+
+void ServiceTest::adminExportHonorsEncodedTransportLimit()
+{
+    AdminFixture f;
+    QVERIFY(f.open());
+    const auto user = f.user();
+    qint64 id, balance;
+    OrderRepository orders(&f.database);
+    QVERIFY(orders.createChargingOrder("export-limit", user, 1, 0, &id, &f.error));
+    QVERIFY(orders.stopAndSettle(id, 60, 1000, 120, "completed", "test", &balance, &f.error));
+    QSqlQuery query(f.database.database());
+    query.prepare("UPDATE charging_orders SET order_no=? WHERE id=?");
+    // A 1 MiB fixture expands to roughly 4 MiB after CSV quote escaping and
+    // JSON escaping, so this tests wire bytes rather than QString length.
+    query.bindValue(0, QString(1047500, '"'));
+    query.bindValue(1, id);
+    QVERIFY(query.exec());
+    AdminService admin(&f.database);
+    auto near = admin.execute(1, 1, {{"action", "report.export"}}, nullptr);
+    QVERIFY(near.succeeded());
+    auto envelope = near.payload;
+    envelope.insert("message", near.message);
+    auto packet = Charging::PacketCodec::encode(Charging::MessageType::AdminCommandResponse, 1, envelope);
+    QVERIFY(packet.size() < Charging::MessageHeader::MaxPayloadLength);
+    QVERIFY(packet.size() > Charging::MessageHeader::MaxPayloadLength - 10000);
+    QCOMPARE(Charging::PacketCodec::tryDecode(packet).status, Charging::DecodeStatus::Complete);
+    query.bindValue(0, QString(1048576, '"'));
+    QVERIFY(query.exec());
+    const auto over = admin.execute(1, 2, {{"action", "report.export"}}, nullptr);
+    QCOMPARE(over.error, ErrorCode::RateLimited);
+    QCOMPARE(over.reason, QString("export_too_large"));
+    QVERIFY(!over.payload.contains("content"));
+}
+
+void ServiceTest::adminExportKeepsLargeIntegers()
+{
+    AdminFixture f;
+    QVERIFY(f.open());
+    const auto user = f.user();
+    QSqlQuery query(f.database.database());
+    QVERIFY(query.exec(QString("INSERT INTO "
+                               "charging_orders(order_no,user_id,station_id,pile_id,status,started_at,unit_"
+                               "price_cents,fee_cents,energy_wh) "
+                               "VALUES('large-integers',%1,1,1,'completed','2026-01-01T00:00:00Z',120,"
+                               "9223372036854775807,9007199254740993)")
+                           .arg(user)));
+    const auto result = AdminService(&f.database).execute(1, 1, {{"action", "report.export"}}, nullptr);
+    QVERIFY(result.succeeded());
+    QVERIFY(
+        result.payload.value("content").toString().contains("\"9007199254740993\",\"9223372036854775807\""));
 }
 
 QTEST_GUILESS_MAIN(ServiceTest)

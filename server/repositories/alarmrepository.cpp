@@ -125,6 +125,48 @@ bool AlarmRepository::list(const QString &status, int limit, int offset, QList<A
     return true;
 }
 
+bool AlarmRepository::visitSnapshot(const QString &status,
+                                    const std::function<bool(const AlarmRecord &)> &visitor,
+                                    QString *error) const
+{
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen())
+        return false;
+    QSqlQuery query(db);
+    query.setForwardOnly(true);
+    QString sql = QStringLiteral("SELECT %1 FROM alarms").arg(alarmColumns());
+    if (!status.isEmpty())
+        sql += QStringLiteral(" WHERE status=?");
+    sql += QStringLiteral(" ORDER BY julianday(occurred_at) DESC,id DESC");
+    query.prepare(sql);
+    if (!status.isEmpty())
+        query.addBindValue(status);
+    if (!query.exec())
+    {
+        if (error)
+            *error = query.lastError().text();
+        return false;
+    }
+    while (query.next())
+    {
+        AlarmRecord record;
+        readAlarm(query, &record);
+        if (!visitor(record))
+        {
+            if (error)
+                *error = QStringLiteral("告警快照读取已中止");
+            return false;
+        }
+    }
+    if (query.lastError().isValid())
+    {
+        if (error)
+            *error = query.lastError().text();
+        return false;
+    }
+    return true;
+}
+
 bool AlarmRepository::updateStatus(qint64 alarmId, const QString &status, qint64 adminId,
                                    QString *error) const
 {

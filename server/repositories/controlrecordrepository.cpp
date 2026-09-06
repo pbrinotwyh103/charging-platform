@@ -1,6 +1,7 @@
 #include "repositories/controlrecordrepository.h"
 
 #include "database/databasemanager.h"
+#include "repositories/pilerepository.h"
 
 #include <QSqlError>
 #include <QSqlQuery>
@@ -58,25 +59,22 @@ bool ControlRecordRepository::finish(qint64 recordId, const QString &result, con
     return true;
 }
 
-bool ControlRecordRepository::findSuccess(qint64 adminId, quint32 requestId, const QString &commandType,
-                                          qint64 pileId, qint64 orderId, const QString &requestScope,
-                                          QString *detail, QString *error) const
+bool ControlRecordRepository::findAttempt(qint64 adminId, quint32 requestId, const QString &commandType,
+                                          qint64 requestedPileId, qint64 requestedOrderId,
+                                          const QString &requestScope, ControlAttemptRecord *record,
+                                          QString *error) const
 {
-    detail->clear();
+    *record = {};
     QSqlDatabase db = database()->database(error);
     if (!db.isValid() || !db.isOpen())
         return false;
     QSqlQuery query(db);
-    query.prepare(
-        QStringLiteral("SELECT detail FROM device_control_records WHERE admin_id=? AND request_id=? "
-                       "AND command_type=? AND COALESCE(pile_id,0)=? AND (?=0 OR COALESCE(order_id,0)=?) AND "
-                       "result='success' ORDER BY id DESC"));
+    query.prepare(QStringLiteral("SELECT id,pile_id,order_id,result,detail FROM device_control_records "
+                                 "WHERE admin_id=? AND request_id=? AND command_type=? "
+                                 "ORDER BY CASE WHEN result='pending' THEN 1 ELSE 0 END,id DESC"));
     query.addBindValue(adminId);
     query.addBindValue(requestId);
     query.addBindValue(commandType);
-    query.addBindValue(pileId);
-    query.addBindValue(orderId);
-    query.addBindValue(orderId);
     if (!query.exec())
     {
         if (error)
@@ -85,19 +83,28 @@ bool ControlRecordRepository::findSuccess(qint64 adminId, quint32 requestId, con
     }
     while (query.next())
     {
-        const auto candidate = query.value(0).toString();
-        const auto request = QJsonDocument::fromJson(candidate.toUtf8()).object().value("request").toObject();
-        if (request.value("_requestScope").toString() == requestScope)
+        const auto detail = QJsonDocument::fromJson(query.value(4).toByteArray()).object();
+        const auto request = detail.value("request").toObject();
+        // Match the original request target, not a newly active order on the pile.
+        if (request.value("_requestScope").toString() == requestScope &&
+            request.value("pileId").toInteger() == requestedPileId &&
+            request.value("orderId").toInteger() == requestedOrderId)
         {
-            *detail = candidate;
+            record->id = query.value(0).toLongLong();
+            record->pileId = query.value(1).toLongLong();
+            record->orderId = query.value(2).toLongLong();
+            record->result = query.value(3).toString();
+            record->detail = detail;
             break;
         }
     }
     return true;
 }
 
-bool ControlRecordRepository::applyPileCommand(qint64 pileId, const QString &command, QString *reason,
-                                               QString *error) const
+bool ControlRecordRepository::applyPileCommand(
+    qint64 pileId, const QString &command,
+    const std::function<bool(const PileRecord &, QString *)> &persistResult, QString *reason,
+    QString *error) const
 {
     reason->clear();
     QSqlDatabase db = database()->database(error);
@@ -138,8 +145,7 @@ bool ControlRecordRepository::applyPileCommand(qint64 pileId, const QString &com
     const bool activeOrder = query.value(1).toBool();
     const bool activeReservation = query.value(2).toBool();
     query.finish();
-    if (status == "charging" || activeOrder ||
-        (command != "pile.restart" && (status == "reserved" || activeReservation)))
+    if (status == "charging" || activeOrder || status == "reserved" || activeReservation)
     {
         db.rollback();
         *reason = "command_conflict";
@@ -178,6 +184,11 @@ bool ControlRecordRepository::applyPileCommand(qint64 pileId, const QString &com
     query.addBindValue(pileId);
     if (!query.exec() || query.numRowsAffected() != 1)
         return fail(query.lastError().text());
+    PileRecord pile;
+    QString resultError;
+    if (!PileRepository(database()).findById(pileId, &pile, &resultError) ||
+        !persistResult(pile, &resultError))
+        return fail(resultError);
     if (!db.commit())
         return fail(db.lastError().text());
     return true;

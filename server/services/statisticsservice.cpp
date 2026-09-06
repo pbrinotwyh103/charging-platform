@@ -10,6 +10,18 @@ using namespace AdminServiceHelpers;
 
 namespace
 {
+bool addChecked(qint64 *sum, qint64 value)
+{
+    if (value < 0 || *sum > std::numeric_limits<qint64>::max() - value)
+        return false;
+    *sum += value;
+    return true;
+}
+ServiceResult overflow()
+{
+    return failure(Charging::ErrorCode::DatabaseError, QStringLiteral("统计数值超出支持范围"),
+                   "statistics_overflow");
+}
 QJsonObject pileCounts(const QList<PileRecord> &piles)
 {
     QJsonObject result{{"available", 0}, {"reserved", 0}, {"charging", 0},
@@ -17,7 +29,7 @@ QJsonObject pileCounts(const QList<PileRecord> &piles)
     for (const auto &pile : piles)
     {
         const QString status = pile.status == "idle" ? QString("available") : pile.status;
-        result.insert(status, result.value(status).toInt() + 1);
+        result.insert(status, result.value(status).toInteger() + 1);
     }
     result.insert("idle", result.value("available")); // Existing chart uses the database name.
     result.insert("total", piles.size());
@@ -45,7 +57,7 @@ ServiceResult StatisticsService::summary(const QJsonObject &)
         return databaseError();
     const QDate today = QDateTime::currentDateTimeUtc().date();
     qint64 revenue = 0, todayRevenue = 0, monthRevenue = 0, energy = 0;
-    int todayOrders = 0, monthOrders = 0, active = 0;
+    qint64 todayOrders = 0, monthOrders = 0, active = 0;
     for (const auto &order : orders)
     {
         const QDate date = QDateTime::fromString(order.startedAt, Qt::ISODate).date();
@@ -58,16 +70,15 @@ ServiceResult StatisticsService::summary(const QJsonObject &)
         if (!settled(order))
             continue;
         const QDate paid = QDateTime::fromString(order.stoppedAt, Qt::ISODate).date();
-        revenue += order.feeCents;
-        energy += order.energyWh;
-        if (paid == today)
-            todayRevenue += order.feeCents;
-        if (paid.year() == today.year() && paid.month() == today.month())
-            monthRevenue += order.feeCents;
+        if (!addChecked(&revenue, order.feeCents) || !addChecked(&energy, order.energyWh) ||
+            (paid == today && !addChecked(&todayRevenue, order.feeCents)) ||
+            (paid.year() == today.year() && paid.month() == today.month() &&
+             !addChecked(&monthRevenue, order.feeCents)))
+            return overflow();
     }
-    const QJsonObject revenueMetrics{{"totalRevenueCents", double(revenue)},
-                                     {"todayRevenueCents", double(todayRevenue)},
-                                     {"monthRevenueCents", double(monthRevenue)}};
+    const QJsonObject revenueMetrics{{"totalRevenueCents", revenue},
+                                     {"todayRevenueCents", todayRevenue},
+                                     {"monthRevenueCents", monthRevenue}};
     const QJsonObject orderMetrics{{"totalOrderCount", orders.size()},
                                    {"todayOrderCount", todayOrders},
                                    {"monthOrderCount", monthOrders},
@@ -100,12 +111,13 @@ ServiceResult StatisticsService::revenueTrend(const QJsonObject &payload)
     if (!allOrders(database(), &orders, &error))
         return databaseError();
     QMap<QDate, qint64> revenue;
-    QMap<QDate, int> counts;
+    QMap<QDate, qint64> counts;
     for (const auto &order : orders)
     {
         ++counts[QDateTime::fromString(order.startedAt, Qt::ISODate).date()];
-        if (settled(order))
-            revenue[QDateTime::fromString(order.stoppedAt, Qt::ISODate).date()] += order.feeCents;
+        if (settled(order) &&
+            !addChecked(&revenue[QDateTime::fromString(order.stoppedAt, Qt::ISODate).date()], order.feeCents))
+            return overflow();
     }
     QJsonArray points;
     const QDate today = QDateTime::currentDateTimeUtc().date();
@@ -113,7 +125,7 @@ ServiceResult StatisticsService::revenueTrend(const QJsonObject &payload)
     {
         const auto date = today.addDays(-i);
         points.append(QJsonObject{{"date", date.toString(Qt::ISODate)},
-                                  {"revenueCents", double(revenue.value(date))},
+                                  {"revenueCents", revenue.value(date)},
                                   {"orderCount", counts.value(date)}});
     }
     ServiceResult result;

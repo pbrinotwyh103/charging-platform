@@ -10,18 +10,13 @@ namespace AdminServiceHelpers
 inline bool allOrders(DatabaseManager *database, QList<OrderRecord> *records, QString *error)
 {
     records->clear();
-    OrderRepository repository(database);
-    for (int offset = 0;; offset += 200)
-    {
-        QList<OrderRecord> batch;
-        if (!repository.list({}, 200, offset, &batch, error))
-            return false;
-        records->append(batch);
-        if (batch.size() < 200)
+    return OrderRepository(database).visitSnapshot(
+        [&](const OrderRecord &record)
+        {
+            records->append(record);
             return true;
-        if (offset > std::numeric_limits<int>::max() - 200)
-            return false;
-    }
+        },
+        error);
 }
 inline bool allPiles(DatabaseManager *database, QList<PileRecord> *records, QString *error)
 {

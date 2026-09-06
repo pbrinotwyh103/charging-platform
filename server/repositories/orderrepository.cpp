@@ -187,6 +187,33 @@ bool OrderRepository::listActive(QList<OrderRecord> *records, QString *error) co
     return true;
 }
 
+bool OrderRepository::visitSnapshot(const std::function<bool(const OrderRecord &)> &visitor,
+                                     QString *error) const
+{
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    query.setForwardOnly(true);
+    if (!query.exec(QStringLiteral("SELECT %1 FROM charging_orders ORDER BY julianday(created_at) DESC,id DESC")
+                        .arg(orderColumns()))) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    while (query.next()) {
+        OrderRecord record;
+        readOrder(query, &record);
+        if (!visitor(record)) {
+            if (error) *error = QStringLiteral("订单快照读取已中止");
+            return false;
+        }
+    }
+    if (query.lastError().isValid()) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    return true;
+}
+
 bool OrderRepository::list(const QString &status, int limit, int offset,
                            QList<OrderRecord> *records, QString *error) const
 {

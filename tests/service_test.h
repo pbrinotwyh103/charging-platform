@@ -51,6 +51,13 @@ private slots:
     void adminControlReplayAndClientMetadata();
     void adminAlarmDetailSurvivesListFilters();
     void adminControlReplayIsScopedToConnection();
+    void adminStopRetryAfterAuditFailureKeepsOriginalOrder();
+    void adminRestartRejectsEveryActiveReservation();
+    void adminDeviceChangeRollsBackWithAudit();
+    void adminRepositorySnapshotsSurviveConcurrentChanges();
+    void adminStatisticsRejectsOverflow();
+    void adminExportHonorsEncodedTransportLimit();
+    void adminExportKeepsLargeIntegers();
 private:
     qint64 createUser(const QString &phone);
     QTemporaryDir m_directory;

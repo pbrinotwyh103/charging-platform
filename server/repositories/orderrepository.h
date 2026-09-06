@@ -4,6 +4,7 @@
 
 #include <QList>
 #include <QString>
+#include <functional>
 
 struct OrderRecord {
     qint64 id = 0;
@@ -29,6 +30,9 @@ class OrderRepository final : public RepositoryBase
 {
 public:
     using RepositoryBase::RepositoryBase;
+    // One SQLite statement pins row membership and values for the whole visit.
+    // Return false from visitor to abort the scan.
+    bool visitSnapshot(const std::function<bool(const OrderRecord &)> &visitor, QString *error) const;
     bool stopAndSettle(qint64 orderId, qint64 durationSeconds, qint64 energyWh,
                        qint64 feeCents, const QString &finalStatus, const QString &reason,
                        qint64 *balanceAfterCents, QString *error) const;

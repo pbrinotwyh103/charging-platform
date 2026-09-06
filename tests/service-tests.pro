@@ -7,6 +7,7 @@ DESTDIR = $$OUT_PWD/../bin
 INCLUDEPATH += ../server ../common
 HEADERS += service_test.h
 SOURCES += service_test.cpp \
+    ../common/protocol/packetcodec.cpp \
     ../server/services/userservice.cpp \
     ../server/services/stationservice.cpp \
     ../server/services/pileservice.cpp \

@@ -6,6 +6,7 @@
 #include "repositories/userrepository.h"
 #include "repositories/alarmrepository.h"
 #include "repositories/controlrecordrepository.h"
+#include "protocol/message.h"
 #include <QDateTime>
 #include <QHash>
 #include <QJsonDocument>
@@ -166,6 +167,22 @@ ServiceResult AdminService::execute(qint64 adminId, quint32 requestId, const QJs
     }
     if (result.succeeded() && result.message.isEmpty())
         result.message = result.payload.value("message").toString(QStringLiteral("操作成功"));
+    if (action == "report.export" && result.succeeded())
+    {
+        // Match PacketCodec's compact UTF-8 JSON, including the envelope fields
+        // the dispatcher adds. Reserve 1 KiB plus the binary header so the
+        // entire reply remains below the 4 MiB transport ceiling.
+        auto envelope = result.payload;
+        envelope.insert("message", result.message);
+        const qsizetype encodedBytes = QJsonDocument(envelope).toJson(QJsonDocument::Compact).size();
+        constexpr qsizetype reserve = Charging::MessageHeader::SerializedSize + 1024;
+        if (encodedBytes > Charging::MessageHeader::MaxPayloadLength - reserve)
+        {
+            result = failure(ErrorCode::RateLimited, QStringLiteral("导出结果过大，请缩小日期或订单筛选范围"),
+                             "export_too_large");
+            result.payload.insert("action", payload.value("action"));
+        }
+    }
     return result;
 }
 
@@ -409,6 +426,10 @@ ServiceResult AdminService::orders(qint64, quint32, const QJsonObject &payload, 
             !StationRepository(database()).findById(order.stationId, &station, &error))
             return databaseError();
         auto item = OrderService::snapshot(order);
+        // Preserve integer values in CSV and JSON even beyond double's exact
+        // integer range; never round a qint64 through double and cast it back.
+        item.insert("energyWh", order.energyWh);
+        item.insert("feeCents", order.feeCents);
         item.insert("phone", user.phone);
         item.insert("nickname", user.nickname);
         item.insert("pileCode", pile.pileCode);
@@ -428,10 +449,12 @@ ServiceResult AdminService::orders(qint64, quint32, const QJsonObject &payload, 
         QStringList cells;
         for (const auto &key : QStringList{"orderNo", "phone", "stationName", "pileCode", "status",
                                            "energyWh", "feeCents", "startedAt", "stoppedAt"})
-            cells.append(csvCell(item.value(key).isDouble()
-                                     ? QString::number(qint64(item.value(key).toDouble()))
-                                     : item.value(key).toString()));
+            cells.append(csvCell(item.value(key).isDouble() ? QString::number(item.value(key).toInteger())
+                                                            : item.value(key).toString()));
         content += cells.join(',') + "\r\n";
+        if (content.size() > Charging::MessageHeader::MaxPayloadLength)
+            return failure(ErrorCode::RateLimited, QStringLiteral("导出结果过大，请缩小日期或订单筛选范围"),
+                           "export_too_large");
     }
     const auto filename = "orders-" + QDateTime::currentDateTimeUtc().toString("yyyyMMdd-HHmmss") + ".csv";
     ServiceResult result;
@@ -462,17 +485,15 @@ ServiceResult AdminService::alarms(qint64 adminId, quint32, const QJsonObject &p
     {
         if (!pagination(payload, &page))
             return invalid();
-        for (int offset = 0;; offset += 200)
-        {
-            QList<AlarmRecord> batch;
-            if (!repository.list(status, 200, offset, &batch, &error))
-                return databaseError();
-            records.append(batch);
-            if (batch.size() < 200)
-                break;
-            if (offset > std::numeric_limits<int>::max() - 200)
-                return databaseError();
-        }
+        if (!repository.visitSnapshot(
+                status,
+                [&](const AlarmRecord &alarm)
+                {
+                    records.append(alarm);
+                    return true;
+                },
+                &error))
+            return databaseError();
     }
     else
     {
@@ -534,59 +555,67 @@ ServiceResult AdminService::control(qint64 adminId, quint32 requestId, const QJs
     PileRecord pile;
     OrderRecord order;
     ServiceResult result;
-    if (action == "pile.invalid" || (payload.contains("pileId") && !pileId) ||
-        (payload.contains("orderId") && !orderId) || (!pileId && !(action == "pile.stop" && orderId)))
-        result = invalid();
-    if (result.succeeded() && orderId)
-    {
-        if (!OrderRepository(database()).findById(orderId, &order, &error))
-            result = databaseError();
-        else if (!order.id)
-            result = missing(QStringLiteral("订单"));
-        else if (pileId && order.pileId != pileId)
-            result = commandConflict();
-        else
-            pileId = order.pileId;
-    }
-    if (result.succeeded())
-    {
-        if (!PileRepository(database()).findById(pileId, &pile, &error))
-            result = databaseError();
-        else if (!pile.id)
-            result = missing(QStringLiteral("电桩"));
-    }
-    QString previous;
-    if (result.succeeded() &&
-        !audit.findSuccess(adminId, requestId, action, pileId, orderId,
+    ControlAttemptRecord previous;
+    if (!audit.findAttempt(adminId, requestId, action, pileId, orderId,
                            payload.value("_requestScope").toString(), &previous, &error))
-        result = databaseError();
-    if (result.succeeded() && !previous.isEmpty() && action == "pile.stop" && !orderId)
+        return databaseError();
+    bool replay = false;
+    if (previous.id)
     {
-        orderId = qint64(QJsonDocument::fromJson(previous.toUtf8())
-                             .object()
-                             .value("payload")
-                             .toObject()
-                             .value("orderId")
-                             .toDouble());
-        if (!OrderRepository(database()).findById(orderId, &order, &error))
-            result = databaseError();
-    }
-    if (result.succeeded() && previous.isEmpty() && action == "pile.stop" && !orderId)
-    {
-        QList<OrderRecord> active;
-        if (!OrderRepository(database()).listActive(&active, &error))
-            result = databaseError();
-        else
+        // Resolve the original durable attempt before inspecting today's pile
+        // state. A pending stop is permanently bound to its original order.
+        pileId = qint64(previous.detail.value("pileId").toDouble());
+        orderId = qint64(previous.detail.value("orderId").toDouble());
+        if (previous.result == "success" || !previous.detail.value("eligible").toBool(orderId > 0))
         {
-            for (const auto &candidate : active)
-                if (candidate.pileId == pileId)
-                {
-                    order = candidate;
-                    orderId = order.id;
-                    break;
-                }
-            if (!orderId)
-                result = failure(ErrorCode::Conflict, QStringLiteral("电桩没有活动订单"), "order_not_active");
+            result.error = ErrorCode(previous.detail.value("statusCode").toInt());
+            result.message = previous.detail.value("message").toString();
+            result.reason = previous.detail.value("reason").toString();
+            result.payload = previous.detail.value("payload").toObject();
+            replay = true;
+        }
+    }
+    if (!previous.id)
+    {
+        if (action == "pile.invalid" || (payload.contains("pileId") && !pileId) ||
+            (payload.contains("orderId") && !orderId) || (!pileId && !(action == "pile.stop" && orderId)))
+            result = invalid();
+        if (result.succeeded() && orderId)
+        {
+            if (!OrderRepository(database()).findById(orderId, &order, &error))
+                result = databaseError();
+            else if (!order.id)
+                result = missing(QStringLiteral("订单"));
+            else if (pileId && order.pileId != pileId)
+                result = commandConflict();
+            else
+                pileId = order.pileId;
+        }
+        if (result.succeeded())
+        {
+            if (!PileRepository(database()).findById(pileId, &pile, &error))
+                result = databaseError();
+            else if (!pile.id)
+                result = missing(QStringLiteral("电桩"));
+        }
+        if (result.succeeded() && action == "pile.stop" && !orderId)
+        {
+            QList<OrderRecord> active;
+            if (!OrderRepository(database()).listActive(&active, &error))
+                result = databaseError();
+            else
+            {
+                for (const auto &candidate : active)
+                    if (candidate.pileId == pileId)
+                    {
+                        order = candidate;
+                        orderId = order.id;
+                        break;
+                    }
+                if (!orderId)
+                    result =
+                        failure(ErrorCode::Conflict, QStringLiteral("电桩没有活动订单"), "order_not_active");
+            }
         }
     }
     QJsonObject detail{{"request", payload},
@@ -594,6 +623,15 @@ ServiceResult AdminService::control(qint64 adminId, quint32 requestId, const QJs
                        {"pileId", double(pileId)},
                        {"orderId", double(orderId)},
                        {"requestId", double(requestId)}};
+    detail.insert("eligible", result.succeeded());
+    auto rememberOutcome = [&]
+    {
+        detail.insert("payload", result.payload);
+        detail.insert("statusCode", int(result.error));
+        detail.insert("reason", result.reason);
+        detail.insert("message", result.message);
+    };
+    rememberOutcome();
     auto encode = [](const QJsonObject &object)
     { return QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact)); };
     qint64 recordId = 0;
@@ -602,36 +640,44 @@ ServiceResult AdminService::control(qint64 adminId, quint32 requestId, const QJs
     if (!audit.insert(adminId, pileId, orderId, action, requestId, "pending", encode(detail), &recordId,
                       &error))
         return databaseError();
-    if (result.succeeded() && !previous.isEmpty())
-    {
-        result.payload = QJsonDocument::fromJson(previous.toUtf8()).object().value("payload").toObject();
-    }
-    else if (result.succeeded() && action == "pile.stop")
+    bool finalized = false;
+    if (!replay && result.succeeded() && action == "pile.stop")
     {
         if (!charging)
             result = failure(ErrorCode::InternalError, QStringLiteral("充电服务不可用"));
         else
             result = charging->stop(adminId, Charging::Role::Administrator, {{"orderId", double(orderId)}});
     }
-    else if (result.succeeded())
+    else if (!replay && result.succeeded())
     {
         QString reason;
-        if (!audit.applyPileCommand(pileId, action, &reason, &error))
+        const auto persistResult = [&](const PileRecord &savedPile, QString *auditError)
+        {
+            result.payload = pileJson(savedPile);
+            rememberOutcome();
+            return audit.finish(recordId, "success", encode(detail), auditError);
+        };
+        if (!audit.applyPileCommand(pileId, action, persistResult, &reason, &error))
             result = databaseError();
         else if (reason == "not_found")
             result = missing(QStringLiteral("电桩"));
         else if (!reason.isEmpty())
             result = commandConflict();
-        else if (!PileRepository(database()).findById(pileId, &pile, &error))
-            result = databaseError();
         else
-            result.payload = pileJson(pile);
+            finalized = true;
     }
-    detail.insert("payload", result.payload);
-    detail.insert("statusCode", int(result.error));
-    detail.insert("reason", result.reason);
-    detail.insert("message", result.message);
+    if (finalized)
+        return result;
+    rememberOutcome();
     if (!audit.finish(recordId, result.succeeded() ? "success" : "failure", encode(detail), &error))
+    {
+        // Preserve the exact result as an append-only recovery record when an
+        // UPDATE is unavailable. If this insert also fails, the original pending
+        // record still binds a stop to the settled order and its payment ledger.
+        detail.insert("recoveryOf", double(recordId));
+        audit.insert(adminId, pileId, orderId, action, requestId, result.succeeded() ? "success" : "failure",
+                     encode(detail), nullptr, &error);
         return databaseError();
+    }
     return result;
 }
