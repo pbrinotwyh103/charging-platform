@@ -95,4 +95,15 @@ void UserUiTest::mapUrlCarriesTravelModeAndCoordinates()
     qunsetenv("TENCENT_MAP_KEY");
 }
 
+void UserUiTest::compactAppVisualShellIsPresent()
+{
+    UserMainWindow window;
+    auto *shell = window.findChild<QWidget *>(QStringLiteral("userAppShell"));
+    auto *card = window.findChild<QWidget *>(QStringLiteral("userLoginCard"));
+    QVERIFY(shell);
+    QVERIFY(card);
+    QVERIFY(card->minimumHeight() >= 360);
+    QVERIFY(window.minimumWidth() <= 360);
+}
+
 QTEST_MAIN(UserUiTest)

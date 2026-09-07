@@ -48,6 +48,33 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
   heading->setObjectName(QStringLiteral("pageTitle"));
   layout->addWidget(heading);
 
+  auto *hero = new QFrame(content);
+  hero->setObjectName(QStringLiteral("overviewHero"));
+  hero->setMinimumHeight(116);
+  auto *heroLayout = new QGridLayout(hero);
+  heroLayout->setContentsMargins(20, 16, 20, 16);
+  heroLayout->setHorizontalSpacing(12);
+  heroLayout->setVerticalSpacing(8);
+  auto *heroTitle = new QLabel(QStringLiteral("汽车充电桩数据分析可视化大屏"), hero);
+  heroTitle->setObjectName(QStringLiteral("overviewHeroTitle"));
+  auto *heroSubtitle = new QLabel(
+      QStringLiteral("从需求矩阵到运营闭环：订单、设备、告警和营收在同一工作台汇总"), hero);
+  heroSubtitle->setObjectName(QStringLiteral("overviewHeroSubtitle"));
+  heroSubtitle->setWordWrap(true);
+  auto *chipDemand = new QLabel(QStringLiteral("需求覆盖 65 项"), hero);
+  chipDemand->setObjectName(QStringLiteral("overviewHeroChip"));
+  auto *chipProtocol = new QLabel(QStringLiteral("TCP/JSON 协议"), hero);
+  chipProtocol->setObjectName(QStringLiteral("overviewHeroChip"));
+  auto *chipRuntime = new QLabel(QStringLiteral("1s 充电推送"), hero);
+  chipRuntime->setObjectName(QStringLiteral("overviewHeroChip"));
+  heroLayout->addWidget(heroTitle, 0, 0, 1, 3);
+  heroLayout->addWidget(heroSubtitle, 1, 0, 1, 3);
+  heroLayout->addWidget(chipDemand, 2, 0);
+  heroLayout->addWidget(chipProtocol, 2, 1);
+  heroLayout->addWidget(chipRuntime, 2, 2);
+  heroLayout->setColumnStretch(3, 1);
+  layout->addWidget(hero);
+
   auto *metrics = new QGridLayout;
   metrics->setHorizontalSpacing(8);
   metrics->setVerticalSpacing(8);

@@ -8,6 +8,7 @@
 #include "map/mapnavigator.h"
 
 #include <QFormLayout>
+#include <QFrame>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -66,30 +67,47 @@ UserMainWindow::UserMainWindow(QWidget *parent)
     resize(390, 780);
     setMinimumSize(360, 640);
     setStyleSheet(QStringLiteral(
-        "QMainWindow,QWidget{background:#f8fafc;color:#0f172a;}"
-        "QLineEdit,QSpinBox,QDoubleSpinBox,QComboBox,QListWidget,QTabWidget::pane{background:white;border:1px solid #dbe3ee;border-radius:8px;padding:6px;}"
-        "QPushButton{background:#e2e8f0;border:0;border-radius:8px;padding:9px 12px;font-weight:600;}"
-        "QPushButton:hover{background:#cbd5e1;}"
+        "QMainWindow,QWidget{background:#f5fbff;color:#102033;font-family:\"PingFang SC\",\"Microsoft YaHei\",\"Arial\";font-size:14px;}"
+        "QWidget#userAppShell{background:#f5fbff;}"
+        "QFrame#userLoginCard{background:#ffffff;border:1px solid #dceafe;border-radius:24px;}"
+        "QLabel#userAppTitle{font-size:28px;font-weight:900;color:#073b4c;}"
+        "QLabel#userAppSubtitle{font-size:13px;color:#5b708c;}"
+        "QLabel#userLoginHero{font-size:18px;font-weight:900;color:#102033;}"
+        "QLabel#userLoginHint{font-size:13px;color:#64748b;}"
+        "QLineEdit,QSpinBox,QDoubleSpinBox,QComboBox,QListWidget,QTabWidget::pane{background:white;border:1px solid #dbeafe;border-radius:14px;padding:8px;selection-background-color:#99f6e4;}"
+        "QLineEdit:focus,QSpinBox:focus,QDoubleSpinBox:focus,QComboBox:focus{border:2px solid #00CBBF;padding:7px;}"
+        "QGroupBox{background:#f8fcff;border:1px solid #dbeafe;border-radius:16px;margin-top:12px;padding-top:14px;color:#526580;font-weight:700;}"
+        "QGroupBox::title{subcontrol-origin:margin;left:12px;padding:0 6px;}"
+        "QListWidget{outline:0;}"
+        "QListWidget::item{background:#ffffff;border:1px solid #e2edff;border-radius:16px;margin:5px 1px;padding:12px;}"
+        "QListWidget::item:selected{background:#e6fffb;border-color:#00CBBF;color:#073b4c;}"
+        "QPushButton{background:#ecf4ff;border:0;border-radius:14px;padding:10px 14px;font-weight:800;color:#1e3a5f;}"
+        "QPushButton:hover{background:#dceafe;}"
+        "QPushButton:pressed{background:#cfe0ff;}"
         "QPushButton:disabled{color:#94a3b8;background:#f1f5f9;}"
-        "QTabBar::tab{padding:8px 14px;}QTabBar::tab:selected{color:#2563eb;font-weight:700;}"));
+        "QPushButton#userPrimaryButton{background:#00CBBF;color:white;border:0;border-radius:16px;font-weight:900;}"
+        "QPushButton[class=\"userBottomNavButton\"]{background:white;color:#526580;border:1px solid #dbeafe;border-radius:16px;}"
+        "QWidget#userBottomNavigation{background:#ffffff;border:1px solid #dbeafe;border-radius:22px;}"));
 
     auto *central = new QWidget(this);
+    central->setObjectName(QStringLiteral("userAppShell"));
     auto *root = new QVBoxLayout(central);
     root->setContentsMargins(22, 22, 22, 22);
     root->setSpacing(14);
 
     auto *title = new QLabel(QStringLiteral("电动汽车充电"), central);
+    title->setObjectName(QStringLiteral("userAppTitle"));
     QFont titleFont = title->font();
     titleFont.setPointSize(20);
     titleFont.setBold(true);
     title->setFont(titleFont);
     auto *subtitle = new QLabel(QStringLiteral("用户手机客户端"), central);
-    subtitle->setStyleSheet(QStringLiteral("color:#64748b;"));
+    subtitle->setObjectName(QStringLiteral("userAppSubtitle"));
 
     m_statusLabel = new QLabel(QStringLiteral("尚未连接服务器"), central);
     m_statusLabel->setWordWrap(true);
     m_statusLabel->setStyleSheet(QStringLiteral(
-        "padding:9px;background:#f1f5f9;color:#475569;border-radius:8px;"));
+        "padding:10px 12px;background:#ffffff;color:#475569;border:1px solid #dbeafe;border-radius:16px;"));
 
     m_pages = new QStackedWidget(central);
     m_pages->setObjectName(QStringLiteral("userPages"));
@@ -97,11 +115,21 @@ UserMainWindow::UserMainWindow(QWidget *parent)
     auto *loginLayout = new QVBoxLayout(loginPage);
     loginLayout->setContentsMargins(0, 12, 0, 0);
     loginLayout->setSpacing(14);
+    auto *loginCard = new QFrame(loginPage);
+    loginCard->setObjectName(QStringLiteral("userLoginCard"));
+    loginCard->setMinimumHeight(380);
+    auto *loginCardLayout = new QVBoxLayout(loginCard);
+    loginCardLayout->setContentsMargins(22, 22, 22, 22);
+    loginCardLayout->setSpacing(14);
 
     auto *loginHint = new QLabel(
         QStringLiteral("手机号免密登录\n首次登录将自动注册账号"), loginPage);
+    loginHint->setObjectName(QStringLiteral("userLoginHero"));
     loginHint->setWordWrap(true);
-    loginHint->setStyleSheet(QStringLiteral("font-size:16px;font-weight:600;color:#0f172a;"));
+    auto *loginSubHint = new QLabel(
+        QStringLiteral("连接附近充电站，预约空闲电桩，实时查看充电费用"), loginPage);
+    loginSubHint->setObjectName(QStringLiteral("userLoginHint"));
+    loginSubHint->setWordWrap(true);
     m_phoneEdit = new QLineEdit(loginPage);
     m_phoneEdit->setPlaceholderText(QStringLiteral("请输入11位手机号"));
     m_phoneEdit->setMaxLength(11);
@@ -119,10 +147,8 @@ UserMainWindow::UserMainWindow(QWidget *parent)
     serverForm->addRow(QStringLiteral("端口"), m_portSpin);
 
     m_loginButton = new QPushButton(QStringLiteral("登录 / 自动注册"), loginPage);
+    m_loginButton->setObjectName(QStringLiteral("userPrimaryButton"));
     m_loginButton->setMinimumHeight(44);
-    m_loginButton->setStyleSheet(QStringLiteral(
-        "QPushButton{background:#2563eb;color:white;border:0;border-radius:9px;font-weight:600;}"
-        "QPushButton:disabled{background:#94a3b8;}"));
     m_loginErrorLabel = new QLabel(loginPage);
     m_loginErrorLabel->setWordWrap(true);
     m_loginErrorLabel->setStyleSheet(QStringLiteral("color:#b91c1c;"));
@@ -144,11 +170,14 @@ UserMainWindow::UserMainWindow(QWidget *parent)
     });
     connect(m_phoneEdit, &QLineEdit::returnPressed, m_loginButton, &QPushButton::click);
 
-    loginLayout->addWidget(loginHint);
-    loginLayout->addWidget(m_phoneEdit);
-    loginLayout->addWidget(serverBox);
-    loginLayout->addWidget(m_loginButton);
-    loginLayout->addWidget(m_loginErrorLabel);
+    loginCardLayout->addWidget(loginHint);
+    loginCardLayout->addWidget(loginSubHint);
+    loginCardLayout->addWidget(m_phoneEdit);
+    loginCardLayout->addWidget(serverBox);
+    loginCardLayout->addWidget(m_loginButton);
+    loginCardLayout->addWidget(m_loginErrorLabel);
+    loginCardLayout->addStretch();
+    loginLayout->addWidget(loginCard);
     loginLayout->addStretch();
 
     m_homePage = new HomePage(m_pages);
@@ -166,6 +195,9 @@ UserMainWindow::UserMainWindow(QWidget *parent)
     homeButton->setObjectName(QStringLiteral("homeNavigationButton"));
     chargingButton->setObjectName(QStringLiteral("chargingNavigationButton"));
     mineButton->setObjectName(QStringLiteral("profileNavigationButton"));
+    homeButton->setProperty("class", QStringLiteral("userBottomNavButton"));
+    chargingButton->setProperty("class", QStringLiteral("userBottomNavButton"));
+    mineButton->setProperty("class", QStringLiteral("userBottomNavButton"));
     nav->addWidget(homeButton); nav->addWidget(chargingButton); nav->addWidget(mineButton);
 
     m_pages->addWidget(loginPage);

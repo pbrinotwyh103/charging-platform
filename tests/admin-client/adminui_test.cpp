@@ -396,4 +396,16 @@ void AdminUiTest::sessionExpiryReturnsToLoginWithReason() {
   QCOMPARE(loginError->text(), QStringLiteral("管理员会话已过期"));
 }
 
+void AdminUiTest::dashboardVisualShellIsPresent() {
+  AdminMainWindow window;
+  window.showDemoWorkspace();
+
+  auto *shell = window.findChild<QWidget *>(QStringLiteral("dashboardShell"));
+  auto *hero = window.findChild<QWidget *>(QStringLiteral("overviewHero"));
+  QVERIFY(shell);
+  QVERIFY(hero);
+  QVERIFY(window.width() >= 980);
+  QVERIFY(hero->minimumHeight() >= 104);
+}
+
 QTEST_MAIN(AdminUiTest)
