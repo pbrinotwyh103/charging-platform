@@ -22,6 +22,8 @@ private:
     void handleUserLogin(ClientSession *session, const Charging::Message &message);
     void handleAdminLogin(ClientSession *session, const Charging::Message &message);
     void handleUserProfile(ClientSession *session, const Charging::Message &message);
+    void handleUserProfileUpdate(ClientSession *session,
+                                 const Charging::Message &message);
     void handleWalletRecharge(ClientSession *session,
                               const Charging::Message &message);
     void handleWalletLedger(ClientSession *session,

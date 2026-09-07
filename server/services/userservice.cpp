@@ -5,6 +5,7 @@
 #include "repositories/walletrepository.h"
 
 #include <QJsonArray>
+#include <QRegularExpression>
 
 #include <cmath>
 #include <limits>
@@ -54,6 +55,72 @@ QJsonObject walletItem(const WalletRecord &record)
 }
 
 } // namespace
+
+UserServiceResult UserService::updateProfile(qint64 userId,
+                                             const QJsonObject &payload)
+{
+    WorkerConnectionCleanup cleanup(database());
+    if (userId <= 0)
+        return failure(Charging::ErrorCode::Unauthorized,
+                       QStringLiteral("用户登录状态无效"));
+    if (payload.contains(QStringLiteral("avatarBase64")))
+        return failure(Charging::ErrorCode::UnsupportedMessage,
+                       QStringLiteral("头像上传服务尚未开放"));
+
+    const QJsonValue nicknameValue = payload.value(QStringLiteral("nickname"));
+    if (!nicknameValue.isString())
+        return failure(Charging::ErrorCode::InvalidPayload,
+                       QStringLiteral("昵称参数格式错误"));
+
+    const QString nickname = nicknameValue.toString().trimmed();
+    if (nickname.size() < 2 || nickname.size() > 20)
+        return failure(Charging::ErrorCode::ValidationFailed,
+                       QStringLiteral("昵称长度需为 2—20 个字符"));
+    static const QRegularExpression illegalCharacters(
+        QStringLiteral("[\\x{0000}-\\x{001f}\\x{007f}/\\\\:*?\"<>|]"));
+    if (nickname.contains(illegalCharacters))
+        return failure(Charging::ErrorCode::ValidationFailed,
+                       QStringLiteral("昵称不能包含控制字符或 / \\ : * ? \" < > |"));
+    if (!database())
+        return failure(Charging::ErrorCode::DatabaseError,
+                       QStringLiteral("用户资料更新失败"));
+
+    UserRepository users(database());
+    UserRecord user;
+    QString error;
+    if (!users.findById(userId, &user, &error))
+        return failure(Charging::ErrorCode::DatabaseError,
+                       QStringLiteral("用户资料读取失败"));
+    if (user.id == 0)
+        return failure(Charging::ErrorCode::NotFound,
+                       QStringLiteral("用户不存在"));
+    if (user.status != QStringLiteral("normal"))
+        return failure(Charging::ErrorCode::AccountDisabled,
+                       QStringLiteral("用户已冻结"));
+    if (user.nickname == nickname)
+        return failure(Charging::ErrorCode::Conflict,
+                       QStringLiteral("新昵称与当前昵称相同"));
+    if (!users.updateNickname(userId, nickname, &error)
+        || !users.findById(userId, &user, &error)) {
+        return failure(Charging::ErrorCode::DatabaseError,
+                       QStringLiteral("用户资料更新失败"));
+    }
+    if (user.id == 0)
+        return failure(Charging::ErrorCode::NotFound,
+                       QStringLiteral("用户不存在"));
+
+    UserServiceResult result;
+    result.payload = {
+        {QStringLiteral("userId"), static_cast<double>(user.id)},
+        {QStringLiteral("phone"), user.phone},
+        {QStringLiteral("nickname"), user.nickname},
+        {QStringLiteral("avatarPath"), user.avatarPath},
+        {QStringLiteral("balanceCents"), static_cast<double>(user.balanceCents)},
+        {QStringLiteral("status"), user.status},
+        {QStringLiteral("role"), QStringLiteral("user")}
+    };
+    return result;
+}
 
 UserServiceResult UserService::recharge(qint64 userId,
                                         const QJsonObject &payload)

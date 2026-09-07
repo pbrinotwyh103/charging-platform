@@ -50,6 +50,9 @@ void MessageDispatcher::dispatch(ClientSession *session, const Charging::Message
     case Charging::MessageType::UserProfileRequest:
         handleUserProfile(session, message);
         return;
+    case Charging::MessageType::UserProfileUpdateRequest:
+        handleUserProfileUpdate(session, message);
+        return;
     case Charging::MessageType::WalletRechargeRequest:
         handleWalletRecharge(session, message);
         return;
@@ -233,6 +236,49 @@ void MessageDispatcher::handleUserProfile(ClientSession *session,
     watcher->setFuture(QtConcurrent::run(&m_workerPool, [services = m_services, userId] {
         return services->auth()->userProfile(userId);
     }));
+}
+
+void MessageDispatcher::handleUserProfileUpdate(
+    ClientSession *session, const Charging::Message &message)
+{
+    if (!session->isAuthenticated()) {
+        sendError(session, Charging::MessageType::UserProfileUpdateResponse,
+                  message.header.requestId, Charging::ErrorCode::Unauthorized);
+        return;
+    }
+    if (session->role() != Charging::Role::User) {
+        sendError(session, Charging::MessageType::UserProfileUpdateResponse,
+                  message.header.requestId, Charging::ErrorCode::Forbidden);
+        return;
+    }
+    if (!session->markRequestStarted(message.header.requestId)) {
+        sendError(session, Charging::MessageType::UserProfileUpdateResponse,
+                  message.header.requestId,
+                  Charging::ErrorCode::DuplicateRequest);
+        return;
+    }
+
+    const qint64 userId = session->principalId();
+    const quint32 requestId = message.header.requestId;
+    const QJsonObject requestPayload = message.payload;
+    QPointer<ClientSession> guard(session);
+    auto *watcher = new QFutureWatcher<UserServiceResult>(this);
+    connect(watcher, &QFutureWatcher<UserServiceResult>::finished, this,
+            [watcher, guard, requestId] {
+        const UserServiceResult result = watcher->result();
+        watcher->deleteLater();
+        if (!guard) return;
+        guard->finishRequest(requestId);
+        QJsonObject payload = result.payload;
+        payload.insert(QStringLiteral("message"),
+                       Charging::errorMessage(result.error, result.message));
+        guard->send(Charging::MessageType::UserProfileUpdateResponse,
+                    requestId, payload, result.error);
+    });
+    watcher->setFuture(QtConcurrent::run(
+        &m_workerPool, [services = m_services, userId, requestPayload] {
+            return services->users()->updateProfile(userId, requestPayload);
+        }));
 }
 
 void MessageDispatcher::handleWalletRecharge(

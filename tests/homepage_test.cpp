@@ -6,6 +6,7 @@
 #include "map/mapnavigator.h"
 #include "stores/snapshotstore.h"
 #include "widgets/rechargedialog.h"
+#include "widgets/nicknamedialog.h"
 
 #include <QComboBox>
 #include <QDateTime>
@@ -41,6 +42,7 @@ private slots:
     void stationInvalidCoordinatesSortLast();
     void pileStateCompatibilityAndErrorRecovery();
     void chargingStatusMapping();
+    void nicknameValidation();
     void profileUpdateErrorKeepsOriginalNickname();
     void navigationUrlWithKey();
     void navigationFallbackWithoutKey();
@@ -319,6 +321,37 @@ void HomePageTest::chargingStatusMapping()
     const QString text = page.findChild<QLabel *>(QStringLiteral("chargingStatusLabel"))->text();
     QVERIFY(text.contains(QStringLiteral("待付款")));
     QVERIFY(text.contains(QStringLiteral("¥ 123.45")));
+}
+
+void HomePageTest::nicknameValidation()
+{
+    NicknameDialog dialog(QStringLiteral("原昵称"));
+    auto *edit = dialog.findChild<QLineEdit *>(QStringLiteral("nicknameEdit"));
+    auto *confirm = dialog.findChild<QPushButton *>(
+        QStringLiteral("nicknameConfirmButton"));
+    auto *error = dialog.findChild<QLabel *>(
+        QStringLiteral("nicknameErrorLabel"));
+    QVERIFY(edit);
+    QVERIFY(confirm);
+    QVERIFY(error);
+
+    edit->setText(QStringLiteral("A"));
+    confirm->click();
+    QVERIFY(error->text().contains(QStringLiteral("2—20")));
+
+    edit->setText(QStringLiteral("非法/昵称"));
+    confirm->click();
+    QVERIFY(error->text().contains(QStringLiteral("不能包含")));
+
+    edit->setText(QStringLiteral("原昵称"));
+    confirm->click();
+    QVERIFY(error->text().contains(QStringLiteral("相同")));
+
+    QSignalSpy accepted(&dialog, &QDialog::accepted);
+    edit->setText(QStringLiteral("  新昵称  "));
+    confirm->click();
+    QCOMPARE(accepted.count(), 1);
+    QCOMPARE(dialog.nickname(), QStringLiteral("新昵称"));
 }
 
 void HomePageTest::profileUpdateErrorKeepsOriginalNickname()

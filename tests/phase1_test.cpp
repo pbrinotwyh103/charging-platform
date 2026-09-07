@@ -117,6 +117,72 @@ void Phase1Test::userAutoRegistrationAndProfile()
     QVERIFY(!response.payload.value(QStringLiteral("created")).toBool());
 }
 
+void Phase1Test::nicknameUpdateIsValidatedAndPersisted()
+{
+    Charging::ClientConnection unauthenticated;
+    connectClient(unauthenticated);
+    Charging::Message response = request(
+        unauthenticated, Charging::MessageType::UserProfileUpdateRequest,
+        Charging::MessageType::UserProfileUpdateResponse,
+        {{QStringLiteral("nickname"), QStringLiteral("未登录用户")}});
+    QCOMPARE(response.header.statusCode, Charging::ErrorCode::Unauthorized);
+
+    Charging::ClientConnection client;
+    connectClient(client);
+    response = request(
+        client, Charging::MessageType::UserLoginRequest,
+        Charging::MessageType::UserLoginResponse,
+        {{QStringLiteral("phone"), QStringLiteral("13400134000")}});
+    QCOMPARE(response.header.statusCode, Charging::ErrorCode::Success);
+    const QString originalNickname =
+        response.payload.value(QStringLiteral("nickname")).toString();
+
+    response = request(
+        client, Charging::MessageType::UserProfileUpdateRequest,
+        Charging::MessageType::UserProfileUpdateResponse,
+        {{QStringLiteral("nickname"), QStringLiteral("充电达人")}});
+    QCOMPARE(response.header.statusCode, Charging::ErrorCode::Success);
+    QCOMPARE(response.payload.value(QStringLiteral("nickname")).toString(),
+             QStringLiteral("充电达人"));
+    QCOMPARE(response.payload.value(QStringLiteral("phone")).toString(),
+             QStringLiteral("13400134000"));
+
+    response = request(client, Charging::MessageType::UserProfileRequest,
+                       Charging::MessageType::UserProfileResponse);
+    QCOMPARE(response.header.statusCode, Charging::ErrorCode::Success);
+    QCOMPARE(response.payload.value(QStringLiteral("nickname")).toString(),
+             QStringLiteral("充电达人"));
+
+    response = request(
+        client, Charging::MessageType::UserProfileUpdateRequest,
+        Charging::MessageType::UserProfileUpdateResponse,
+        {{QStringLiteral("nickname"), QStringLiteral("充电达人")}});
+    QCOMPARE(response.header.statusCode, Charging::ErrorCode::Conflict);
+    QVERIFY(response.payload.value(QStringLiteral("message")).toString()
+                .contains(QStringLiteral("相同")));
+
+    response = request(
+        client, Charging::MessageType::UserProfileUpdateRequest,
+        Charging::MessageType::UserProfileUpdateResponse,
+        {{QStringLiteral("nickname"), QStringLiteral("非法/昵称")}});
+    QCOMPARE(response.header.statusCode,
+             Charging::ErrorCode::ValidationFailed);
+
+    response = request(
+        client, Charging::MessageType::UserProfileUpdateRequest,
+        Charging::MessageType::UserProfileUpdateResponse,
+        {{QStringLiteral("nickname"), QStringLiteral("A")}});
+    QCOMPARE(response.header.statusCode,
+             Charging::ErrorCode::ValidationFailed);
+
+    response = request(client, Charging::MessageType::UserProfileRequest,
+                       Charging::MessageType::UserProfileResponse);
+    QCOMPARE(response.payload.value(QStringLiteral("nickname")).toString(),
+             QStringLiteral("充电达人"));
+    QVERIFY(response.payload.value(QStringLiteral("nickname")).toString()
+                != originalNickname);
+}
+
 void Phase1Test::rechargeUpdatesBalanceAndLedgerImmediately()
 {
     Charging::ClientConnection client;

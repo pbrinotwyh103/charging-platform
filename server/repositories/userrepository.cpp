@@ -91,3 +91,21 @@ bool UserRepository::findOrCreate(const QString &phone, UserRecord *record, bool
     }
     return findByPhone(phone, record, error);
 }
+
+bool UserRepository::updateNickname(qint64 id, const QString &nickname,
+                                    QString *error) const
+{
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral(
+        "UPDATE users SET nickname = ?, updated_at = CURRENT_TIMESTAMP "
+        "WHERE id = ?"));
+    query.addBindValue(nickname);
+    query.addBindValue(id);
+    if (!query.exec()) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    return true;
+}

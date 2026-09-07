@@ -18,6 +18,8 @@ class UserService final : public ServiceBase
 public:
     using ServiceBase::ServiceBase;
 
+    UserServiceResult updateProfile(qint64 userId,
+                                    const QJsonObject &payload);
     UserServiceResult recharge(qint64 userId, const QJsonObject &payload);
     UserServiceResult walletLedger(qint64 userId, const QJsonObject &payload);
 };

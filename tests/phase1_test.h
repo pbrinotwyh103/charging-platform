@@ -15,6 +15,7 @@ private slots:
     void pingAndUnauthorizedGuard();
     void invalidPhoneIsRejected();
     void userAutoRegistrationAndProfile();
+    void nicknameUpdateIsValidatedAndPersisted();
     void rechargeUpdatesBalanceAndLedgerImmediately();
     void historicalOrdersAreUserScoped();
     void favoritesAreIdempotentAndUserScoped();

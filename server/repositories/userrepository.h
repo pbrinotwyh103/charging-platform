@@ -22,4 +22,6 @@ public:
     bool findById(qint64 id, UserRecord *record, QString *error) const;
     bool findOrCreate(const QString &phone, UserRecord *record, bool *created,
                       QString *error) const;
+    bool updateNickname(qint64 id, const QString &nickname,
+                        QString *error) const;
 };
