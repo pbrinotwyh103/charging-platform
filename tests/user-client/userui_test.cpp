@@ -8,12 +8,15 @@
 #include "ui/usermainwindow.h"
 
 #include <QDoubleSpinBox>
+#include <QDir>
+#include <QFile>
 #include <QJsonArray>
 #include <QLabel>
 #include <QListWidget>
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QStackedWidget>
+#include <QTemporaryDir>
 #include <QUrlQuery>
 #include <QtTest>
 
@@ -93,6 +96,75 @@ void UserUiTest::mapUrlCarriesTravelModeAndCoordinates()
     QCOMPARE(query.queryItemValue(QStringLiteral("type")), QStringLiteral("walk"));
     QCOMPARE(query.queryItemValue(QStringLiteral("fromcoord")), QStringLiteral("31.230400,121.473700"));
     qunsetenv("TENCENT_MAP_KEY");
+}
+
+void UserUiTest::mapKeyCanBeLoadedFromWorkingDirectoryConfig()
+{
+    qunsetenv("TENCENT_MAP_KEY");
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QVERIFY(QDir(directory.path()).mkpath(QStringLiteral("config")));
+    QFile config(directory.path() + QStringLiteral("/config/app.ini"));
+    QVERIFY(config.open(QIODevice::WriteOnly | QIODevice::Text));
+    config.write("[map]\ntencent_key=file-demo-key\n");
+    config.close();
+
+    const QString previousPath = QDir::currentPath();
+    QVERIFY(QDir::setCurrent(directory.path()));
+
+    QCOMPARE(MapNavigator::apiKey(), QStringLiteral("file-demo-key"));
+
+    QVERIFY(QDir::setCurrent(previousPath));
+}
+
+void UserUiTest::emptyStationDoesNotRequestPiles()
+{
+    StationDetailPage stationPage;
+    QSignalSpy pilesSpy(&stationPage, &StationDetailPage::pilesRequested);
+
+    stationPage.setStation({});
+
+    QCOMPARE(pilesSpy.count(), 0);
+    QVERIFY(stationPage.findChild<QLabel *>(QStringLiteral("stationStatusLabel"))
+                ->text()
+                .contains(QStringLiteral("请先选择有效的充电站")));
+}
+
+void UserUiTest::stationSearchUsesSeedDataCityByDefault()
+{
+    HomePage home;
+    QSignalSpy stationSpy(&home, &HomePage::stationsRequested);
+    auto *search = home.findChild<QPushButton *>(QStringLiteral("stationSearchButton"));
+    QVERIFY(search);
+
+    QTest::mouseClick(search, Qt::LeftButton);
+
+    QCOMPARE(stationSpy.count(), 1);
+    QCOMPARE(stationSpy.at(0).at(2).toDouble(), 38.8584);
+    QCOMPARE(stationSpy.at(0).at(3).toDouble(), 121.5312);
+}
+
+void UserUiTest::simulatedLocationDoesNotFilterByDisplayText()
+{
+    HomePage home;
+    QSignalSpy stationSpy(&home, &HomePage::stationsRequested);
+    const auto buttons = home.findChildren<QPushButton *>();
+    QPushButton *gps = nullptr;
+    for (auto *button : buttons) {
+        if (button->text().contains(QStringLiteral("模拟定位"))) {
+            gps = button;
+            break;
+        }
+    }
+    auto *search = home.findChild<QPushButton *>(QStringLiteral("stationSearchButton"));
+    QVERIFY(gps);
+    QVERIFY(search);
+
+    QTest::mouseClick(gps, Qt::LeftButton);
+    QTest::mouseClick(search, Qt::LeftButton);
+
+    QCOMPARE(stationSpy.count(), 1);
+    QCOMPARE(stationSpy.at(0).at(1).toString(), QString());
 }
 
 void UserUiTest::compactAppVisualShellIsPresent()

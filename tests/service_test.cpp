@@ -293,6 +293,9 @@ void ServiceTest::nearbyTextSearchAndCoordinates()
     QCOMPARE(items[1].toObject().value("distanceKm").toDouble(), 2.22);
     QVERIFY(first.contains("availablePiles"));
     QVERIFY(first.contains("totalPiles"));
+    result = service.nearby(id, {{"region", "全部区域"}, {"latitude", 0}, {"longitude", 0}, {"radiusKm", 3}, {"sort", "distance"}});
+    QVERIFY(result.succeeded());
+    QCOMPARE(result.payload.value("items").toArray().size(), 2);
     QVERIFY(service.nearby(id, {{"address", "不存在的地址"}}).payload.value("items").toArray().isEmpty());
     for (const QJsonObject &bad : QList<QJsonObject>{{{"latitude", 0}}, {{"latitude", 91}, {"longitude", 0}},
              {{"latitude", "0"}, {"longitude", 0}}, {{"radiusKm", 0}}, {{"radiusKm", 101}},

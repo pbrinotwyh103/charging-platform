@@ -11,5 +11,9 @@ private slots:
     void reservationCanEnterChargingAndSettle();
     void demoRechargeUpdatesBalanceAndLedger();
     void mapUrlCarriesTravelModeAndCoordinates();
+    void mapKeyCanBeLoadedFromWorkingDirectoryConfig();
+    void emptyStationDoesNotRequestPiles();
+    void stationSearchUsesSeedDataCityByDefault();
+    void simulatedLocationDoesNotFilterByDisplayText();
     void compactAppVisualShellIsPresent();
 };

@@ -61,6 +61,7 @@ StationDetailPage::StationDetailPage(QWidget *parent)
     sectionFont.setBold(true);
     section->setFont(sectionFont);
     m_status = new QLabel(this);
+    m_status->setObjectName(QStringLiteral("stationStatusLabel"));
     m_status->setWordWrap(true);
     m_piles = new QListWidget(this);
     m_piles->setObjectName(QStringLiteral("pileList"));
@@ -92,14 +93,14 @@ StationDetailPage::StationDetailPage(QWidget *parent)
     });
     connect(drive, &QPushButton::clicked, this, [this] {
         const QUrl url = MapNavigator::navigationUrl(
-            31.2304, 121.4737,
+            38.8584, 121.5312,
             m_station.value(QStringLiteral("latitude")).toDouble(),
             m_station.value(QStringLiteral("longitude")).toDouble(),
             QStringLiteral("driving"));
         if (url.isValid() && !url.isEmpty()) m_mapView->setUrl(url);
         else m_mapView->setHtml(QStringLiteral(
             "<html><body style='margin:0;background:#eff6ff;font-family:sans-serif;color:#1e3a8a'>"
-            "<div style='padding:18px'><b>驾车路线预览</b><p>当前位置（人民广场）</p>"
+            "<div style='padding:18px'><b>驾车路线预览</b><p>当前位置（大连软件园）</p>"
             "<div style='border-left:4px solid #2563eb;height:70px;margin-left:8px;padding-left:18px'>"
             "预计 %1 公里 · 约 %2 分钟<br>已避开拥堵路段</div><p><b>%3</b></p>"
             "<small>配置腾讯地图Key后将加载真实路线页面</small></div></body></html>")
@@ -111,14 +112,14 @@ StationDetailPage::StationDetailPage(QWidget *parent)
     });
     connect(walk, &QPushButton::clicked, this, [this] {
         const QUrl url = MapNavigator::navigationUrl(
-            31.2304, 121.4737,
+            38.8584, 121.5312,
             m_station.value(QStringLiteral("latitude")).toDouble(),
             m_station.value(QStringLiteral("longitude")).toDouble(),
             QStringLiteral("walking"));
         if (url.isValid() && !url.isEmpty()) m_mapView->setUrl(url);
         else m_mapView->setHtml(QStringLiteral(
             "<html><body style='margin:0;background:#f0fdf4;font-family:sans-serif;color:#166534'>"
-            "<div style='padding:18px'><b>步行路线预览</b><p>当前位置（人民广场）</p>"
+            "<div style='padding:18px'><b>步行路线预览</b><p>当前位置（大连软件园）</p>"
             "<div style='border-left:4px solid #16a34a;height:70px;margin-left:8px;padding-left:18px'>"
             "预计 %1 公里 · 约 %2 分钟<br>优先选择人行道路</div><p><b>%3</b></p>"
             "<small>配置腾讯地图Key后将加载真实路线页面</small></div></body></html>")
@@ -140,6 +141,17 @@ StationDetailPage::StationDetailPage(QWidget *parent)
 
 void StationDetailPage::setStation(const QJsonObject &station)
 {
+    const qint64 stationId = station.value(QStringLiteral("stationId")).toInteger();
+    if (stationId <= 0) {
+        m_station = {};
+        m_title->setText(QStringLiteral("未选择充电站"));
+        m_summary->setText(QStringLiteral("请返回附近站点，选择一个有效充电站后再查看电桩和导航。"));
+        m_status->setText(QStringLiteral("请先选择有效的充电站"));
+        m_piles->clear();
+        m_mapView->hide();
+        m_reserve->setEnabled(false);
+        return;
+    }
     m_station = station;
     m_title->setText(station.value(QStringLiteral("name")).toString());
     m_summary->setText(
@@ -154,7 +166,7 @@ void StationDetailPage::setStation(const QJsonObject &station)
     m_piles->clear();
     m_mapView->hide();
     m_reserve->setEnabled(false);
-    emit pilesRequested(station.value(QStringLiteral("stationId")).toInteger());
+    emit pilesRequested(stationId);
 }
 
 void StationDetailPage::setPiles(const QJsonArray &piles)
