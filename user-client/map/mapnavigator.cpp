@@ -1,6 +1,8 @@
 #include "map/mapnavigator.h"
 
 #include <QCoreApplication>
+#include <QDir>
+#include <QFileInfo>
 #include <QSettings>
 #include <QUrlQuery>
 
@@ -8,9 +10,18 @@ QString MapNavigator::apiKey()
 {
     const QByteArray env = qgetenv("TENCENT_MAP_KEY");
     if (!env.isEmpty()) return QString::fromUtf8(env).trimmed();
-    QSettings settings(QCoreApplication::applicationDirPath() + QStringLiteral("/../../config/app.ini"),
-                       QSettings::IniFormat);
-    return settings.value(QStringLiteral("map/tencent_key")).toString().trimmed();
+    const QStringList candidates{
+        QDir::current().absoluteFilePath(QStringLiteral("config/app.ini")),
+        QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("../../config/app.ini")),
+        QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("../../../../config/app.ini"))
+    };
+    for (const auto &path : candidates) {
+        if (!QFileInfo::exists(path)) continue;
+        QSettings settings(path, QSettings::IniFormat);
+        const QString key = settings.value(QStringLiteral("map/tencent_key")).toString().trimmed();
+        if (!key.isEmpty()) return key;
+    }
+    return {};
 }
 
 bool MapNavigator::isConfigured()

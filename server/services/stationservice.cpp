@@ -51,7 +51,8 @@ ServiceResult StationService::nearby(qint64 userId, const QJsonObject &payload)
     const QSet<qint64> favorites(favoriteIds.cbegin(), favoriteIds.cend());
     struct Match { StationRecord station; double distance; };
     QList<Match> matches;
-    const QString region = payload.value("region").toString().trimmed();
+    QString region = payload.value("region").toString().trimmed();
+    if (region == QStringLiteral("全部区域")) region.clear();
     const QString address = payload.value("address").toString().trimmed();
     const double radius = payload.value("radiusKm").toDouble(10);
     for (const auto &station : stations) {

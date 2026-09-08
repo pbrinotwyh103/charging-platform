@@ -27,6 +27,7 @@ private:
     QLineEdit *m_address = nullptr;
     QComboBox *m_region = nullptr;
     QListWidget *m_list = nullptr;
-    double m_latitude = 31.2304;
-    double m_longitude = 121.4737;
+    double m_latitude = 38.8584;
+    double m_longitude = 121.5312;
+    bool m_simulatedLocationActive = false;
 };
