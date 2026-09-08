@@ -93,14 +93,14 @@ StationDetailPage::StationDetailPage(QWidget *parent)
     });
     connect(drive, &QPushButton::clicked, this, [this] {
         const QUrl url = MapNavigator::navigationUrl(
-            38.8584, 121.5312,
+            22.5431, 114.0579,
             m_station.value(QStringLiteral("latitude")).toDouble(),
             m_station.value(QStringLiteral("longitude")).toDouble(),
             QStringLiteral("driving"));
         if (url.isValid() && !url.isEmpty()) m_mapView->setUrl(url);
         else m_mapView->setHtml(QStringLiteral(
             "<html><body style='margin:0;background:#eff6ff;font-family:sans-serif;color:#1e3a8a'>"
-            "<div style='padding:18px'><b>驾车路线预览</b><p>当前位置（大连软件园）</p>"
+            "<div style='padding:18px'><b>驾车路线预览</b><p>当前位置（深圳市中心）</p>"
             "<div style='border-left:4px solid #2563eb;height:70px;margin-left:8px;padding-left:18px'>"
             "预计 %1 公里 · 约 %2 分钟<br>已避开拥堵路段</div><p><b>%3</b></p>"
             "<small>配置腾讯地图Key后将加载真实路线页面</small></div></body></html>")
@@ -112,14 +112,14 @@ StationDetailPage::StationDetailPage(QWidget *parent)
     });
     connect(walk, &QPushButton::clicked, this, [this] {
         const QUrl url = MapNavigator::navigationUrl(
-            38.8584, 121.5312,
+            22.5431, 114.0579,
             m_station.value(QStringLiteral("latitude")).toDouble(),
             m_station.value(QStringLiteral("longitude")).toDouble(),
             QStringLiteral("walking"));
         if (url.isValid() && !url.isEmpty()) m_mapView->setUrl(url);
         else m_mapView->setHtml(QStringLiteral(
             "<html><body style='margin:0;background:#f0fdf4;font-family:sans-serif;color:#166534'>"
-            "<div style='padding:18px'><b>步行路线预览</b><p>当前位置（大连软件园）</p>"
+            "<div style='padding:18px'><b>步行路线预览</b><p>当前位置（深圳市中心）</p>"
             "<div style='border-left:4px solid #16a34a;height:70px;margin-left:8px;padding-left:18px'>"
             "预计 %1 公里 · 约 %2 分钟<br>优先选择人行道路</div><p><b>%3</b></p>"
             "<small>配置腾讯地图Key后将加载真实路线页面</small></div></body></html>")
