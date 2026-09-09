@@ -9,6 +9,7 @@ path=data/charging.db
 
 [map]
 # 腾讯地图Web API密钥由开发者在本地配置，不提交真实密钥。
+# 同一个Key用于首页地址解析和详情页路线导航，需在腾讯位置服务控制台启用WebService API。
 tencent_key=
 
 [logging]

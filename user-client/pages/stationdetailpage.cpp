@@ -162,7 +162,7 @@ void StationDetailPage::setStation(const QJsonObject &station)
             .arg(station.value(QStringLiteral("totalPiles")).toInt())
             .arg(station.value(QStringLiteral("distanceKm")).toDouble(), 0, 'f', 1));
     setFavoriteState(station.value(QStringLiteral("favorited")).toBool());
-    m_status->setText(QStringLiteral("正在加载电桩实时状态…"));
+    m_status->setText(QStringLiteral("正在加载电桩运行状态…"));
     m_piles->clear();
     m_mapView->hide();
     m_reserve->setEnabled(false);
@@ -192,7 +192,9 @@ void StationDetailPage::setPiles(const QJsonArray &piles)
         if (!available)
             item->setForeground(QColor(QStringLiteral("#94a3b8")));
     }
-    m_status->setText(QStringLiteral("状态更新时间：刚刚 · 共 %1 个电桩").arg(piles.size()));
+    m_status->setText(
+        QStringLiteral("共 %1 个电桩 · 运行状态为演示模拟数据，非设备实时状态")
+            .arg(piles.size()));
 }
 
 void StationDetailPage::showError(const QString &message)

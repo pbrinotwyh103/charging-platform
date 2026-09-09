@@ -12,6 +12,9 @@ private slots:
     void demoRechargeUpdatesBalanceAndLedger();
     void mapUrlCarriesTravelModeAndCoordinates();
     void mapKeyCanBeLoadedFromWorkingDirectoryConfig();
+    void geocoderBuildsTencentRequestAndParsesCoordinates();
+    void addressInputAcceptsChineseInputMethodText();
+    void regionSelectorCoversShenzhenDistricts();
     void emptyStationDoesNotRequestPiles();
     void stationSearchUsesSeedDataCityByDefault();
     void simulatedLocationDoesNotFilterByDisplayText();

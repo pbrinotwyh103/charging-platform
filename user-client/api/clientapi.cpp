@@ -4,7 +4,7 @@
 #include <QJsonArray>
 #include <QUuid>
 
-ClientApi::ClientApi(QObject *parent) : QObject(parent)
+ClientApi::ClientApi(QObject *parent) : QObject(parent), m_geocoder(this)
 {
     m_connection.setClientName(QStringLiteral("user-client"));
     connect(&m_connection, &Charging::ClientConnection::connected, this, [this] {
@@ -28,7 +28,12 @@ ClientApi::ClientApi(QObject *parent) : QObject(parent)
                 emit loginSucceeded(m.payload);
             }
         } else if (m.header.messageType == Charging::MessageType::StationListResponse) {
-            if (m.header.statusCode == Charging::ErrorCode::Success) emit stationsReceived(m.payload.value(QStringLiteral("items")).toArray()); else emit featureUnavailable(QStringLiteral("站点查询失败：%1").arg(m.payload.value(QStringLiteral("message")).toString()));
+            if (m.header.statusCode == Charging::ErrorCode::Success) emit stationsReceived(m.payload.value(QStringLiteral("items")).toArray());
+            else {
+                const QString message = QStringLiteral("站点查询失败：%1").arg(m.payload.value(QStringLiteral("message")).toString());
+                emit stationSearchFailed(message);
+                emit featureUnavailable(message);
+            }
         } else if (m.header.messageType == Charging::MessageType::PileListResponse) {
             if (m.header.statusCode == Charging::ErrorCode::Success) emit pilesReceived(m.payload.value(QStringLiteral("items")).toArray()); else emit featureUnavailable(QStringLiteral("电桩查询失败：%1").arg(m.payload.value(QStringLiteral("message")).toString()));
         } else if (m.header.messageType == Charging::MessageType::UserProfileResponse) {
@@ -65,6 +70,14 @@ ClientApi::ClientApi(QObject *parent) : QObject(parent)
             else emit featureUnavailable(QStringLiteral("停止充电失败：%1").arg(m.payload.value(QStringLiteral("message")).toString()));
         } else if (m.header.messageType == Charging::MessageType::LogoutResponse) emit loggedOut();
     });
+    connect(&m_geocoder, &TencentGeocoder::resolved, this,
+            [this](double latitude, double longitude) {
+        sendStationRequest(m_pendingStationRegion, latitude, longitude);
+    });
+    connect(&m_geocoder, &TencentGeocoder::failed, this, [this](const QString &message) {
+        emit stationSearchFailed(message);
+        emit featureUnavailable(message);
+    });
 }
 
 void ClientApi::connectToServer(const QString &host, quint16 port) { m_connection.connectToServer(host, port); }
@@ -90,5 +103,27 @@ void ClientApi::stopCharging(qint64 orderId) { if (!m_connection.send(Charging::
 void ClientApi::requestActiveOrder() { if (!m_connection.send(Charging::MessageType::ActiveOrderRequest, m_connection.nextRequestId())) emit featureUnavailable(QStringLiteral("当前未连接服务器")); }
 void ClientApi::logout() { if (!m_connection.send(Charging::MessageType::LogoutRequest, m_connection.nextRequestId())) emit loggedOut(); }
 void ClientApi::requestUnsupported(const QString &feature) { emit featureUnavailable(feature + QStringLiteral("接口尚未由服务端提供，等待联调")); }
-void ClientApi::requestStations(const QString &region,const QString &address,double latitude,double longitude){ const QString normalizedRegion=region==QStringLiteral("全部区域")?QString():region; if(!m_connection.send(Charging::MessageType::StationListRequest,m_connection.nextRequestId(),{{"region",normalizedRegion},{"address",address},{"latitude",latitude},{"longitude",longitude},{"radiusKm",10},{"sort","distance"}})) emit featureUnavailable(QStringLiteral("站点查询接口暂不可用")); }
+void ClientApi::requestStations(const QString &region, const QString &address,
+                                double latitude, double longitude)
+{
+    m_pendingStationRegion = region == QStringLiteral("全部区域") ? QString() : region.trimmed();
+    if (!address.trimmed().isEmpty()) {
+        m_geocoder.lookup(address, m_pendingStationRegion);
+        return;
+    }
+    sendStationRequest(m_pendingStationRegion, latitude, longitude);
+}
+
+void ClientApi::sendStationRequest(const QString &region, double latitude, double longitude)
+{
+    if (!m_connection.send(Charging::MessageType::StationListRequest,
+                           m_connection.nextRequestId(),
+                           {{"region", region}, {"address", QString()},
+                            {"latitude", latitude}, {"longitude", longitude},
+                            {"radiusKm", 10}, {"sort", "distance"}})) {
+        const QString message = QStringLiteral("站点查询接口暂不可用");
+        emit stationSearchFailed(message);
+        emit featureUnavailable(message);
+    }
+}
 void ClientApi::requestPiles(qint64 stationId){ if(!m_connection.send(Charging::MessageType::PileListRequest,m_connection.nextRequestId(),{{"stationId",stationId}})) emit featureUnavailable(QStringLiteral("电桩详情接口暂不可用")); }

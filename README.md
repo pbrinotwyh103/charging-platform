@@ -103,6 +103,11 @@ cd ~/charging-platform/build
 ./bin/charging_user_client --demo
 ```
 
+真实地址搜索需要腾讯位置服务 WebService Key。复制 `config/app.ini.example` 为
+`config/app.ini` 并填写 `[map]` 下的 `tencent_key`，或在启动前设置
+`TENCENT_MAP_KEY`。Linux 客户端启动时会在未指定其他输入法框架的情况下自动连接
+IBus，以支持地址框中文输入。
+
 演示顺序为“搜索附近站点 → 查看电桩 → 收藏或导航 → 预约 → 开始充电 →
 观察实时电量/功率/费用 → 停止并结算”。“我的”页面还可演示头像与昵称维护、
 钱包充值、充值记录和常用站点。页面会明确标注演示数据，服务端到位后仍沿用

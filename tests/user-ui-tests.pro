@@ -10,6 +10,7 @@ INCLUDEPATH += ../common ../user-client
 HEADERS += \
     user-client/userui_test.h \
     ../user-client/map/mapnavigator.h \
+    ../user-client/map/tencentgeocoder.h \
     ../user-client/pages/chargingpage.h \
     ../user-client/pages/homepage.h \
     ../user-client/pages/profilepage.h \
@@ -20,6 +21,7 @@ HEADERS += \
 SOURCES += \
     user-client/userui_test.cpp \
     ../user-client/map/mapnavigator.cpp \
+    ../user-client/map/tencentgeocoder.cpp \
     ../user-client/pages/chargingpage.cpp \
     ../user-client/pages/homepage.cpp \
     ../user-client/pages/profilepage.cpp \

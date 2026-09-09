@@ -26,28 +26,52 @@ namespace {
 QJsonArray demoStations()
 {
     return {
-        QJsonObject{{"stationId", 101}, {"name", QStringLiteral("人民广场超级充电站")},
-                    {"address", QStringLiteral("黄浦区西藏中路268号")}, {"latitude", 31.2323},
-                    {"longitude", 121.4751}, {"priceCentsPerKwh", 168}, {"totalPiles", 18},
+        QJsonObject{{"stationId", 101}, {"name", QStringLiteral("市民中心超级充电站")},
+                    {"address", QStringLiteral("深圳市福田区福中三路市民中心")}, {"latitude", 22.5431},
+                    {"longitude", 114.0579}, {"priceCentsPerKwh", 168}, {"totalPiles", 18},
                     {"availablePiles", 7}, {"distanceKm", 0.8}, {"favorited", true}},
-        QJsonObject{{"stationId", 102}, {"name", QStringLiteral("静安大悦城充电站")},
-                    {"address", QStringLiteral("静安区西藏北路198号")}, {"latitude", 31.2487},
-                    {"longitude", 121.4692}, {"priceCentsPerKwh", 142}, {"totalPiles", 12},
+        QJsonObject{{"stationId", 102}, {"name", QStringLiteral("罗湖万象城充电站")},
+                    {"address", QStringLiteral("深圳市罗湖区宝安南路1881号")}, {"latitude", 22.5390},
+                    {"longitude", 114.1178}, {"priceCentsPerKwh", 142}, {"totalPiles", 12},
                     {"availablePiles", 4}, {"distanceKm", 2.4}, {"favorited", false}},
-        QJsonObject{{"stationId", 103}, {"name", QStringLiteral("陆家嘴中心充电站")},
-                    {"address", QStringLiteral("浦东新区浦东南路899号")}, {"latitude", 31.2397},
-                    {"longitude", 121.5056}, {"priceCentsPerKwh", 186}, {"totalPiles", 24},
+        QJsonObject{{"stationId", 103}, {"name", QStringLiteral("南山科技园充电站")},
+                    {"address", QStringLiteral("深圳市南山区科苑路15号")}, {"latitude", 22.5405},
+                    {"longitude", 113.9538}, {"priceCentsPerKwh", 186}, {"totalPiles", 24},
                     {"availablePiles", 11}, {"distanceKm", 3.6}, {"favorited", false}},
-        QJsonObject{{"stationId", 104}, {"name", QStringLiteral("徐家汇绿色能源站")},
-                    {"address", QStringLiteral("徐汇区虹桥路1号")}, {"latitude", 31.1952},
-                    {"longitude", 121.4368}, {"priceCentsPerKwh", 135}, {"totalPiles", 16},
-                    {"availablePiles", 2}, {"distanceKm", 5.7}, {"favorited", false}}
+        QJsonObject{{"stationId", 104}, {"name", QStringLiteral("宝安中心绿色能源站")},
+                    {"address", QStringLiteral("深圳市宝安区新湖路99号")}, {"latitude", 22.5547},
+                    {"longitude", 113.8831}, {"priceCentsPerKwh", 135}, {"totalPiles", 16},
+                    {"availablePiles", 2}, {"distanceKm", 5.7}, {"favorited", false}},
+        QJsonObject{{"stationId", 105}, {"name", QStringLiteral("龙岗大运中心充电站")},
+                    {"address", QStringLiteral("深圳市龙岗区龙翔大道3001号")}, {"latitude", 22.6970},
+                    {"longitude", 114.2195}, {"priceCentsPerKwh", 149}, {"totalPiles", 20},
+                    {"availablePiles", 8}, {"favorited", false}},
+        QJsonObject{{"stationId", 106}, {"name", QStringLiteral("深圳北站充电站")},
+                    {"address", QStringLiteral("深圳市龙华区致远中路28号")}, {"latitude", 22.6096},
+                    {"longitude", 114.0292}, {"priceCentsPerKwh", 156}, {"totalPiles", 28},
+                    {"availablePiles", 13}, {"favorited", false}},
+        QJsonObject{{"stationId", 107}, {"name", QStringLiteral("盐田海山充电站")},
+                    {"address", QStringLiteral("深圳市盐田区深盐路2088号")}, {"latitude", 22.5574},
+                    {"longitude", 114.2376}, {"priceCentsPerKwh", 139}, {"totalPiles", 10},
+                    {"availablePiles", 5}, {"favorited", false}},
+        QJsonObject{{"stationId", 108}, {"name", QStringLiteral("坪山中心充电站")},
+                    {"address", QStringLiteral("深圳市坪山区坪山大道2007号")}, {"latitude", 22.6901},
+                    {"longitude", 114.3463}, {"priceCentsPerKwh", 132}, {"totalPiles", 14},
+                    {"availablePiles", 6}, {"favorited", false}},
+        QJsonObject{{"stationId", 109}, {"name", QStringLiteral("光明科学城充电站")},
+                    {"address", QStringLiteral("深圳市光明区光侨路科学城")}, {"latitude", 22.7428},
+                    {"longitude", 113.9359}, {"priceCentsPerKwh", 145}, {"totalPiles", 18},
+                    {"availablePiles", 9}, {"favorited", false}},
+        QJsonObject{{"stationId", 110}, {"name", QStringLiteral("大鹏中心充电站")},
+                    {"address", QStringLiteral("深圳市大鹏新区迎宾路")}, {"latitude", 22.5966},
+                    {"longitude", 114.4796}, {"priceCentsPerKwh", 128}, {"totalPiles", 8},
+                    {"availablePiles", 3}, {"favorited", false}}
     };
 }
 
 QJsonArray demoPiles(qint64 stationId)
 {
-    const QString prefix = QStringLiteral("SH-%1-").arg(stationId);
+    const QString prefix = QStringLiteral("SZ-%1-").arg(stationId);
     return {
         QJsonObject{{"pileId", stationId * 100 + 1}, {"pileCode", prefix + QStringLiteral("01")},
                     {"type", QStringLiteral("fast")}, {"powerKw", 60.0}, {"status", QStringLiteral("available")}},
@@ -200,13 +224,17 @@ UserMainWindow::UserMainWindow(QWidget *parent)
     connect(m_homePage, &HomePage::stationSelected, this, [this](const QJsonObject &s) { m_stationDetailPage->setStation(s); m_pages->setCurrentWidget(m_stationDetailPage); });
     connect(m_stationDetailPage, &StationDetailPage::backRequested, this, [this] { m_pages->setCurrentWidget(m_homePage); });
     connect(m_homePage, &HomePage::stationsRequested, this,
-            [this](const QString &region, const QString &, double, double) {
+            [this](const QString &region, const QString &address, double, double) {
         if (!m_demoMode) return;
         QJsonArray filtered;
         for (const auto &value : m_demoStations) {
             const QJsonObject station = value.toObject();
-            if (region == QStringLiteral("全部区域")
-                || station.value(QStringLiteral("address")).toString().contains(region.left(2)))
+            const bool regionMatches = region == QStringLiteral("全部区域")
+                || station.value(QStringLiteral("address")).toString().contains(region.left(2));
+            const bool addressMatches = address.trimmed().isEmpty()
+                || station.value(QStringLiteral("name")).toString().contains(address.trimmed(), Qt::CaseInsensitive)
+                || station.value(QStringLiteral("address")).toString().contains(address.trimmed(), Qt::CaseInsensitive);
+            if (regionMatches && addressMatches)
                 filtered.append(station);
         }
         m_homePage->setStations(filtered);
@@ -237,7 +265,7 @@ UserMainWindow::UserMainWindow(QWidget *parent)
                                     .arg(mode == QStringLiteral("walking") ? QStringLiteral("步行")
                                                                           : QStringLiteral("驾车")), true);
         } else {
-            setConnectionStatus(QStringLiteral("%1路线已生成：人民广场 → %2（演示预览；配置地图Key后打开腾讯地图）")
+            setConnectionStatus(QStringLiteral("%1路线已生成：深圳市民中心 → %2（演示预览；配置地图Key后打开腾讯地图）")
                                     .arg(mode == QStringLiteral("walking") ? QStringLiteral("步行")
                                                                           : QStringLiteral("驾车"),
                                          station.value(QStringLiteral("name")).toString()), true);
@@ -354,7 +382,7 @@ void UserMainWindow::showDemoWorkspace()
         {QStringLiteral("phone"), QStringLiteral("138****2026")},
         {QStringLiteral("balanceCents"), 28650},
         {QStringLiteral("created"), false}});
-    m_profilePage->setFavoriteStation(QStringLiteral("人民广场超级充电站"), true);
+    m_profilePage->setFavoriteStation(QStringLiteral("市民中心超级充电站"), true);
     m_homePage->setStations(m_demoStations);
     m_navWidget->show();
     m_pages->setCurrentWidget(m_homePage);

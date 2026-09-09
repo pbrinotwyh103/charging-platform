@@ -1,6 +1,7 @@
 #pragma once
 
 #include "network/clientconnection.h"
+#include "map/tencentgeocoder.h"
 
 #include <QObject>
 #include <QJsonObject>
@@ -36,6 +37,7 @@ signals:
     void profileReceived(const QJsonObject &);
     void loggedOut();
     void featureUnavailable(const QString &);
+    void stationSearchFailed(const QString &);
     void stationsReceived(const QJsonArray &);
     void pilesReceived(const QJsonArray &);
     void walletChanged(const QJsonObject &);
@@ -46,7 +48,11 @@ signals:
     void chargingStopped(const QJsonObject &);
 
 private:
+    void sendStationRequest(const QString &region, double latitude, double longitude);
+
     Charging::ClientConnection m_connection;
+    TencentGeocoder m_geocoder;
+    QString m_pendingStationRegion;
     QString m_phone;
     quint32 m_loginRequest = 0;
 };

@@ -1,6 +1,7 @@
 #include "userui_test.h"
 
 #include "map/mapnavigator.h"
+#include "map/tencentgeocoder.h"
 #include "pages/chargingpage.h"
 #include "pages/homepage.h"
 #include "pages/profilepage.h"
@@ -8,10 +9,13 @@
 #include "ui/usermainwindow.h"
 
 #include <QDoubleSpinBox>
+#include <QComboBox>
 #include <QDir>
 #include <QFile>
 #include <QJsonArray>
+#include <QInputMethodEvent>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
 #include <QSignalSpy>
@@ -29,7 +33,7 @@ void UserUiTest::demoWorkspaceShowsCoreFeatures()
     QVERIFY(pages);
     QVERIFY(stations);
     QCOMPARE(pages->currentWidget()->objectName(), QStringLiteral("homePage"));
-    QCOMPARE(stations->count(), 4);
+    QCOMPARE(stations->count(), 10);
     QVERIFY(window.findChild<QWidget *>(QStringLiteral("userBottomNavigation"))->isVisibleTo(&window));
 }
 
@@ -48,6 +52,9 @@ void UserUiTest::reservationCanEnterChargingAndSettle()
     stationPage.setPiles(QJsonArray{pile});
     auto *pileList = stationPage.findChild<QListWidget *>(QStringLiteral("pileList"));
     auto *reserve = stationPage.findChild<QPushButton *>(QStringLiteral("reserveButton"));
+    QVERIFY(stationPage.findChild<QLabel *>(QStringLiteral("stationStatusLabel"))
+                ->text()
+                .contains(QStringLiteral("演示模拟数据")));
     pileList->setCurrentRow(0);
     QVERIFY(reserve->isEnabled());
     QTest::mouseClick(reserve, Qt::LeftButton);
@@ -115,6 +122,60 @@ void UserUiTest::mapKeyCanBeLoadedFromWorkingDirectoryConfig()
     QCOMPARE(MapNavigator::apiKey(), QStringLiteral("file-demo-key"));
 
     QVERIFY(QDir::setCurrent(previousPath));
+}
+
+void UserUiTest::geocoderBuildsTencentRequestAndParsesCoordinates()
+{
+    const QUrl url = TencentGeocoder::requestUrl(QStringLiteral("深圳北站"),
+                                                  QStringLiteral("深圳市"),
+                                                  QStringLiteral("test-key"));
+    const QUrlQuery query(url);
+    QCOMPARE(url.path(), QStringLiteral("/ws/geocoder/v1/"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("address")), QStringLiteral("深圳北站"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("region")), QStringLiteral("深圳市"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("key")), QStringLiteral("test-key"));
+
+    double latitude = 0;
+    double longitude = 0;
+    QString error;
+    QVERIFY(TencentGeocoder::parseResponse(
+        R"({"status":0,"result":{"location":{"lat":22.6099,"lng":114.0295}}})",
+        &latitude, &longitude, &error));
+    QCOMPARE(latitude, 22.6099);
+    QCOMPARE(longitude, 114.0295);
+}
+
+void UserUiTest::addressInputAcceptsChineseInputMethodText()
+{
+    HomePage home;
+    auto *address = home.findChild<QLineEdit *>(QStringLiteral("stationAddressInput"));
+    QVERIFY(address);
+    QVERIFY(address->testAttribute(Qt::WA_InputMethodEnabled));
+    address->setFocus();
+    QInputMethodEvent event;
+    event.setCommitString(QStringLiteral("深圳北站"));
+    QApplication::sendEvent(address, &event);
+    QCOMPARE(address->text(), QStringLiteral("深圳北站"));
+}
+
+void UserUiTest::regionSelectorCoversShenzhenDistricts()
+{
+    UserMainWindow window;
+    window.showDemoWorkspace();
+    auto *regions = window.findChild<QComboBox *>(QStringLiteral("stationRegionComboBox"));
+    auto *stations = window.findChild<QListWidget *>(QStringLiteral("stationList"));
+    auto *search = window.findChild<QPushButton *>(QStringLiteral("stationSearchButton"));
+    QVERIFY(regions);
+    QVERIFY(stations);
+    QVERIFY(search);
+    QCOMPARE(regions->count(), 12);
+    QVERIFY(regions->findText(QStringLiteral("南山区")) >= 0);
+    QVERIFY(regions->findText(QStringLiteral("大鹏新区")) >= 0);
+
+    regions->setCurrentText(QStringLiteral("南山区"));
+    search->click();
+    QCOMPARE(stations->count(), 1);
+    QVERIFY(stations->item(0)->text().contains(QStringLiteral("南山科技园充电站")));
 }
 
 void UserUiTest::emptyStationDoesNotRequestPiles()
