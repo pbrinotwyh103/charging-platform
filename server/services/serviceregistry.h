@@ -5,6 +5,7 @@
 #include "services/authservice.h"
 #include "services/billingservice.h"
 #include "services/chargingservice.h"
+#include "services/customerserviceservice.h"
 #include "services/orderservice.h"
 #include "services/pileservice.h"
 #include "services/reservationservice.h"
@@ -35,6 +36,7 @@ public:
     OrderService *orders() { return &m_orders; }
     AlarmService *alarms() { return &m_alarms; }
     StatisticsService *statistics() { return &m_statistics; }
+    CustomerServiceService *customerService() { return &m_customerService; }
     AdminService *admin() { return &m_admin; }
 
 private:
@@ -49,5 +51,6 @@ private:
     OrderService m_orders;
     AlarmService m_alarms;
     StatisticsService m_statistics;
+    CustomerServiceService m_customerService;
     AdminService m_admin;
 };

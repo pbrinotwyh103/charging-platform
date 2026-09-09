@@ -1,0 +1,16 @@
+{
+  "baseModel": "Qwen/Qwen2.5-0.5B-Instruct",
+  "trained": false,
+  "trainingSamples": 0,
+  "rank": 8,
+  "alpha": 16,
+  "targetModules": [
+    "q_proj",
+    "v_proj"
+  ],
+  "tensorCount": 96,
+  "zeroDeltaVerified": true,
+  "seed": 20260909,
+  "sha256": "84a0642f691b4a57dc64ce91b83e2ceafdcc2abd925815b1e67d8f69b113dcac",
+  "sizeBytes": 2175232
+}

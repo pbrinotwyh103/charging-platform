@@ -43,6 +43,9 @@ enum class MessageType : quint16 {
     ReservationCancelRequest = 3040,
     ReservationCancelResponse = 3041,
 
+    CustomerServiceRequest = 4001,
+    CustomerServiceResponse = 4002,
+
     AdminLoginRequest = 5001,
     AdminLoginResponse = 5002,
     AdminCommandRequest = 5010,

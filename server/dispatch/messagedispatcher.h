@@ -14,7 +14,7 @@ class MessageDispatcher final : public QObject
 
 public:
     explicit MessageDispatcher(ServiceRegistry *services, QObject *parent = nullptr,
-                               int requestTimeoutMilliseconds = 10'000);
+                               int requestTimeoutMilliseconds = 60'000);
     ~MessageDispatcher() override;
 
 public slots:

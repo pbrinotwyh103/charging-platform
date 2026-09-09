@@ -27,7 +27,8 @@ const QList<RequestPair> userPairs{
     {MessageType::ReservationCancelRequest, MessageType::ReservationCancelResponse},
     {MessageType::ChargingStartRequest, MessageType::ChargingStartResponse},
     {MessageType::ChargingStopRequest, MessageType::ChargingStopResponse},
-    {MessageType::ActiveOrderRequest, MessageType::ActiveOrderResponse}
+    {MessageType::ActiveOrderRequest, MessageType::ActiveOrderResponse},
+    {MessageType::CustomerServiceRequest, MessageType::CustomerServiceResponse}
 };
 
 // A byte sink replaces only the operating-system TCP transport. The real
@@ -282,6 +283,8 @@ void BusinessIntegrationTest::invalidFields_data()
     row("cancel", MessageType::ReservationCancelRequest, MessageType::ReservationCancelResponse, {{"reservationId", 0}});
     row("start", MessageType::ChargingStartRequest, MessageType::ChargingStartResponse, {{"reservationId", "1"}});
     row("stop", MessageType::ChargingStopRequest, MessageType::ChargingStopResponse, {{"orderId", 0}});
+    row("customer-service", MessageType::CustomerServiceRequest,
+        MessageType::CustomerServiceResponse, {{"question", 123}});
     row("admin-fields", MessageType::AdminCommandRequest, MessageType::AdminCommandResponse, {{"action", 1}});
     row("admin-unknown", MessageType::AdminCommandRequest, MessageType::AdminCommandResponse, {{"action", "unknown.action"}}, ErrorCode::UnsupportedMessage);
 }

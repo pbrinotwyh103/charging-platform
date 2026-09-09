@@ -20,6 +20,7 @@ bool ServiceRegistry::initialize(DatabaseManager *database, QString *error)
     m_orders.setDatabase(database);
     m_alarms.setDatabase(database);
     m_statistics.setDatabase(database);
+    m_customerService.setDatabase(database);
     m_admin.setDatabase(database);
     if (!m_auth.initialize(error)) return false;
     const auto restored = m_charging.restore();

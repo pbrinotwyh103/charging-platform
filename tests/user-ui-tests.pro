@@ -11,6 +11,7 @@ HEADERS += \
     user-client/userui_test.h \
     ../user-client/map/mapnavigator.h \
     ../user-client/pages/chargingpage.h \
+    ../user-client/pages/customerservicepage.h \
     ../user-client/pages/homepage.h \
     ../user-client/pages/profilepage.h \
     ../user-client/pages/stationdetailpage.h \
@@ -21,6 +22,7 @@ SOURCES += \
     user-client/userui_test.cpp \
     ../user-client/map/mapnavigator.cpp \
     ../user-client/pages/chargingpage.cpp \
+    ../user-client/pages/customerservicepage.cpp \
     ../user-client/pages/homepage.cpp \
     ../user-client/pages/profilepage.cpp \
     ../user-client/pages/stationdetailpage.cpp \

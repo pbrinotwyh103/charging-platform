@@ -20,5 +20,6 @@ private slots:
     void pileCodeEntryEmitsTrimmedIdentifier();
     void directPileIsSelectedEvenOutsideLoadedPage();
     void chargingEntryChecksActiveOrder();
+    void customerServiceSubmitsQuestion();
     void compactAppVisualShellIsPresent();
 };

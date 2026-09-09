@@ -2,6 +2,7 @@
 
 #include "map/mapnavigator.h"
 #include "pages/chargingpage.h"
+#include "pages/customerservicepage.h"
 #include "pages/homepage.h"
 #include "pages/profilepage.h"
 #include "pages/stationdetailpage.h"
@@ -18,6 +19,8 @@
 #include <QSignalSpy>
 #include <QStackedWidget>
 #include <QTemporaryDir>
+#include <QTextBrowser>
+#include <QTextEdit>
 #include <QUrlQuery>
 #include <QtTest>
 
@@ -272,6 +275,28 @@ void UserUiTest::chargingEntryChecksActiveOrder()
     QCOMPARE(checkSpy.count(), 1);
     window.handleActiveOrderCheck(false, {});
     QCOMPARE(pages->currentWidget()->objectName(), QStringLiteral("chargingPage"));
+}
+
+void UserUiTest::customerServiceSubmitsQuestion()
+{
+    CustomerServicePage page;
+    QSignalSpy questionSpy(&page, &CustomerServicePage::questionSubmitted);
+    auto *input = page.findChild<QTextEdit *>(QStringLiteral("customerQuestionInput"));
+    auto *send = page.findChild<QPushButton *>(QStringLiteral("userPrimaryButton"));
+    auto *conversation = page.findChild<QTextBrowser *>(QStringLiteral("customerConversation"));
+    QVERIFY(input);
+    QVERIFY(send);
+    QVERIFY(conversation);
+    input->setPlainText(QStringLiteral("  如何输入电桩编号？  "));
+    QTest::mouseClick(send, Qt::LeftButton);
+    QCOMPARE(questionSpy.count(), 1);
+    QCOMPARE(questionSpy.takeFirst().at(0).toString(),
+             QStringLiteral("如何输入电桩编号？"));
+    QVERIFY(!send->isEnabled());
+    page.showAnswer(QStringLiteral("请在首页输入编号"),
+                    QStringLiteral("qwen2.5:0.5b"), true);
+    QVERIFY(send->isEnabled());
+    QVERIFY(conversation->toPlainText().contains(QStringLiteral("请在首页输入编号")));
 }
 
 void UserUiTest::compactAppVisualShellIsPresent()

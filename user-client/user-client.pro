@@ -13,6 +13,7 @@ HEADERS += \
     ui/usermainwindow.h \
     pages/homepage.h \
     pages/chargingpage.h \
+    pages/customerservicepage.h \
     pages/profilepage.h \
     pages/stationutils.h \
     pages/stationdetailpage.h \
@@ -26,6 +27,7 @@ SOURCES += \
     ui/usermainwindow.cpp \
      pages/homepage.cpp \
     pages/chargingpage.cpp \
+    pages/customerservicepage.cpp \
     pages/profilepage.cpp \
     pages/stationutils.cpp \
     pages/stationdetailpage.cpp \

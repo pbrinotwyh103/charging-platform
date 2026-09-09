@@ -4,6 +4,7 @@
 #include "pages/homepage.h"
 #include "pages/chargingpage.h"
 #include "pages/stationdetailpage.h"
+#include "pages/customerservicepage.h"
 #include "pages/profilepage.h"
 
 #include <QApplication>
@@ -53,6 +54,9 @@ int main(int argc, char *argv[])
         QObject::connect(window.findChild<HomePage *>(), &HomePage::stationsRequested, &controller, &ClientApi::requestStations);
         QObject::connect(window.findChild<HomePage *>(), &HomePage::pileCodeRequested,
                          &controller, &ClientApi::requestPileByCode);
+        QObject::connect(window.findChild<CustomerServicePage *>(),
+                         &CustomerServicePage::questionSubmitted,
+                         &controller, &ClientApi::askCustomerService);
         QObject::connect(window.findChild<StationDetailPage *>(), &StationDetailPage::pilesRequested, &controller, &ClientApi::requestPiles);
         QObject::connect(&window, &UserMainWindow::reservationRequested, &controller, &ClientApi::createReservation);
         QObject::connect(window.findChild<ChargingPage *>(), &ChargingPage::startChargingRequested, &controller, &ClientApi::startCharging);
@@ -66,6 +70,12 @@ int main(int argc, char *argv[])
                      &window, &UserMainWindow::showDirectPile);
     QObject::connect(&controller, &ClientApi::pileCodeLookupFailed,
                      window.findChild<HomePage *>(), &HomePage::showPileLookupError);
+    QObject::connect(&controller, &ClientApi::customerServiceAnswered,
+                     window.findChild<CustomerServicePage *>(),
+                     &CustomerServicePage::showAnswer);
+    QObject::connect(&controller, &ClientApi::customerServiceFailed,
+                     window.findChild<CustomerServicePage *>(),
+                     &CustomerServicePage::showError);
     if (!parser.isSet(demoOption)) {
         QObject::connect(window.findChild<StationDetailPage *>(), &StationDetailPage::favoriteRequested,
                          &controller, &ClientApi::toggleFavorite);

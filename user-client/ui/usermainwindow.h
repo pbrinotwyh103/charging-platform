@@ -12,6 +12,7 @@ class QStackedWidget;
 class QWidget;
 class HomePage;
 class ChargingPage;
+class CustomerServicePage;
 class ProfilePage;
 class StationDetailPage;
 
@@ -55,6 +56,7 @@ private:
     HomePage *m_homePage = nullptr;
     ChargingPage *m_chargingPage = nullptr;
     ProfilePage *m_profilePage = nullptr;
+    CustomerServicePage *m_customerServicePage = nullptr;
     StationDetailPage *m_stationDetailPage = nullptr;
     bool m_demoMode = false;
     bool m_waitingForChargingEntry = false;

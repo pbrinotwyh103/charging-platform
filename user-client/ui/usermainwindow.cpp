@@ -3,6 +3,7 @@
 #include "app/appinfo.h"
 #include "pages/homepage.h"
 #include "pages/chargingpage.h"
+#include "pages/customerservicepage.h"
 #include "pages/profilepage.h"
 #include "pages/stationdetailpage.h"
 #include "map/mapnavigator.h"
@@ -183,6 +184,7 @@ UserMainWindow::UserMainWindow(QWidget *parent)
 
     m_homePage = new HomePage(m_pages);
     m_chargingPage = new ChargingPage(m_pages);
+    m_customerServicePage = new CustomerServicePage(m_pages);
     m_profilePage = new ProfilePage(m_pages);
     m_stationDetailPage = new StationDetailPage(m_pages);
     connect(m_profilePage, &ProfilePage::logoutRequested, this, &UserMainWindow::logoutRequested);
@@ -192,18 +194,23 @@ UserMainWindow::UserMainWindow(QWidget *parent)
     nav->setContentsMargins(0, 0, 0, 0);
     auto *homeButton = new QPushButton(QStringLiteral("首页"), m_navWidget);
     auto *chargingButton = new QPushButton(QStringLiteral("充电"), m_navWidget);
+    auto *serviceButton = new QPushButton(QStringLiteral("客服"), m_navWidget);
     auto *mineButton = new QPushButton(QStringLiteral("我的"), m_navWidget);
     homeButton->setObjectName(QStringLiteral("homeNavigationButton"));
     chargingButton->setObjectName(QStringLiteral("chargingNavigationButton"));
+    serviceButton->setObjectName(QStringLiteral("customerServiceNavigationButton"));
     mineButton->setObjectName(QStringLiteral("profileNavigationButton"));
     homeButton->setProperty("class", QStringLiteral("userBottomNavButton"));
     chargingButton->setProperty("class", QStringLiteral("userBottomNavButton"));
+    serviceButton->setProperty("class", QStringLiteral("userBottomNavButton"));
     mineButton->setProperty("class", QStringLiteral("userBottomNavButton"));
-    nav->addWidget(homeButton); nav->addWidget(chargingButton); nav->addWidget(mineButton);
+    nav->addWidget(homeButton); nav->addWidget(chargingButton);
+    nav->addWidget(serviceButton); nav->addWidget(mineButton);
 
     m_pages->addWidget(loginPage);
     m_pages->addWidget(m_homePage);
     m_pages->addWidget(m_chargingPage);
+    m_pages->addWidget(m_customerServicePage);
     m_pages->addWidget(m_profilePage);
     m_pages->addWidget(m_stationDetailPage);
     connect(homeButton, &QPushButton::clicked, this, [this] { m_pages->setCurrentWidget(m_homePage); });
@@ -219,6 +226,16 @@ UserMainWindow::UserMainWindow(QWidget *parent)
         emit activeOrderCheckRequested();
     });
     connect(mineButton, &QPushButton::clicked, this, [this] { m_pages->setCurrentWidget(m_profilePage); });
+    connect(serviceButton, &QPushButton::clicked, this,
+            [this] { m_pages->setCurrentWidget(m_customerServicePage); });
+    connect(m_customerServicePage, &CustomerServicePage::questionSubmitted,
+            this, [this](const QString &question) {
+        if (!m_demoMode) return;
+        const QString answer = question.contains(QStringLiteral("故障"))
+            ? QStringLiteral("请先在充电页停止充电，并联系现场人员；管理员也可以远程停止电桩。")
+            : QStringLiteral("演示模式客服：您可以输入电桩编号直接连接，或先查找附近站点再预约空闲电桩。");
+        m_customerServicePage->showAnswer(answer, QStringLiteral("演示知识库"), false);
+    });
     connect(m_homePage, &HomePage::stationSelected, this, [this](const QJsonObject &s) { m_stationDetailPage->setStation(s); m_pages->setCurrentWidget(m_stationDetailPage); });
     connect(m_stationDetailPage, &StationDetailPage::backRequested, this, [this] { m_pages->setCurrentWidget(m_homePage); });
     connect(m_homePage, &HomePage::stationsRequested, this,

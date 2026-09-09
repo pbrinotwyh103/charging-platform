@@ -71,6 +71,16 @@ ClientApi::ClientApi(QObject *parent) : QObject(parent)
                    m.header.messageType == Charging::MessageType::ChargingStoppedPush) {
             if (m.header.statusCode == Charging::ErrorCode::Success) emit chargingStopped(m.payload);
             else emit featureUnavailable(QStringLiteral("停止充电失败：%1").arg(m.payload.value(QStringLiteral("message")).toString()));
+        } else if (m.header.messageType == Charging::MessageType::CustomerServiceResponse) {
+            if (m.header.statusCode == Charging::ErrorCode::Success)
+                emit customerServiceAnswered(
+                    m.payload.value(QStringLiteral("answer")).toString(),
+                    m.payload.value(QStringLiteral("model")).toString(),
+                    m.payload.value(QStringLiteral("modelAvailable")).toBool());
+            else
+                emit customerServiceFailed(Charging::errorMessage(
+                    m.header.statusCode,
+                    m.payload.value(QStringLiteral("message")).toString()));
         } else if (m.header.messageType == Charging::MessageType::LogoutResponse) emit loggedOut();
     });
 }
@@ -106,4 +116,12 @@ void ClientApi::requestPileByCode(const QString &pileCode)
                            m_connection.nextRequestId(),
                            {{QStringLiteral("pileCode"), pileCode.trimmed()}}))
         emit pileCodeLookupFailed(QStringLiteral("当前未连接服务器"));
+}
+
+void ClientApi::askCustomerService(const QString &question)
+{
+    if (!m_connection.send(Charging::MessageType::CustomerServiceRequest,
+                           m_connection.nextRequestId(),
+                           {{QStringLiteral("question"), question.trimmed()}}))
+        emit customerServiceFailed(QStringLiteral("当前未连接服务器"));
 }

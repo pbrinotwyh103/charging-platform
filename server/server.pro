@@ -32,6 +32,7 @@ HEADERS += \
     services/authservice.h \
     services/billingservice.h \
     services/chargingservice.h \
+    services/customerserviceservice.h \
     services/orderservice.h \
     services/pileservice.h \
     services/reservationservice.h \
@@ -72,6 +73,7 @@ SOURCES += \
     services/orderservice.cpp \
     services/billingservice.cpp \
     services/chargingservice.cpp \
+    services/customerserviceservice.cpp \
     services/alarmservice.cpp \
     services/adminservice.cpp \
     services/statisticsservice.cpp \

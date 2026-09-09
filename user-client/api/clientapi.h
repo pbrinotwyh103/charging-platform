@@ -27,6 +27,7 @@ public:
     void requestStations(const QString &region, const QString &address, double latitude, double longitude);
     void requestPiles(qint64 stationId);
     void requestPileByCode(const QString &pileCode);
+    void askCustomerService(const QString &question);
     bool connected() const { return m_connection.isConnected(); }
 
 signals:
@@ -47,6 +48,9 @@ signals:
     void chargingSnapshotReceived(const QJsonObject &);
     void activeOrderChecked(bool active, const QJsonObject &snapshot);
     void chargingStopped(const QJsonObject &);
+    void customerServiceAnswered(const QString &answer, const QString &model,
+                                 bool modelAvailable);
+    void customerServiceFailed(const QString &message);
 
 private:
     Charging::ClientConnection m_connection;
