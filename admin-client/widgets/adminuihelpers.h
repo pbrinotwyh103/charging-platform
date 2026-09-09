@@ -170,8 +170,7 @@ inline void enableTouchScrolling(QAbstractScrollArea *area) {
   if (!area)
     return;
   area->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-  area->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-  QScroller::grabGesture(area->viewport(), QScroller::TouchGesture);
+  area->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
 }
 
 inline void configureTouchTable(QTableWidget *table) {
@@ -181,14 +180,14 @@ inline void configureTouchTable(QTableWidget *table) {
   table->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
   table->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
   table->setCornerButtonEnabled(false);
-  table->setFocusPolicy(Qt::NoFocus);
+  table->setFocusPolicy(Qt::StrongFocus);
   table->setShowGrid(false);
   table->setTextElideMode(Qt::ElideRight);
   table->setWordWrap(false);
   table->horizontalHeader()->setHighlightSections(false);
-  table->horizontalHeader()->setMinimumSectionSize(72);
-  table->verticalHeader()->setDefaultSectionSize(54);
-  table->verticalHeader()->setMinimumSectionSize(54);
+  table->horizontalHeader()->setMinimumSectionSize(64);
+  table->verticalHeader()->setDefaultSectionSize(42);
+  table->verticalHeader()->setMinimumSectionSize(38);
 }
 
 inline void setResponsiveColumns(QTableWidget *table,

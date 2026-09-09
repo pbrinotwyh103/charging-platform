@@ -28,8 +28,8 @@ PileStatusChartWidget::PileStatusChartWidget(QWidget *parent)
     : QWidget(parent) {
   setObjectName(QStringLiteral("pileStatusChartWidget"));
   auto *root = new QVBoxLayout(this);
-  root->setContentsMargins(0, 0, 0, 0);
-  root->setSpacing(6);
+  root->setContentsMargins(18, 16, 18, 14);
+  root->setSpacing(10);
   auto *title = new QLabel(QStringLiteral("电桩状态占比"), this);
   title->setObjectName(QStringLiteral("sectionTitle"));
   root->addWidget(title);
@@ -40,14 +40,14 @@ PileStatusChartWidget::PileStatusChartWidget(QWidget *parent)
   chart->setBackgroundVisible(false);
   chart->setMargins(QMargins(0, 0, 0, 0));
   chart->legend()->setAlignment(Qt::AlignBottom);
-  chart->legend()->setLabelColor(QColor(QStringLiteral("#526560")));
+  chart->legend()->setLabelColor(QColor(QStringLiteral("#536268")));
   chart->addSeries(m_series);
   auto *view = new QChartView(chart, this);
   view->setObjectName(QStringLiteral("pileStatusChartView"));
   view->setRenderHint(QPainter::Antialiasing);
   view->setFrameShape(QFrame::NoFrame);
   view->setBackgroundBrush(Qt::transparent);
-  view->setMinimumHeight(235);
+  view->setMinimumHeight(280);
   root->addWidget(view);
 
   m_statusTable = new QTableWidget(3, 3, this);

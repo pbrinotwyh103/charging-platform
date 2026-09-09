@@ -5,6 +5,7 @@
 
 #include <QAbstractItemView>
 #include <QComboBox>
+#include <QFrame>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -13,6 +14,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QResizeEvent>
+#include <QSplitter>
 #include <QTableWidget>
 #include <QVBoxLayout>
 
@@ -34,38 +36,56 @@ QString alarmStatusValue(const QJsonObject &alarm) {
 AlarmsPage::AlarmsPage(QWidget *parent) : QWidget(parent) {
   setObjectName(QStringLiteral("alarmsPage"));
   auto *root = new QVBoxLayout(this);
-  root->setContentsMargins(12, 12, 12, 12);
-  root->setSpacing(9);
+  root->setContentsMargins(0, 0, 0, 0);
+  root->setSpacing(12);
   auto *title = new QLabel(QStringLiteral("异常告警中心"), this);
   title->setObjectName(QStringLiteral("pageTitle"));
   root->addWidget(title);
 
-  auto *filters = new QGridLayout;
-  m_severity = new QComboBox(this);
+  auto *filterBar = new QFrame(this);
+  filterBar->setObjectName(QStringLiteral("filterBar"));
+  auto *filters = new QHBoxLayout(filterBar);
+  filters->setContentsMargins(12, 10, 12, 10);
+  filters->setSpacing(10);
+  auto *filterTitle = new QLabel(QStringLiteral("筛选条件"), filterBar);
+  filterTitle->setObjectName(QStringLiteral("sectionTitle"));
+  m_severity = new QComboBox(filterBar);
   m_severity->setObjectName(QStringLiteral("alarmSeverityFilter"));
+  m_severity->setMinimumWidth(170);
   m_severity->addItem(QStringLiteral("全部级别"), QString());
   m_severity->addItem(QStringLiteral("严重"), QStringLiteral("critical"));
   m_severity->addItem(QStringLiteral("警告"), QStringLiteral("warning"));
   m_severity->addItem(QStringLiteral("提示"), QStringLiteral("info"));
-  m_status = new QComboBox(this);
+  m_status = new QComboBox(filterBar);
   m_status->setObjectName(QStringLiteral("alarmStatusFilter"));
+  m_status->setMinimumWidth(170);
   m_status->addItem(QStringLiteral("全部状态"), QString());
   m_status->addItem(QStringLiteral("待处理"), QStringLiteral("open"));
   m_status->addItem(QStringLiteral("已确认"), QStringLiteral("acknowledged"));
   m_status->addItem(QStringLiteral("已恢复"), QStringLiteral("resolved"));
-  filters->setHorizontalSpacing(8);
-  filters->setVerticalSpacing(8);
-  filters->addWidget(m_severity, 0, 0);
-  filters->addWidget(m_status, 0, 1);
-  filters->setColumnStretch(0, 1);
-  filters->setColumnStretch(1, 1);
-  root->addLayout(filters);
+  filters->addWidget(filterTitle);
+  filters->addSpacing(8);
+  filters->addWidget(m_severity);
+  filters->addWidget(m_status);
+  filters->addStretch();
+  root->addWidget(filterBar);
 
   connect(m_severity, &QComboBox::currentIndexChanged, this,
           [this] { requestPage(1); });
   connect(m_status, &QComboBox::currentIndexChanged, this,
           [this] { requestPage(1); });
-  m_table = new QTableWidget(this);
+  auto *splitter = new QSplitter(Qt::Horizontal, this);
+  splitter->setObjectName(QStringLiteral("alarmSplitter"));
+  splitter->setChildrenCollapsible(false);
+  auto *tablePanel = new QFrame(splitter);
+  tablePanel->setObjectName(QStringLiteral("tablePanel"));
+  auto *tableLayout = new QVBoxLayout(tablePanel);
+  tableLayout->setContentsMargins(14, 12, 14, 12);
+  tableLayout->setSpacing(9);
+  auto *tableTitle = new QLabel(QStringLiteral("告警记录"), tablePanel);
+  tableTitle->setObjectName(QStringLiteral("sectionTitle"));
+  tableLayout->addWidget(tableTitle);
+  m_table = new QTableWidget(tablePanel);
   m_table->setObjectName(QStringLiteral("alarmTable"));
   m_table->setColumnCount(7);
   m_table->setHorizontalHeaderLabels(
@@ -90,27 +110,35 @@ AlarmsPage::AlarmsPage(QWidget *parent) : QWidget(parent) {
     showDetail(alarm);
     updateResponsiveLayout();
   });
-  root->addWidget(m_table, 1);
+  tableLayout->addWidget(m_table, 1);
 
-  m_stateLabel = new QLabel(QStringLiteral("等待告警数据"), this);
+  m_stateLabel = new QLabel(QStringLiteral("等待告警数据"), tablePanel);
   m_stateLabel->setObjectName(QStringLiteral("alarmStateLabel"));
   m_stateLabel->setWordWrap(true);
-  root->addWidget(m_stateLabel);
+  tableLayout->addWidget(m_stateLabel);
 
-  m_detailBox = new QGroupBox(QStringLiteral("告警详情"), this);
+  m_pagination = new PaginationBar(tablePanel);
+  connect(m_pagination, &PaginationBar::pageRequested, this,
+          &AlarmsPage::requestPage);
+  tableLayout->addWidget(m_pagination);
+
+  m_detailBox = new QGroupBox(QStringLiteral("告警详情"), splitter);
   m_detailBox->setObjectName(QStringLiteral("alarmDetailBox"));
+  m_detailBox->setMinimumWidth(280);
+  m_detailBox->setMaximumWidth(360);
   auto *detailLayout = new QVBoxLayout(m_detailBox);
   m_detailLabel = new QLabel(QStringLiteral("请选择一条告警"), m_detailBox);
   m_detailLabel->setObjectName(QStringLiteral("alarmDetailLabel"));
   m_detailLabel->setWordWrap(true);
   m_detailLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
   detailLayout->addWidget(m_detailLabel);
-  root->addWidget(m_detailBox);
-
-  m_pagination = new PaginationBar(this);
-  connect(m_pagination, &PaginationBar::pageRequested, this,
-          &AlarmsPage::requestPage);
-  root->addWidget(m_pagination);
+  detailLayout->addStretch();
+  splitter->addWidget(tablePanel);
+  splitter->addWidget(m_detailBox);
+  splitter->setStretchFactor(0, 1);
+  splitter->setStretchFactor(1, 0);
+  splitter->setSizes({880, 320});
+  root->addWidget(splitter, 1);
   updateResponsiveLayout();
 }
 
@@ -237,7 +265,7 @@ void AlarmsPage::resizeEvent(QResizeEvent *event) {
 }
 
 void AlarmsPage::updateResponsiveLayout() {
-  const bool compact = width() < 720;
+  const bool compact = width() < 720 && window()->width() < 900;
   AdminUi::setResponsiveColumns(m_table, {1, 3, 5}, compact);
   if (m_detailBox)
     m_detailBox->setVisible(!compact || m_table->currentRow() >= 0);

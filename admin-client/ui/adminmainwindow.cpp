@@ -9,6 +9,7 @@
 #include "protocol/errorcodes.h"
 #include "protocol/messagetypes.h"
 
+#include <QAbstractItemView>
 #include <QDate>
 #include <QFormLayout>
 #include <QFrame>
@@ -17,13 +18,14 @@
 #include <QJsonArray>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
+#include <QListWidgetItem>
 #include <QPushButton>
 #include <QSize>
 #include <QSpinBox>
 #include <QStackedWidget>
 #include <QStyle>
 #include <QStringList>
-#include <QTabBar>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -47,89 +49,107 @@ QJsonArray demoRevenuePoints(int days) {
 } // namespace
 
 AdminMainWindow::AdminMainWindow(QWidget *parent) : QMainWindow(parent) {
-  setWindowTitle(QStringLiteral("充电运营管理"));
-  resize(1280, 820);
-  setMinimumSize(360, 640);
+  setWindowTitle(QStringLiteral("充电运营管理平台"));
+  resize(1440, 900);
+  setMinimumSize(1080, 680);
   setStyleSheet(QStringLiteral(R"(
-        QMainWindow, QWidget { background:#eef5ff; color:#132238; font-size:14px; font-family:"PingFang SC","Microsoft YaHei","Arial"; }
+        QMainWindow, QWidget { background:#f4f6f8; color:#1f2933; font-size:14px; font-family:"Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Arial"; }
         QLabel { background:transparent; }
-        QLabel#appTitle { font-size:26px; font-weight:800; color:#063b5f; padding:8px 8px 0 8px; }
-        QLabel#pageTitle { font-size:22px; font-weight:800; color:#132238; }
-        QLabel#workspaceTitle { font-size:22px; font-weight:800; color:#12213a; }
-        QLabel#sectionTitle { font-size:16px; font-weight:800; color:#25385f; }
-        QLabel#adminNameLabel { color:#63718b; font-size:12px; font-weight:700; }
-        QLabel#permissionLabel { padding:3px 9px; border-radius:10px; background:#e8f5ff; color:#1d4ed8; font-size:11px; font-weight:700; }
-        QFrame#workspaceHeader { background:#ffffff; border:1px solid #dce8fb; border-radius:18px; }
-        QWidget#dashboardShell { background:#eef5ff; }
-        QLabel#connectionStatus { margin:0 4px; padding:10px 12px; border:1px solid #dbeafe; border-radius:12px; background:#ffffff; color:#475569; }
-        QLabel#connectionStatus[connected="true"] { border-color:#99f6e4; background:#ecfeff; color:#00867a; }
-        QLabel#connectionStatus[connected="false"] { border-color:#fed7aa; background:#fff7ed; color:#c2410c; }
-        QLabel#compactConnectionStatus { padding:7px 10px; border-radius:12px; font-size:12px; font-weight:800; }
-        QLabel#compactConnectionStatus[connected="true"] { background:#dffdf7; color:#008b7f; }
-        QLabel#compactConnectionStatus[connected="false"] { background:#fff3df; color:#c2410c; }
-        QLabel#noticeLabel { padding:10px 12px; border-left:4px solid #29BDFD; border-radius:12px; background:#f0f9ff; color:#075985; }
-        QLabel#noticeLabel[error="true"] { border-left-color:#F53255; background:#fff1f2; color:#be123c; }
+        QWidget#loginPage { background:#edf1f2; }
+        QFrame#loginBrandPanel { background:#18373d; border:0; }
+        QLabel#brandKicker { color:#4fd1c5; font-size:13px; font-weight:700; }
+        QLabel#appTitle { color:#ffffff; font-size:34px; font-weight:700; }
+        QLabel#brandSubtitle { color:#c6d6d9; font-size:16px; }
+        QLabel#brandVersion { color:#8fa8ad; font-size:12px; }
+        QWidget#loginSurface { background:#edf1f2; }
+        QFrame#loginPanel { background:#ffffff; border:1px solid #d9e0e3; border-radius:8px; }
+        QLabel#loginTitle { color:#172327; font-size:25px; font-weight:700; }
+        QLabel#loginSubtitle { color:#66757a; font-size:13px; }
+        QLabel#fieldLabel { color:#445258; font-size:12px; font-weight:600; }
+        QLabel#loginErrorLabel { color:#b42336; background:#fff2f3; border:1px solid #ffd5da; border-radius:4px; padding:8px 10px; }
+        QLabel#loginErrorLabel:empty { border:0; background:transparent; padding:0; }
+        QLabel#pageTitle { font-size:22px; font-weight:700; color:#1f2933; }
+        QLabel#workspaceTitle { font-size:22px; font-weight:700; color:#172327; }
+        QLabel#workspaceSubtitle { color:#718087; font-size:12px; }
+        QLabel#sectionTitle { font-size:15px; font-weight:700; color:#27363b; }
+        QWidget#dashboardShell { background:#f4f6f8; }
+        QFrame#sideBar { background:#182a2f; border:0; }
+        QLabel#sideBrandMark { color:#13272c; background:#46c5b7; border-radius:6px; font-size:17px; font-weight:800; }
+        QLabel#sideBrandTitle { color:#f7faf9; font-size:16px; font-weight:700; }
+        QLabel#sideBrandCaption { color:#8fa6aa; font-size:11px; }
+        QListWidget#sideNavigation { background:transparent; border:0; outline:0; color:#b9c8cb; }
+        QListWidget#sideNavigation::item { min-height:46px; border-radius:5px; padding:0 12px; margin:2px 0; }
+        QListWidget#sideNavigation::item:hover { background:#233c42; color:#ffffff; }
+        QListWidget#sideNavigation::item:selected { background:#2c4d52; color:#ffffff; border-left:3px solid #46c5b7; padding-left:9px; }
+        QFrame#sidebarAccount { background:#21373c; border:1px solid #2d474d; border-radius:6px; }
+        QLabel#adminNameLabel { color:#f6f9f8; font-size:13px; font-weight:700; }
+        QLabel#permissionLabel { color:#9fb3b7; font-size:11px; }
+        QWidget#workspaceContent { background:#f4f6f8; }
+        QFrame#workspaceHeader { background:transparent; border:0; border-bottom:1px solid #dce2e4; }
+        QLabel#connectionStatus { padding:9px 11px; border:1px solid #d7dfe2; border-radius:4px; background:#f8fafb; color:#59686e; }
+        QLabel#connectionStatus[connected="true"] { border-color:#a9ddd5; background:#edf9f7; color:#08786d; }
+        QLabel#connectionStatus[connected="false"] { border-color:#f1c69c; background:#fff8ed; color:#9a5314; }
+        QLabel#compactConnectionStatus { padding:7px 10px; border:1px solid #d7dfe2; border-radius:4px; font-size:12px; font-weight:700; }
+        QLabel#compactConnectionStatus[connected="true"] { border-color:#a9ddd5; background:#edf9f7; color:#08786d; }
+        QLabel#compactConnectionStatus[connected="false"] { border-color:#f1c69c; background:#fff8ed; color:#9a5314; }
+        QLabel#noticeLabel { padding:9px 12px; border-left:3px solid #168b80; border-radius:4px; background:#edf8f6; color:#175f58; }
+        QLabel#noticeLabel[error="true"] { border-left-color:#cf3f50; background:#fff1f2; color:#a82234; }
         QLabel#overviewStateLabel, QLabel#monitorStateLabel, QLabel#alarmStateLabel,
         QLabel#stationStateLabel, QLabel#pileStateLabel, QLabel#userStateLabel,
-        QLabel#orderStateLabel { color:#64748b; font-size:12px; padding:4px 1px; }
-        QFrame#overviewHero { background:#10233f; border:0; border-radius:22px; }
-        QLabel#overviewHeroTitle { color:#ffffff; font-size:24px; font-weight:900; }
-        QLabel#overviewHeroSubtitle { color:#c9f6ff; font-size:13px; }
-        QLabel#overviewHeroChip { color:#073b4c; background:#bff8ff; padding:5px 10px; border-radius:12px; font-size:12px; font-weight:800; }
-        QFrame#metricCard { background:#ffffff; border:1px solid #dce8fb; border-radius:16px; }
-        QLabel#metricCaption { color:#64748b; font-size:12px; font-weight:700; }
-        QLabel[class="metricValue"] { font-size:22px; font-weight:900; }
-        QLabel[metricKind="revenue"] { color:#00a99a; }
-        QLabel[metricKind="orders"] { color:#246bfe; }
+        QLabel#orderStateLabel { color:#68777c; font-size:12px; padding:4px 1px; }
+        QFrame#metricCard { background:#ffffff; border:1px solid #dce2e4; border-radius:6px; }
+        QLabel#metricCaption { color:#708087; font-size:12px; font-weight:600; }
+        QLabel[class="metricValue"] { font-size:23px; font-weight:700; }
+        QLabel[metricKind="revenue"] { color:#08786d; }
+        QLabel[metricKind="orders"] { color:#324b55; }
+        QWidget#revenueChartWidget, QWidget#pileStatusChartWidget { background:#ffffff; border:1px solid #dce2e4; border-radius:6px; }
+        QFrame#filterBar, QFrame#tablePanel { background:#ffffff; border:1px solid #dce2e4; border-radius:6px; }
         QLineEdit, QSpinBox, QDoubleSpinBox, QDateEdit, QComboBox {
-            min-height:42px; padding:1px 12px; background:white; border:1px solid #d7e3f6; border-radius:12px; selection-background-color:#99f6e4;
+            min-height:36px; padding:0 10px; background:#ffffff; border:1px solid #cfd8dc; border-radius:4px; selection-background-color:#9fddd6;
         }
-        QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QDateEdit:focus, QComboBox:focus { border:2px solid #00CBBF; padding:0 11px; }
-        QComboBox::drop-down { width:30px; border:0; }
-        QPushButton { min-height:42px; padding:0 14px; border:1px solid #d7e3f6; border-radius:12px; background:#ffffff; color:#24324b; font-weight:700; }
-        QPushButton:hover { background:#f1f7ff; border-color:#bcd2f6; }
-        QPushButton:pressed { background:#e5efff; }
-        QPushButton:disabled { color:#94a3b8; background:#f3f7fb; border-color:#e2e8f0; }
-        QPushButton#primaryButton { background:#00CBBF; border-color:#00CBBF; color:white; font-weight:800; }
-        QPushButton#primaryButton:pressed { background:#00a99a; }
-        QPushButton#secondaryButton { color:#1d4ed8; border-color:#bfdbfe; background:#f8fbff; }
-        QPushButton#dangerButton { color:#F53255; border-color:#ffd3db; background:#fff7f9; }
-        QPushButton#dangerButton:pressed { background:#fee2e2; }
-        QPushButton#sevenDaysButton, QPushButton#thirtyDaysButton { min-height:34px; max-height:34px; padding:0 10px; background:#edf6ff; border-color:#dbeafe; color:#526580; }
+        QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QDateEdit:focus, QComboBox:focus { border:1px solid #168b80; }
+        QComboBox::drop-down { width:26px; border:0; }
+        QCheckBox { color:#4b5a60; spacing:7px; }
+        QPushButton { min-height:36px; padding:0 14px; border:1px solid #cfd8dc; border-radius:4px; background:#ffffff; color:#334248; font-weight:600; }
+        QPushButton:hover { background:#f2f7f6; border-color:#8ebcb6; }
+        QPushButton:pressed { background:#e7f1ef; }
+        QPushButton:disabled { color:#9ba7ab; background:#f2f4f5; border-color:#e1e6e8; }
+        QPushButton#primaryButton { background:#168b80; border-color:#168b80; color:white; }
+        QPushButton#primaryButton:hover { background:#11796f; }
+        QPushButton#primaryButton:pressed { background:#0d6a61; }
+        QPushButton#secondaryButton { color:#176e66; border-color:#9fcfc9; background:#f5fbfa; }
+        QPushButton#dangerButton { color:#b72e40; border-color:#e7aeb6; background:#fffafa; }
+        QPushButton#dangerButton:hover { background:#fff0f2; border-color:#d9808c; }
+        QPushButton#sevenDaysButton, QPushButton#thirtyDaysButton { min-height:30px; max-height:30px; padding:0 11px; background:#f3f6f7; border-color:#d9e0e2; color:#536268; }
         QPushButton#sevenDaysButton { border-top-right-radius:0; border-bottom-right-radius:0; }
         QPushButton#thirtyDaysButton { border-top-left-radius:0; border-bottom-left-radius:0; }
-        QPushButton#sevenDaysButton:checked, QPushButton#thirtyDaysButton:checked { background:#29BDFD; border-color:#29BDFD; color:white; }
-        QPushButton#previousPageButton, QPushButton#nextPageButton { min-width:44px; max-width:44px; min-height:44px; max-height:44px; padding:0; }
-        QLabel#pageNumberLabel { color:#526560; font-size:12px; font-weight:600; }
-        QToolButton { min-width:42px; max-width:42px; min-height:42px; max-height:42px; border:1px solid #dbeafe; border-radius:12px; background:white; }
-        QToolButton:hover { background:#edf6ff; }
-        QToolButton:pressed { background:#dbeafe; }
-        QTableWidget { background:white; alternate-background-color:#f8fbff; border:1px solid #dce8fb; border-radius:14px; gridline-color:transparent; selection-background-color:#e0f7fa; selection-color:#103f39; outline:0; }
-        QTableWidget::item { padding:8px; border-bottom:1px solid #edf3fb; }
-        QHeaderView::section { min-height:40px; background:#eff7ff; color:#24425f; padding:7px; border:0; border-bottom:1px solid #dce8fb; font-weight:800; }
-        QGroupBox { background:white; border:1px solid #dce8fb; border-radius:14px; margin-top:12px; padding-top:14px; }
-        QGroupBox::title { subcontrol-origin:margin; left:12px; padding:0 6px; color:#526580; font-weight:800; }
-        QTabWidget::pane { border:0; background:transparent; }
-        QTabBar::tab { min-height:42px; padding:0 14px; border:0; border-bottom:2px solid transparent; color:#64748b; background:transparent; }
-        QTabBar::tab:selected { border-bottom-color:#00CBBF; color:#008b7f; background:white; font-weight:800; }
-        QTabBar#bottomNavigation { background:#ffffff; border:1px solid #dce8fb; border-radius:18px; }
-        QTabBar#bottomNavigation::tab { min-height:54px; min-width:74px; padding:0 8px; border:0; border-top:3px solid transparent; color:#526580; background:white; }
-        QTabBar#bottomNavigation::tab:selected { border-top-color:#00CBBF; color:#008b7f; font-weight:800; }
-        QScrollArea { background:transparent; }
+        QPushButton#sevenDaysButton:checked, QPushButton#thirtyDaysButton:checked { background:#168b80; border-color:#168b80; color:white; }
+        QPushButton#previousPageButton, QPushButton#nextPageButton { min-width:36px; max-width:36px; min-height:36px; max-height:36px; padding:0; }
+        QLabel#pageNumberLabel { color:#68777c; font-size:12px; font-weight:600; }
+        QToolButton { min-width:36px; max-width:36px; min-height:36px; max-height:36px; border:1px solid #cfd8dc; border-radius:4px; background:white; }
+        QToolButton:hover { background:#eef5f4; border-color:#8ebcb6; }
+        QToolButton:pressed { background:#e1eeec; }
+        QTableWidget { background:white; alternate-background-color:#f8fafb; border:1px solid #dce2e4; border-radius:4px; gridline-color:transparent; selection-background-color:#dff2ef; selection-color:#173d39; outline:0; }
+        QTableWidget::item { padding:6px 8px; border-bottom:1px solid #e9edef; }
+        QHeaderView::section { min-height:38px; background:#eef2f3; color:#44545a; padding:6px 8px; border:0; border-bottom:1px solid #d8e0e2; font-weight:700; }
+        QGroupBox { background:white; border:1px solid #dce2e4; border-radius:6px; margin-top:10px; padding:18px 14px 14px 14px; }
+        QGroupBox::title { subcontrol-origin:margin; left:12px; padding:0 5px; color:#3e4d52; font-weight:700; }
+        QTabWidget::pane { border:1px solid #dce2e4; border-radius:5px; background:#ffffff; top:-1px; }
+        QTabBar::tab { min-height:36px; padding:0 18px; border:1px solid transparent; border-bottom:2px solid transparent; color:#68777c; background:transparent; }
+        QTabBar::tab:hover { color:#27373c; background:#eef4f3; }
+        QTabBar::tab:selected { border-bottom-color:#168b80; color:#126f66; background:white; font-weight:700; }
+        QSplitter::handle { background:#e5eaec; width:1px; height:1px; }
+        QScrollArea { background:transparent; border:0; }
+        QScrollBar:vertical { background:#eef1f2; width:10px; margin:0; }
+        QScrollBar::handle:vertical { background:#bac5c8; min-height:28px; border-radius:4px; }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }
+        QToolTip { color:#ffffff; background:#26383d; border:0; padding:5px; }
     )"));
 
   auto *central = new QWidget(this);
   auto *root = new QVBoxLayout(central);
-  root->setContentsMargins(8, 8, 8, 6);
-  root->setSpacing(6);
-  m_appTitleLabel = new QLabel(QStringLiteral("充电运营管理"), central);
-  m_appTitleLabel->setObjectName(QStringLiteral("appTitle"));
-  root->addWidget(m_appTitleLabel);
-  m_statusLabel = new QLabel(QStringLiteral("尚未连接后台服务器"), central);
-  m_statusLabel->setObjectName(QStringLiteral("connectionStatus"));
-  m_statusLabel->setProperty("connected", false);
-  m_statusLabel->setWordWrap(true);
-  root->addWidget(m_statusLabel);
+  root->setContentsMargins(0, 0, 0, 0);
+  root->setSpacing(0);
 
   m_pages = new QStackedWidget(central);
   m_pages->setObjectName(QStringLiteral("authenticationPages"));
@@ -146,44 +166,118 @@ AdminMainWindow::AdminMainWindow(QWidget *parent) : QMainWindow(parent) {
 
 QWidget *AdminMainWindow::createLoginPage() {
   auto *page = new QWidget(this);
-  auto *layout = new QVBoxLayout(page);
-  layout->setContentsMargins(8, 18, 8, 8);
-  layout->setSpacing(12);
-  auto *heading = new QLabel(QStringLiteral("管理员登录"), page);
-  heading->setObjectName(QStringLiteral("pageTitle"));
-  layout->addWidget(heading);
+  page->setObjectName(QStringLiteral("loginPage"));
+  auto *pageLayout = new QHBoxLayout(page);
+  pageLayout->setContentsMargins(0, 0, 0, 0);
+  pageLayout->setSpacing(0);
 
-  auto *credentials = new QFormLayout;
-  m_usernameEdit = new QLineEdit(QStringLiteral("admin"), page);
+  auto *brandPanel = new QFrame(page);
+  brandPanel->setObjectName(QStringLiteral("loginBrandPanel"));
+  brandPanel->setMinimumWidth(390);
+  auto *brandLayout = new QVBoxLayout(brandPanel);
+  brandLayout->setContentsMargins(64, 64, 64, 54);
+  brandLayout->setSpacing(12);
+  auto *brandKicker =
+      new QLabel(QStringLiteral("EV OPERATIONS  /  PC ADMIN"), brandPanel);
+  brandKicker->setObjectName(QStringLiteral("brandKicker"));
+  m_appTitleLabel =
+      new QLabel(QStringLiteral("充电运营\n管理平台"), brandPanel);
+  m_appTitleLabel->setObjectName(QStringLiteral("appTitle"));
+  auto *brandSubtitle =
+      new QLabel(QStringLiteral("面向充电站运营人员的桌面管理端"), brandPanel);
+  brandSubtitle->setObjectName(QStringLiteral("brandSubtitle"));
+  auto *brandLine = new QFrame(brandPanel);
+  brandLine->setFrameShape(QFrame::HLine);
+  brandLine->setStyleSheet(QStringLiteral("background:#315158; max-height:1px;"));
+  auto *brandVersion =
+      new QLabel(QStringLiteral("Charging Platform  ·  %1")
+                     .arg(Charging::AppInfo::Version),
+                 brandPanel);
+  brandVersion->setObjectName(QStringLiteral("brandVersion"));
+  brandLayout->addStretch(2);
+  brandLayout->addWidget(brandKicker);
+  brandLayout->addWidget(m_appTitleLabel);
+  brandLayout->addWidget(brandSubtitle);
+  brandLayout->addSpacing(18);
+  brandLayout->addWidget(brandLine);
+  brandLayout->addStretch(3);
+  brandLayout->addWidget(brandVersion);
+
+  auto *loginSurface = new QWidget(page);
+  loginSurface->setObjectName(QStringLiteral("loginSurface"));
+  auto *surfaceLayout = new QVBoxLayout(loginSurface);
+  surfaceLayout->setContentsMargins(56, 48, 56, 48);
+  surfaceLayout->addStretch();
+
+  auto *panel = new QFrame(loginSurface);
+  panel->setObjectName(QStringLiteral("loginPanel"));
+  panel->setMaximumWidth(460);
+  panel->setMinimumWidth(400);
+  auto *layout = new QVBoxLayout(panel);
+  layout->setContentsMargins(36, 32, 36, 32);
+  layout->setSpacing(10);
+  auto *heading = new QLabel(QStringLiteral("管理员登录"), panel);
+  heading->setObjectName(QStringLiteral("loginTitle"));
+  auto *subtitle = new QLabel(QStringLiteral("请输入管理账号和服务端连接信息"), panel);
+  subtitle->setObjectName(QStringLiteral("loginSubtitle"));
+  layout->addWidget(heading);
+  layout->addWidget(subtitle);
+  layout->addSpacing(14);
+
+  auto addFieldLabel = [layout, panel](const QString &text) {
+    auto *label = new QLabel(text, panel);
+    label->setObjectName(QStringLiteral("fieldLabel"));
+    layout->addWidget(label);
+  };
+
+  addFieldLabel(QStringLiteral("管理员账号"));
+  m_usernameEdit = new QLineEdit(QStringLiteral("admin"), panel);
   m_usernameEdit->setMaxLength(32);
-  m_passwordEdit = new QLineEdit(page);
+  layout->addWidget(m_usernameEdit);
+  addFieldLabel(QStringLiteral("登录密码"));
+  m_passwordEdit = new QLineEdit(panel);
   m_passwordEdit->setEchoMode(QLineEdit::Password);
   m_passwordEdit->setMaxLength(128);
   m_passwordEdit->setPlaceholderText(QStringLiteral("管理员密码"));
-  credentials->addRow(QStringLiteral("账号"), m_usernameEdit);
-  credentials->addRow(QStringLiteral("密码"), m_passwordEdit);
-  layout->addLayout(credentials);
-
-  auto *serverBox = new QGroupBox(QStringLiteral("服务器"), page);
-  auto *serverForm = new QFormLayout(serverBox);
-  m_hostEdit = new QLineEdit(QStringLiteral("127.0.0.1"), serverBox);
-  m_portSpin = new QSpinBox(serverBox);
+  layout->addWidget(m_passwordEdit);
+  layout->addSpacing(10);
+  auto *endpointTitle = new QLabel(QStringLiteral("服务器连接"), panel);
+  endpointTitle->setObjectName(QStringLiteral("sectionTitle"));
+  layout->addWidget(endpointTitle);
+  auto *serverForm = new QHBoxLayout;
+  serverForm->setSpacing(10);
+  m_hostEdit = new QLineEdit(QStringLiteral("127.0.0.1"), panel);
+  m_hostEdit->setPlaceholderText(QStringLiteral("服务器地址"));
+  m_portSpin = new QSpinBox(panel);
   m_portSpin->setRange(1, 65535);
   m_portSpin->setValue(Charging::AppInfo::DefaultServerPort);
-  serverForm->addRow(QStringLiteral("地址"), m_hostEdit);
-  serverForm->addRow(QStringLiteral("端口"), m_portSpin);
-  layout->addWidget(serverBox);
+  m_portSpin->setFixedWidth(112);
+  serverForm->addWidget(m_hostEdit, 1);
+  serverForm->addWidget(m_portSpin);
+  layout->addLayout(serverForm);
 
-  m_loginButton = new QPushButton(QStringLiteral("登录"), page);
+  m_loginButton = new QPushButton(QStringLiteral("登录管理平台"), panel);
   m_loginButton->setObjectName(QStringLiteral("primaryButton"));
-  m_loginButton->setMinimumHeight(42);
-  m_loginErrorLabel = new QLabel(page);
-  m_loginErrorLabel->setObjectName(QStringLiteral("loginErrorLabel"));
-  m_loginErrorLabel->setStyleSheet(QStringLiteral("color:#b91c1c;"));
-  m_loginErrorLabel->setWordWrap(true);
+  m_loginButton->setMinimumHeight(40);
+  layout->addSpacing(8);
   layout->addWidget(m_loginButton);
+  m_loginErrorLabel = new QLabel(panel);
+  m_loginErrorLabel->setObjectName(QStringLiteral("loginErrorLabel"));
+  m_loginErrorLabel->setWordWrap(true);
+  m_loginErrorLabel->hide();
   layout->addWidget(m_loginErrorLabel);
-  layout->addStretch();
+
+  m_statusLabel = new QLabel(QStringLiteral("尚未连接后台服务器"), panel);
+  m_statusLabel->setObjectName(QStringLiteral("connectionStatus"));
+  m_statusLabel->setProperty("connected", false);
+  m_statusLabel->setWordWrap(true);
+  layout->addSpacing(8);
+  layout->addWidget(m_statusLabel);
+
+  surfaceLayout->addWidget(panel, 0, Qt::AlignHCenter);
+  surfaceLayout->addStretch();
+  pageLayout->addWidget(brandPanel, 4);
+  pageLayout->addWidget(loginSurface, 6);
 
   connect(m_loginButton, &QPushButton::clicked, this, [this] {
     const QString username = m_usernameEdit->text().trimmed();
@@ -208,30 +302,88 @@ QWidget *AdminMainWindow::createLoginPage() {
 QWidget *AdminMainWindow::createWorkspacePage() {
   auto *page = new QWidget(this);
   page->setObjectName(QStringLiteral("dashboardShell"));
-  auto *root = new QVBoxLayout(page);
-  root->setContentsMargins(14, 14, 14, 10);
-  root->setSpacing(10);
-  auto *header = new QFrame(page);
+  auto *shell = new QHBoxLayout(page);
+  shell->setContentsMargins(0, 0, 0, 0);
+  shell->setSpacing(0);
+
+  auto *sidebar = new QFrame(page);
+  sidebar->setObjectName(QStringLiteral("sideBar"));
+  sidebar->setFixedWidth(224);
+  auto *sidebarLayout = new QVBoxLayout(sidebar);
+  sidebarLayout->setContentsMargins(18, 22, 18, 18);
+  sidebarLayout->setSpacing(16);
+  auto *brandRow = new QHBoxLayout;
+  brandRow->setSpacing(10);
+  auto *brandMark = new QLabel(QStringLiteral("EV"), sidebar);
+  brandMark->setObjectName(QStringLiteral("sideBrandMark"));
+  brandMark->setAlignment(Qt::AlignCenter);
+  brandMark->setFixedSize(42, 42);
+  auto *brandText = new QVBoxLayout;
+  brandText->setSpacing(0);
+  auto *brandTitle = new QLabel(QStringLiteral("充电运营中心"), sidebar);
+  brandTitle->setObjectName(QStringLiteral("sideBrandTitle"));
+  auto *brandCaption = new QLabel(QStringLiteral("PC 管理端"), sidebar);
+  brandCaption->setObjectName(QStringLiteral("sideBrandCaption"));
+  brandText->addWidget(brandTitle);
+  brandText->addWidget(brandCaption);
+  brandRow->addWidget(brandMark);
+  brandRow->addLayout(brandText, 1);
+  sidebarLayout->addLayout(brandRow);
+
+  m_navigation = new QListWidget(sidebar);
+  m_navigation->setObjectName(QStringLiteral("sideNavigation"));
+  m_navigation->setFrameShape(QFrame::NoFrame);
+  m_navigation->setSelectionMode(QAbstractItemView::SingleSelection);
+  m_navigation->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  m_navigation->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  m_navigation->setIconSize(QSize(19, 19));
+  const QList<QPair<QStyle::StandardPixmap, QString>> navigationItems = {
+      {QStyle::SP_DesktopIcon, QStringLiteral("运营概览")},
+      {QStyle::SP_MediaPlay, QStringLiteral("实时充电")},
+      {QStyle::SP_MessageBoxWarning, QStringLiteral("异常告警")},
+      {QStyle::SP_DriveHDIcon, QStringLiteral("站点资产")},
+      {QStyle::SP_FileDialogDetailedView, QStringLiteral("用户订单")}};
+  for (const auto &entry : navigationItems) {
+    auto *item = new QListWidgetItem(style()->standardIcon(entry.first),
+                                     entry.second, m_navigation);
+    item->setSizeHint(QSize(184, 48));
+    item->setTextAlignment(Qt::AlignVCenter);
+  }
+  sidebarLayout->addWidget(m_navigation, 1);
+
+  auto *accountPanel = new QFrame(sidebar);
+  accountPanel->setObjectName(QStringLiteral("sidebarAccount"));
+  auto *accountLayout = new QVBoxLayout(accountPanel);
+  accountLayout->setContentsMargins(12, 10, 12, 10);
+  accountLayout->setSpacing(2);
+  m_adminNameLabel = new QLabel(accountPanel);
+  m_adminNameLabel->setObjectName(QStringLiteral("adminNameLabel"));
+  m_permissionLabel = new QLabel(accountPanel);
+  m_permissionLabel->setObjectName(QStringLiteral("permissionLabel"));
+  m_permissionLabel->setWordWrap(true);
+  accountLayout->addWidget(m_adminNameLabel);
+  accountLayout->addWidget(m_permissionLabel);
+  sidebarLayout->addWidget(accountPanel);
+
+  auto *content = new QWidget(page);
+  content->setObjectName(QStringLiteral("workspaceContent"));
+  auto *root = new QVBoxLayout(content);
+  root->setContentsMargins(24, 14, 24, 18);
+  root->setSpacing(12);
+  auto *header = new QFrame(content);
   header->setObjectName(QStringLiteral("workspaceHeader"));
   auto *toolbar = new QHBoxLayout(header);
-  toolbar->setContentsMargins(16, 12, 16, 12);
+  toolbar->setContentsMargins(0, 2, 0, 14);
   toolbar->setSpacing(10);
   auto *identity = new QVBoxLayout;
-  identity->setSpacing(1);
+  identity->setSpacing(3);
   m_workspaceTitleLabel = new QLabel(QStringLiteral("运营概览"), header);
   m_workspaceTitleLabel->setObjectName(QStringLiteral("workspaceTitle"));
   identity->addWidget(m_workspaceTitleLabel);
-  auto *account = new QHBoxLayout;
-  account->setContentsMargins(0, 0, 0, 0);
-  account->setSpacing(6);
-  m_adminNameLabel = new QLabel(header);
-  m_adminNameLabel->setObjectName(QStringLiteral("adminNameLabel"));
-  m_permissionLabel = new QLabel(header);
-  m_permissionLabel->setObjectName(QStringLiteral("permissionLabel"));
-  account->addWidget(m_adminNameLabel);
-  account->addWidget(m_permissionLabel);
-  account->addStretch();
-  identity->addLayout(account);
+  m_workspaceSubtitleLabel =
+      new QLabel(QStringLiteral("查看核心运营指标与设备运行概况"), header);
+  m_workspaceSubtitleLabel->setObjectName(QStringLiteral("workspaceSubtitle"));
+  identity->addWidget(m_workspaceSubtitleLabel);
   m_workspaceStatusLabel = new QLabel(QStringLiteral("● 离线"), header);
   m_workspaceStatusLabel->setObjectName(
       QStringLiteral("compactConnectionStatus"));
@@ -279,34 +431,28 @@ QWidget *AdminMainWindow::createWorkspacePage() {
   }
   root->addWidget(m_contentPages, 1);
 
-  m_navigation = new QTabBar(page);
-  m_navigation->setObjectName(QStringLiteral("bottomNavigation"));
-  m_navigation->setExpanding(true);
-  m_navigation->setUsesScrollButtons(false);
-  m_navigation->setMinimumHeight(54);
-  m_navigation->setIconSize(QSize(18, 18));
-  m_navigation->addTab(style()->standardIcon(QStyle::SP_DesktopIcon),
-                       QStringLiteral("概览"));
-  m_navigation->addTab(style()->standardIcon(QStyle::SP_MediaPlay),
-                       QStringLiteral("充电"));
-  m_navigation->addTab(style()->standardIcon(QStyle::SP_MessageBoxWarning),
-                       QStringLiteral("告警"));
-  m_navigation->addTab(style()->standardIcon(QStyle::SP_DriveHDIcon),
-                       QStringLiteral("资产"));
-  m_navigation->addTab(
-      style()->standardIcon(QStyle::SP_FileDialogDetailedView),
-      QStringLiteral("管理"));
-  root->addWidget(m_navigation);
-  connect(m_navigation, &QTabBar::currentChanged, this, [this](int index) {
+  shell->addWidget(sidebar);
+  shell->addWidget(content, 1);
+  connect(m_navigation, &QListWidget::currentRowChanged, this,
+          [this](int index) {
     m_contentPages->setCurrentIndex(index);
     const QStringList titles = {
         QStringLiteral("运营概览"), QStringLiteral("实时充电"),
         QStringLiteral("异常告警"), QStringLiteral("站点资产"),
         QStringLiteral("用户订单")};
+    const QStringList subtitles = {
+        QStringLiteral("查看核心运营指标与设备运行概况"),
+        QStringLiteral("跟踪活动订单并处理远程停止请求"),
+        QStringLiteral("筛选设备告警并查看异常上下文"),
+        QStringLiteral("维护充电站信息并管理电桩状态"),
+        QStringLiteral("查询用户与订单，导出运营记录")};
     if (index >= 0 && index < titles.size())
       m_workspaceTitleLabel->setText(titles.at(index));
+    if (index >= 0 && index < subtitles.size())
+      m_workspaceSubtitleLabel->setText(subtitles.at(index));
     refreshCurrentPage();
   });
+  m_navigation->setCurrentRow(0);
 
   connect(m_overviewPage, &OverviewPage::commandRequested, this,
           &AdminMainWindow::adminCommandRequested);
@@ -340,11 +486,12 @@ void AdminMainWindow::setConnectionStatus(const QString &text, bool connected) {
 void AdminMainWindow::setLoginBusy(bool busy) {
   m_loginButton->setDisabled(busy);
   m_loginButton->setText(busy ? QStringLiteral("正在验证…")
-                              : QStringLiteral("登录"));
+                              : QStringLiteral("登录管理平台"));
 }
 
 void AdminMainWindow::showLoginError(const QString &message) {
   m_loginErrorLabel->setText(message);
+  m_loginErrorLabel->setVisible(!message.isEmpty());
 }
 
 void AdminMainWindow::showAdminHome(const QJsonObject &admin) {
@@ -355,7 +502,7 @@ void AdminMainWindow::showAdminHome(const QJsonObject &admin) {
       admin.value(QStringLiteral("username")).toString());
   m_permissionLabel->setText(
       admin.value(QStringLiteral("permissions")).toString());
-  m_navigation->setCurrentIndex(0);
+  m_navigation->setCurrentRow(0);
   m_contentPages->setCurrentIndex(0);
   m_pages->setCurrentIndex(1);
   m_refreshTimer->start();

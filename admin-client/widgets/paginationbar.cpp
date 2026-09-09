@@ -15,7 +15,7 @@ PaginationBar::PaginationBar(QWidget *parent) : QWidget(parent) {
   m_previousButton->setIcon(style()->standardIcon(QStyle::SP_ArrowLeft));
   m_previousButton->setToolTip(QStringLiteral("上一页"));
   m_previousButton->setAccessibleName(QStringLiteral("上一页"));
-  m_previousButton->setFixedSize(44, 44);
+  m_previousButton->setFixedSize(36, 36);
   m_pageLabel = new QLabel(this);
   m_pageLabel->setObjectName(QStringLiteral("pageNumberLabel"));
   m_pageLabel->setAlignment(Qt::AlignCenter);
@@ -25,7 +25,7 @@ PaginationBar::PaginationBar(QWidget *parent) : QWidget(parent) {
   m_nextButton->setIcon(style()->standardIcon(QStyle::SP_ArrowRight));
   m_nextButton->setToolTip(QStringLiteral("下一页"));
   m_nextButton->setAccessibleName(QStringLiteral("下一页"));
-  m_nextButton->setFixedSize(44, 44);
+  m_nextButton->setFixedSize(36, 36);
   layout->addStretch();
   layout->addWidget(m_previousButton);
   layout->addWidget(m_pageLabel);

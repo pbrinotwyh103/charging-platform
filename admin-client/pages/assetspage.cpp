@@ -9,6 +9,7 @@
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
+#include <QFrame>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -23,7 +24,10 @@
 #include <QResizeEvent>
 #include <QScrollArea>
 #include <QSignalBlocker>
+<<<<<<< Updated upstream
 #include <QSpinBox>
+=======
+>>>>>>> Stashed changes
 #include <QSplitter>
 #include <QTabWidget>
 #include <QTableWidget>
@@ -131,7 +135,8 @@ QJsonObject stationFromDialog(QWidget *parent, const QJsonObject &initial,
 AssetsPage::AssetsPage(QWidget *parent) : QWidget(parent) {
   setObjectName(QStringLiteral("assetsPage"));
   auto *root = new QVBoxLayout(this);
-  root->setContentsMargins(8, 8, 8, 8);
+  root->setContentsMargins(0, 0, 0, 0);
+  root->setSpacing(10);
   auto *title = new QLabel(QStringLiteral("站点与电桩"), this);
   title->setObjectName(QStringLiteral("pageTitle"));
   root->addWidget(title);
@@ -148,26 +153,32 @@ AssetsPage::AssetsPage(QWidget *parent) : QWidget(parent) {
 QWidget *AssetsPage::createStationsTab() {
   auto *page = new QWidget(this);
   auto *root = new QVBoxLayout(page);
-  root->setContentsMargins(4, 8, 4, 4);
-  root->setSpacing(8);
-  auto *tools = new QGridLayout;
-  m_stationSearch = new QLineEdit(page);
+  root->setContentsMargins(14, 12, 14, 14);
+  root->setSpacing(12);
+  auto *filterBar = new QFrame(page);
+  filterBar->setObjectName(QStringLiteral("filterBar"));
+  auto *tools = new QHBoxLayout(filterBar);
+  tools->setContentsMargins(12, 10, 12, 10);
+  tools->setSpacing(8);
+  auto *filterTitle = new QLabel(QStringLiteral("站点筛选"), filterBar);
+  filterTitle->setObjectName(QStringLiteral("sectionTitle"));
+  m_stationSearch = new QLineEdit(filterBar);
   m_stationSearch->setObjectName(QStringLiteral("stationSearchEdit"));
   m_stationSearch->setPlaceholderText(QStringLiteral("名称或地址"));
-  auto *searchButton = new QPushButton(QStringLiteral("查询"), page);
-  auto *addButton = new QPushButton(QStringLiteral("新增"), page);
+  m_stationSearch->setMinimumWidth(260);
+  auto *searchButton = new QPushButton(QStringLiteral("查询"), filterBar);
+  auto *addButton = new QPushButton(QStringLiteral("新增站点"), filterBar);
   addButton->setObjectName(QStringLiteral("primaryButton"));
-  m_editStationButton = new QPushButton(QStringLiteral("编辑"), page);
+  m_editStationButton = new QPushButton(QStringLiteral("编辑站点"), filterBar);
   m_editStationButton->setEnabled(false);
-  tools->setHorizontalSpacing(8);
-  tools->setVerticalSpacing(8);
-  tools->addWidget(m_stationSearch, 0, 0);
-  tools->addWidget(searchButton, 0, 1);
-  tools->addWidget(addButton, 1, 0);
-  tools->addWidget(m_editStationButton, 1, 1);
-  tools->setColumnStretch(0, 1);
-  tools->setColumnStretch(1, 1);
-  root->addLayout(tools);
+  tools->addWidget(filterTitle);
+  tools->addSpacing(6);
+  tools->addWidget(m_stationSearch, 1);
+  tools->addWidget(searchButton);
+  tools->addStretch();
+  tools->addWidget(addButton);
+  tools->addWidget(m_editStationButton);
+  root->addWidget(filterBar);
   connect(searchButton, &QPushButton::clicked, this,
           [this] { requestStations(1); });
   connect(m_stationSearch, &QLineEdit::returnPressed, searchButton,
@@ -177,7 +188,18 @@ QWidget *AssetsPage::createStationsTab() {
   connect(m_editStationButton, &QPushButton::clicked, this,
           [this] { openStationEditor(true); });
 
-  m_stationTable = new QTableWidget(page);
+  auto *splitter = new QSplitter(Qt::Horizontal, page);
+  splitter->setObjectName(QStringLiteral("stationSplitter"));
+  splitter->setChildrenCollapsible(false);
+  auto *tablePanel = new QFrame(splitter);
+  tablePanel->setObjectName(QStringLiteral("tablePanel"));
+  auto *tableLayout = new QVBoxLayout(tablePanel);
+  tableLayout->setContentsMargins(14, 12, 14, 12);
+  tableLayout->setSpacing(9);
+  auto *tableTitle = new QLabel(QStringLiteral("充电站列表"), tablePanel);
+  tableTitle->setObjectName(QStringLiteral("sectionTitle"));
+  tableLayout->addWidget(tableTitle);
+  m_stationTable = new QTableWidget(tablePanel);
   m_stationTable->setObjectName(QStringLiteral("stationTable"));
   m_stationTable->setColumnCount(9);
   m_stationTable->setHorizontalHeaderLabels(
@@ -195,6 +217,7 @@ QWidget *AssetsPage::createStationsTab() {
   AdminUi::configureTouchTable(m_stationTable);
   connect(m_stationTable, &QTableWidget::itemSelectionChanged, this,
           &AssetsPage::updateStationSelection);
+<<<<<<< Updated upstream
   m_stationState = new QLabel(QStringLiteral("等待站点数据"), page);
   m_stationState->setObjectName(QStringLiteral("stationStateLabel"));
   m_stationState->setWordWrap(true);
@@ -210,6 +233,23 @@ QWidget *AssetsPage::createStationsTab() {
   m_stationDetailBox = new QGroupBox(QStringLiteral("站点详情"), page);
   m_stationDetailBox->setObjectName(QStringLiteral("stationDetailBox"));
   m_stationDetailBox->setMinimumHeight(150);
+=======
+  tableLayout->addWidget(m_stationTable, 1);
+
+  m_stationState = new QLabel(QStringLiteral("等待站点数据"), tablePanel);
+  m_stationState->setObjectName(QStringLiteral("stationStateLabel"));
+  m_stationState->setWordWrap(true);
+  tableLayout->addWidget(m_stationState);
+  m_stationPagination = new PaginationBar(tablePanel);
+  connect(m_stationPagination, &PaginationBar::pageRequested, this,
+          &AssetsPage::requestStations);
+  tableLayout->addWidget(m_stationPagination);
+
+  m_stationDetailBox = new QGroupBox(QStringLiteral("站点详情"), splitter);
+  m_stationDetailBox->setObjectName(QStringLiteral("stationDetailBox"));
+  m_stationDetailBox->setMinimumWidth(280);
+  m_stationDetailBox->setMaximumWidth(360);
+>>>>>>> Stashed changes
   auto *detailLayout = new QVBoxLayout(m_stationDetailBox);
   auto *detailScroll = new QScrollArea(m_stationDetailBox);
   detailScroll->setObjectName(QStringLiteral("stationDetailScrollArea"));
@@ -219,6 +259,7 @@ QWidget *AssetsPage::createStationsTab() {
       new QLabel(QStringLiteral("请选择一个充电站"), m_stationDetailBox);
   m_stationDetail->setObjectName(QStringLiteral("stationDetailLabel"));
   m_stationDetail->setWordWrap(true);
+<<<<<<< Updated upstream
   m_stationDetail->setAlignment(Qt::AlignLeft | Qt::AlignTop);
   detailScroll->setWidget(m_stationDetail);
   detailLayout->addWidget(detailScroll);
@@ -231,20 +272,39 @@ QWidget *AssetsPage::createStationsTab() {
   connect(m_stationPagination, &PaginationBar::pageRequested, this,
           &AssetsPage::requestStations);
   root->addWidget(m_stationPagination);
+=======
+  m_stationDetail->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  detailLayout->addWidget(m_stationDetail);
+  detailLayout->addStretch();
+  splitter->addWidget(tablePanel);
+  splitter->addWidget(m_stationDetailBox);
+  splitter->setStretchFactor(0, 1);
+  splitter->setStretchFactor(1, 0);
+  splitter->setSizes({860, 320});
+  root->addWidget(splitter, 1);
+>>>>>>> Stashed changes
   return page;
 }
 
 QWidget *AssetsPage::createPilesTab() {
   auto *page = new QWidget(this);
   auto *root = new QVBoxLayout(page);
-  root->setContentsMargins(4, 8, 4, 4);
-  root->setSpacing(8);
-  auto *filters = new QGridLayout;
-  m_pileStationFilter = new QComboBox(page);
+  root->setContentsMargins(14, 12, 14, 14);
+  root->setSpacing(12);
+  auto *filterBar = new QFrame(page);
+  filterBar->setObjectName(QStringLiteral("filterBar"));
+  auto *filters = new QHBoxLayout(filterBar);
+  filters->setContentsMargins(12, 10, 12, 10);
+  filters->setSpacing(8);
+  auto *filterTitle = new QLabel(QStringLiteral("电桩筛选"), filterBar);
+  filterTitle->setObjectName(QStringLiteral("sectionTitle"));
+  m_pileStationFilter = new QComboBox(filterBar);
   m_pileStationFilter->setObjectName(QStringLiteral("pileStationFilter"));
+  m_pileStationFilter->setMinimumWidth(210);
   m_pileStationFilter->addItem(QStringLiteral("全部站点"), 0);
-  m_pileStatusFilter = new QComboBox(page);
+  m_pileStatusFilter = new QComboBox(filterBar);
   m_pileStatusFilter->setObjectName(QStringLiteral("pileStatusFilter"));
+  m_pileStatusFilter->setMinimumWidth(150);
   m_pileStatusFilter->addItem(QStringLiteral("全部状态"), QString());
   const QList<QPair<QString, QString>> statuses = {
       {QStringLiteral("空闲"), QStringLiteral("idle")},
@@ -255,15 +315,14 @@ QWidget *AssetsPage::createPilesTab() {
       {QStringLiteral("已停用"), QStringLiteral("disabled")}};
   for (const auto &status : statuses)
     m_pileStatusFilter->addItem(status.first, status.second);
-  auto *refreshButton = new QPushButton(QStringLiteral("查询"), page);
-  filters->setHorizontalSpacing(8);
-  filters->setVerticalSpacing(8);
-  filters->addWidget(m_pileStationFilter, 0, 0);
-  filters->addWidget(m_pileStatusFilter, 0, 1);
-  filters->addWidget(refreshButton, 1, 0, 1, 2);
-  filters->setColumnStretch(0, 1);
-  filters->setColumnStretch(1, 1);
-  root->addLayout(filters);
+  auto *refreshButton = new QPushButton(QStringLiteral("查询"), filterBar);
+  filters->addWidget(filterTitle);
+  filters->addSpacing(6);
+  filters->addWidget(m_pileStationFilter);
+  filters->addWidget(m_pileStatusFilter);
+  filters->addWidget(refreshButton);
+  filters->addStretch();
+  root->addWidget(filterBar);
   connect(m_pileStationFilter, &QComboBox::currentIndexChanged, this,
           [this] { requestPiles(1); });
   connect(m_pileStatusFilter, &QComboBox::currentIndexChanged, this,
@@ -271,7 +330,18 @@ QWidget *AssetsPage::createPilesTab() {
   connect(refreshButton, &QPushButton::clicked, this,
           [this] { requestPiles(1); });
 
-  m_pileTable = new QTableWidget(page);
+  auto *splitter = new QSplitter(Qt::Horizontal, page);
+  splitter->setObjectName(QStringLiteral("pileSplitter"));
+  splitter->setChildrenCollapsible(false);
+  auto *tablePanel = new QFrame(splitter);
+  tablePanel->setObjectName(QStringLiteral("tablePanel"));
+  auto *tableLayout = new QVBoxLayout(tablePanel);
+  tableLayout->setContentsMargins(14, 12, 14, 12);
+  tableLayout->setSpacing(9);
+  auto *tableTitle = new QLabel(QStringLiteral("充电桩列表"), tablePanel);
+  tableTitle->setObjectName(QStringLiteral("sectionTitle"));
+  tableLayout->addWidget(tableTitle);
+  m_pileTable = new QTableWidget(tablePanel);
   m_pileTable->setObjectName(QStringLiteral("pileTable"));
   m_pileTable->setColumnCount(7);
   m_pileTable->setHorizontalHeaderLabels(
@@ -289,28 +359,36 @@ QWidget *AssetsPage::createPilesTab() {
   AdminUi::configureTouchTable(m_pileTable);
   connect(m_pileTable, &QTableWidget::itemSelectionChanged, this,
           &AssetsPage::updatePileSelection);
-  root->addWidget(m_pileTable, 1);
+  tableLayout->addWidget(m_pileTable, 1);
 
-  m_pileState = new QLabel(QStringLiteral("等待电桩数据"), page);
+  m_pileState = new QLabel(QStringLiteral("等待电桩数据"), tablePanel);
   m_pileState->setObjectName(QStringLiteral("pileStateLabel"));
   m_pileState->setWordWrap(true);
-  root->addWidget(m_pileState);
-  m_pileDetailBox = new QGroupBox(QStringLiteral("电桩详情"), page);
+  tableLayout->addWidget(m_pileState);
+  m_pilePagination = new PaginationBar(tablePanel);
+  connect(m_pilePagination, &PaginationBar::pageRequested, this,
+          &AssetsPage::requestPiles);
+  tableLayout->addWidget(m_pilePagination);
+
+  m_pileDetailBox = new QGroupBox(QStringLiteral("电桩详情"), splitter);
   m_pileDetailBox->setObjectName(QStringLiteral("pileDetailBox"));
+  m_pileDetailBox->setMinimumWidth(290);
+  m_pileDetailBox->setMaximumWidth(370);
   auto *detailLayout = new QVBoxLayout(m_pileDetailBox);
   m_pileDetail =
       new QLabel(QStringLiteral("请选择一个充电桩"), m_pileDetailBox);
   m_pileDetail->setObjectName(QStringLiteral("pileDetailLabel"));
   m_pileDetail->setWordWrap(true);
+  m_pileDetail->setTextInteractionFlags(Qt::TextSelectableByMouse);
   detailLayout->addWidget(m_pileDetail);
-  root->addWidget(m_pileDetailBox);
+  detailLayout->addStretch();
 
   auto *actions = new QGridLayout;
-  m_stopPileButton = new QPushButton(QStringLiteral("停止"), page);
+  m_stopPileButton = new QPushButton(QStringLiteral("停止"), m_pileDetailBox);
   m_stopPileButton->setObjectName(QStringLiteral("dangerButton"));
-  m_restartPileButton = new QPushButton(QStringLiteral("重启"), page);
-  m_enablePileButton = new QPushButton(QStringLiteral("启用"), page);
-  m_disablePileButton = new QPushButton(QStringLiteral("停用"), page);
+  m_restartPileButton = new QPushButton(QStringLiteral("重启"), m_pileDetailBox);
+  m_enablePileButton = new QPushButton(QStringLiteral("启用"), m_pileDetailBox);
+  m_disablePileButton = new QPushButton(QStringLiteral("停用"), m_pileDetailBox);
   actions->setHorizontalSpacing(8);
   actions->setVerticalSpacing(8);
   actions->addWidget(m_stopPileButton, 0, 0);
@@ -319,7 +397,7 @@ QWidget *AssetsPage::createPilesTab() {
   actions->addWidget(m_disablePileButton, 1, 1);
   actions->setColumnStretch(0, 1);
   actions->setColumnStretch(1, 1);
-  root->addLayout(actions);
+  detailLayout->addLayout(actions);
   connect(m_stopPileButton, &QPushButton::clicked, this,
           [this] { controlSelectedPile(QStringLiteral("stop")); });
   connect(m_restartPileButton, &QPushButton::clicked, this,
@@ -329,10 +407,12 @@ QWidget *AssetsPage::createPilesTab() {
   connect(m_disablePileButton, &QPushButton::clicked, this,
           [this] { controlSelectedPile(QStringLiteral("disable")); });
 
-  m_pilePagination = new PaginationBar(page);
-  connect(m_pilePagination, &PaginationBar::pageRequested, this,
-          &AssetsPage::requestPiles);
-  root->addWidget(m_pilePagination);
+  splitter->addWidget(tablePanel);
+  splitter->addWidget(m_pileDetailBox);
+  splitter->setStretchFactor(0, 1);
+  splitter->setStretchFactor(1, 0);
+  splitter->setSizes({850, 330});
+  root->addWidget(splitter, 1);
   updatePileSelection();
   return page;
 }
@@ -722,8 +802,13 @@ void AssetsPage::resizeEvent(QResizeEvent *event) {
 }
 
 void AssetsPage::updateResponsiveLayout() {
+<<<<<<< Updated upstream
   const bool compact = width() < 720;
     AdminUi::setResponsiveColumns(m_stationTable, {0, 1, 8}, compact);
+=======
+  const bool compact = width() < 720 && window()->width() < 900;
+  AdminUi::setResponsiveColumns(m_stationTable, {0, 3, 4}, compact);
+>>>>>>> Stashed changes
   AdminUi::setResponsiveColumns(m_pileTable, {0, 4, 6}, compact);
   if (m_stationDetailBox)
     m_stationDetailBox->setVisible(!compact || !m_selectedStation.isEmpty());
