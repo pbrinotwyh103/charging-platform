@@ -10,10 +10,14 @@
 namespace {
 QString orderColumns()
 {
+    // Names are included for user-facing order history while retaining the
+    // stable positional fields consumed by readOrder().
     return QStringLiteral("id,order_no,user_id,station_id,pile_id,reservation_id,status,"
         "strftime('%Y-%m-%dT%H:%M:%SZ',started_at),strftime('%Y-%m-%dT%H:%M:%SZ',stopped_at),"
         "duration_seconds,energy_wh,unit_price_cents,fee_cents,stop_reason,"
-        "strftime('%Y-%m-%dT%H:%M:%SZ',created_at),strftime('%Y-%m-%dT%H:%M:%SZ',updated_at),push_seq");
+        "strftime('%Y-%m-%dT%H:%M:%SZ',created_at),strftime('%Y-%m-%dT%H:%M:%SZ',updated_at),push_seq,"
+        "COALESCE((SELECT name FROM stations WHERE stations.id=charging_orders.station_id),''),"
+        "COALESCE((SELECT pile_code FROM charging_piles WHERE charging_piles.id=charging_orders.pile_id),'')");
 }
 
 void readOrder(QSqlQuery &query, OrderRecord *record)
@@ -35,6 +39,8 @@ void readOrder(QSqlQuery &query, OrderRecord *record)
     record->createdAt = query.value(14).toString();
     record->updatedAt = query.value(15).toString();
     record->pushSequence = query.value(16).toLongLong();
+    record->stationName = query.value(17).toString();
+    record->pileCode = query.value(18).toString();
 }
 
 bool rollback(QSqlDatabase &db, const QString &message, QString *error)

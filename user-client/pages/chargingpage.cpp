@@ -12,9 +12,9 @@ ChargingPage::ChargingPage(QWidget *parent)
     : QWidget(parent)
 {
     setObjectName(QStringLiteral("chargingPage"));
-    auto *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(16, 16, 16, 16);
-    layout->setSpacing(12);
+    m_rootLayout = new QVBoxLayout(this);
+    m_rootLayout->setContentsMargins(16, 16, 16, 16);
+    m_rootLayout->setSpacing(12);
 
     m_titleLabel = new QLabel(QStringLiteral("充电服务"), this);
     QFont titleFont = m_titleLabel->font();
@@ -54,16 +54,16 @@ ChargingPage::ChargingPage(QWidget *parent)
     m_faultButton->setObjectName(QStringLiteral("simulateFaultButton"));
     m_faultButton->setEnabled(false);
 
-    layout->addWidget(m_titleLabel);
-    layout->addWidget(m_stageLabel);
-    layout->addWidget(m_orderLabel);
-    layout->addWidget(m_metricsLabel);
-    layout->addWidget(m_batteryProgress);
-    layout->addWidget(m_tipLabel);
-    layout->addStretch();
-    layout->addWidget(m_startButton);
-    layout->addWidget(m_stopButton);
-    layout->addWidget(m_faultButton);
+    m_rootLayout->addWidget(m_titleLabel);
+    m_rootLayout->addWidget(m_stageLabel);
+    m_rootLayout->addWidget(m_orderLabel);
+    m_rootLayout->addWidget(m_metricsLabel);
+    m_rootLayout->addWidget(m_batteryProgress);
+    m_rootLayout->addWidget(m_tipLabel);
+    m_rootLayout->addStretch();
+    m_rootLayout->addWidget(m_startButton);
+    m_rootLayout->addWidget(m_stopButton);
+    m_rootLayout->addWidget(m_faultButton);
 
     m_expiryTimer = new QTimer(this);
     m_expiryTimer->setInterval(1000);
@@ -104,6 +104,16 @@ ChargingPage::ChargingPage(QWidget *parent)
         if (m_demoMode && m_charging)
             stopDemoCharging(QStringLiteral("检测到设备温度异常，系统已安全停止"));
     });
+}
+
+void ChargingPage::setCompactLayout(bool compact)
+{
+    m_rootLayout->setContentsMargins(compact ? 6 : 20, compact ? 6 : 16,
+                                     compact ? 6 : 20, compact ? 6 : 16);
+    m_rootLayout->setSpacing(compact ? 8 : 12);
+    m_metricsLabel->setStyleSheet(QStringLiteral(
+        "padding:%1px;background:#eff6ff;color:#1e3a8a;border-radius:12px;font-size:%2px;")
+        .arg(compact ? 12 : 18).arg(compact ? 14 : 16));
 }
 
 void ChargingPage::setDemoMode(bool enabled)
@@ -167,48 +177,59 @@ void ChargingPage::startDemoCharging()
 void ChargingPage::stopDemoCharging(const QString &reason)
 {
     if (!m_charging) return;
-    m_demoTimer->stop();
-    m_charging = false;
-    const double energy = m_snapshot.value(QStringLiteral("energyKwh")).toDouble();
-    const double fee = m_snapshot.value(QStringLiteral("feeCents")).toInt() / 100.0;
-    m_stageLabel->setText(QStringLiteral("已完成 · 订单结算成功"));
-    m_stageLabel->setStyleSheet(QStringLiteral(
-        "padding:10px;background:#dcfce7;color:#166534;border-radius:8px;font-weight:600;"));
-    m_orderLabel->setText(QStringLiteral(
-        "订单 C20260906001\n%1\n本次充电 %2 kWh · 实付 ¥%3")
-                              .arg(reason)
-                              .arg(energy, 0, 'f', 2)
-                              .arg(fee, 0, 'f', 2));
-    m_tipLabel->setText(QStringLiteral("费用已从钱包扣除，订单和计费记录已生成（演示数据）。"));
-    m_startButton->setEnabled(false);
-    m_startButton->setText(QStringLiteral("本次充电已结束"));
-    m_stopButton->setEnabled(false);
-    m_faultButton->setEnabled(false);
+    Q_UNUSED(reason);
+    resetToDefault();
 }
 
 void ChargingPage::setSnapshot(const QJsonObject &snapshot)
 {
+    const QString status = snapshot.value(QStringLiteral("status")).toString();
+    if (QStringList{QStringLiteral("completed"), QStringLiteral("fault_stopped"),
+                    QStringLiteral("cancelled")}.contains(status)) {
+        resetToDefault();
+        return;
+    }
+
     m_snapshot = snapshot;
     if (snapshot.contains(QStringLiteral("orderId")))
         m_orderId = snapshot.value(QStringLiteral("orderId")).toInteger();
-    const QString status = snapshot.value(QStringLiteral("status")).toString();
     if (status == QStringLiteral("charging")) {
         m_charging = true;
         m_stageLabel->setText(QStringLiteral("充电中 · 服务端实时计费"));
         m_startButton->setEnabled(false);
         m_startButton->setText(QStringLiteral("充电已启动"));
         m_stopButton->setEnabled(true);
-    } else if (QStringList{QStringLiteral("completed"), QStringLiteral("fault_stopped"),
-                           QStringLiteral("cancelled")}.contains(status)) {
-        m_charging = false;
-        m_stageLabel->setText(QStringLiteral("已完成 · 订单结算成功"));
-        m_startButton->setEnabled(false);
-        m_startButton->setText(QStringLiteral("本次充电已结束"));
-        m_stopButton->setEnabled(false);
     }
     m_lastSnapshotMs = QDateTime::currentMSecsSinceEpoch();
     m_disconnected = false;
     renderSnapshot();
+}
+
+void ChargingPage::resetToDefault()
+{
+    m_demoTimer->stop();
+    m_station = {};
+    m_pile = {};
+    m_snapshot = {};
+    m_lastSnapshotMs = 0;
+    m_orderId = 0;
+    m_durationSec = 0;
+    m_disconnected = false;
+    m_charging = false;
+
+    m_stageLabel->setText(QStringLiteral("暂无进行中的充电任务"));
+    m_stageLabel->setStyleSheet(QStringLiteral(
+        "padding:10px;background:#f1f5f9;color:#334155;border-radius:8px;font-weight:600;"));
+    m_orderLabel->setText(QStringLiteral("从首页选择空闲电桩并完成预约后，即可开始充电。"));
+    m_metricsLabel->setText(QStringLiteral(
+        "电量 0.00 kWh\n实时功率 0.0 kW\n已充时长 00:00\n当前费用 ¥0.00"));
+    m_batteryProgress->setFormat(QStringLiteral("车辆电量 %p%"));
+    m_tipLabel->setText(QStringLiteral("实时数据以服务端推送为准。"));
+    m_startButton->setText(QStringLiteral("等待预约"));
+    m_startButton->setEnabled(false);
+    m_stopButton->setText(QStringLiteral("结束充电并结算"));
+    m_stopButton->setEnabled(false);
+    m_faultButton->setEnabled(false);
 }
 
 void ChargingPage::setDisconnected(bool disconnected)

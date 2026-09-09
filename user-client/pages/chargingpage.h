@@ -7,6 +7,7 @@ class QLabel;
 class QProgressBar;
 class QPushButton;
 class QTimer;
+class QVBoxLayout;
 
 class ChargingPage final : public QWidget
 {
@@ -18,7 +19,9 @@ public:
     void setDisconnected(bool disconnected);
     void setDemoMode(bool enabled);
     void setReservation(const QJsonObject &station, const QJsonObject &pile);
+    void resetToDefault();
     bool hasActiveOrder() const;
+    void setCompactLayout(bool compact);
 
 signals:
     void startChargingRequested(qint64 reservationId);
@@ -41,6 +44,7 @@ private:
     QPushButton *m_faultButton = nullptr;
     QTimer *m_expiryTimer = nullptr;
     QTimer *m_demoTimer = nullptr;
+    QVBoxLayout *m_rootLayout = nullptr;
     QJsonObject m_snapshot;
     QJsonObject m_station;
     QJsonObject m_pile;

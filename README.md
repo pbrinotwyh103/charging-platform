@@ -85,8 +85,11 @@ QT_QPA_PLATFORM=offscreen ./bin/admin_ui_tests -v1
 
 ```bash
 cd ~/charging-platform/build
-./bin/charging_server --port 8888 --database data/charging.db
+./bin/charging_server --port 8888
 ```
+
+服务器默认使用项目根目录的 `database/charging.db`（包含深圳附近的导入站点）。
+如需使用其他数据库，再显式传入 `--database` 路径。
 
 ## 启动两个手机客户端
 

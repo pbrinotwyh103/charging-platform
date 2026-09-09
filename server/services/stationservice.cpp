@@ -39,6 +39,7 @@ ServiceResult StationService::nearby(qint64 userId, const QJsonObject &payload)
         return invalid();
     for (const auto &key : {"region", "address", "sort"})
         if (payload.contains(key) && !payload.value(key).isString()) return invalid();
+    if (payload.contains("favoritesOnly") && !payload.value("favoritesOnly").isBool()) return invalid();
     if (payload.contains("radiusKm") && !coordinate(payload.value("radiusKm"), 1, 100)) return invalid();
     const QString sort = payload.value("sort").toString();
     if (!sort.isEmpty() && sort != "distance" && sort != "name" && sort != "price") return invalid();
@@ -54,8 +55,10 @@ ServiceResult StationService::nearby(qint64 userId, const QJsonObject &payload)
     QString region = payload.value("region").toString().trimmed();
     if (region == QStringLiteral("全部区域")) region.clear();
     const QString address = payload.value("address").toString().trimmed();
+    const bool favoritesOnly = payload.value("favoritesOnly").toBool();
     const double radius = payload.value("radiusKm").toDouble(10);
     for (const auto &station : stations) {
+        if (favoritesOnly && !favorites.contains(station.id)) continue;
         if ((!region.isEmpty() && !station.name.contains(region, Qt::CaseInsensitive)
              && !station.address.contains(region, Qt::CaseInsensitive))
             || (!address.isEmpty() && !station.name.contains(address, Qt::CaseInsensitive)

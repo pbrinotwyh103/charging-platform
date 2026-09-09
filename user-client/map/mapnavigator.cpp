@@ -5,6 +5,7 @@
 #include <QFileInfo>
 #include <QSettings>
 #include <QUrlQuery>
+#include <QtMath>
 
 QString MapNavigator::apiKey()
 {
@@ -29,10 +30,24 @@ bool MapNavigator::isConfigured()
     return !apiKey().isEmpty();
 }
 
+bool MapNavigator::isAllowedNavigationUrl(const QUrl &url)
+{
+    if (url == QUrl(QStringLiteral("about:blank"))) return true;
+    if (url.scheme().compare(QStringLiteral("https"), Qt::CaseInsensitive) != 0)
+        return false;
+    const QString host = url.host().toLower();
+    return host == QStringLiteral("map.qq.com")
+        || host.endsWith(QStringLiteral(".map.qq.com"));
+}
+
 QUrl MapNavigator::navigationUrl(double fromLat, double fromLon, double toLat,
                                  double toLon, const QString &mode)
 {
     if (!isConfigured()) return {};
+    if (!qIsFinite(fromLat) || !qIsFinite(fromLon) || !qIsFinite(toLat) || !qIsFinite(toLon)
+        || fromLat < -90.0 || fromLat > 90.0 || toLat < -90.0 || toLat > 90.0
+        || fromLon < -180.0 || fromLon > 180.0 || toLon < -180.0 || toLon > 180.0)
+        return {};
     const QString safeMode = mode == QStringLiteral("walking") ? QStringLiteral("walk") : QStringLiteral("drive");
     QUrl url(QStringLiteral("https://apis.map.qq.com/uri/v1/routeplan"));
     QUrlQuery query;

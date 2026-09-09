@@ -69,23 +69,33 @@ bool TencentGeocoder::parseResponse(const QByteArray &data, double *latitude,
     return true;
 }
 
-void TencentGeocoder::lookup(const QString &address, const QString &region)
+void TencentGeocoder::cancel()
 {
+    m_activeRequestId = 0;
+    if (!m_reply) return;
+    QNetworkReply *reply = m_reply;
+    m_reply = nullptr;
+    reply->abort();
+    reply->deleteLater();
+}
+
+quint64 TencentGeocoder::lookup(const QString &address, const QString &region)
+{
+    cancel();
+    const quint64 requestId = ++m_nextRequestId;
+    m_activeRequestId = requestId;
     const QString normalizedAddress = address.trimmed();
+    emit started(requestId, normalizedAddress);
     if (normalizedAddress.isEmpty()) {
-        emit failed(QStringLiteral("请输入要搜索的地址"));
-        return;
+        m_activeRequestId = 0;
+        emit failed(requestId, QStringLiteral("请输入要搜索的地址"));
+        return requestId;
     }
     const QString key = MapNavigator::apiKey();
     if (key.isEmpty()) {
-        emit failed(QStringLiteral("地址搜索需要配置腾讯地图 Key（TENCENT_MAP_KEY 或 config/app.ini）"));
-        return;
-    }
-
-    if (m_reply) {
-        m_reply->abort();
-        m_reply->deleteLater();
-        m_reply = nullptr;
+        m_activeRequestId = 0;
+        emit failed(requestId, QStringLiteral("地址搜索需要配置腾讯地图 Key（TENCENT_MAP_KEY 或 config/app.ini）"));
+        return requestId;
     }
 
     QNetworkRequest request(requestUrl(normalizedAddress, region, key));
@@ -94,8 +104,13 @@ void TencentGeocoder::lookup(const QString &address, const QString &region)
     request.setTransferTimeout(10000);
     QNetworkReply *reply = m_network->get(request);
     m_reply = reply;
-    connect(reply, &QNetworkReply::finished, this, [this, reply] {
-        if (m_reply == reply) m_reply = nullptr;
+    connect(reply, &QNetworkReply::finished, this, [this, reply, requestId] {
+        if (m_reply != reply || m_activeRequestId != requestId) {
+            reply->deleteLater();
+            return;
+        }
+        m_reply = nullptr;
+        m_activeRequestId = 0;
 
         if (reply->error() != QNetworkReply::NoError) {
             if (reply->error() == QNetworkReply::OperationCanceledError) {
@@ -104,7 +119,7 @@ void TencentGeocoder::lookup(const QString &address, const QString &region)
             }
             const QString message = reply->errorString();
             reply->deleteLater();
-            emit failed(QStringLiteral("腾讯地图地址解析失败：%1").arg(message));
+            emit failed(requestId, QStringLiteral("腾讯地图地址解析失败：%1").arg(message));
             return;
         }
 
@@ -114,9 +129,10 @@ void TencentGeocoder::lookup(const QString &address, const QString &region)
         const bool ok = parseResponse(reply->readAll(), &latitude, &longitude, &error);
         reply->deleteLater();
         if (!ok) {
-            emit failed(QStringLiteral("地址解析失败：%1").arg(error));
+            emit failed(requestId, QStringLiteral("地址解析失败：%1").arg(error));
             return;
         }
-        emit resolved(latitude, longitude);
+        emit resolved(requestId, latitude, longitude);
     });
+    return requestId;
 }

@@ -15,6 +15,7 @@ HEADERS += \
     ../user-client/pages/homepage.h \
     ../user-client/pages/profilepage.h \
     ../user-client/pages/stationdetailpage.h \
+    ../user-client/pages/navigationpage.h \
     ../user-client/pages/stationutils.h \
     ../user-client/ui/usermainwindow.h
 
@@ -26,5 +27,6 @@ SOURCES += \
     ../user-client/pages/homepage.cpp \
     ../user-client/pages/profilepage.cpp \
     ../user-client/pages/stationdetailpage.cpp \
+    ../user-client/pages/navigationpage.cpp \
     ../user-client/pages/stationutils.cpp \
     ../user-client/ui/usermainwindow.cpp

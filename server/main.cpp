@@ -3,7 +3,26 @@
 
 #include <QCommandLineParser>
 #include <QCoreApplication>
+#include <QDir>
 #include <QDebug>
+#include <QFileInfo>
+
+namespace {
+QString defaultDatabasePath()
+{
+    // The imported demo database is kept at the project root. Resolve it
+    // from both the project root and the usual build directory so the
+    // client's default Shenzhen location has nearby stations available.
+    const QStringList candidates{
+        QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("../../database/charging.db")),
+        QStringLiteral("database/charging.db"),
+        QStringLiteral("../database/charging.db"),
+        QStringLiteral("../../database/charging.db")};
+    for (const auto &candidate : candidates)
+        if (QFileInfo::exists(candidate)) return candidate;
+    return QStringLiteral("data/charging.db");
+}
+}
 
 int main(int argc, char *argv[])
 {
@@ -20,7 +39,7 @@ int main(int argc, char *argv[])
                       QString::number(Charging::AppInfo::DefaultServerPort)});
     parser.addOption({{QStringLiteral("d"), QStringLiteral("database")},
                       QStringLiteral("SQLite数据库文件"), QStringLiteral("path"),
-                      QStringLiteral("data/charging.db")});
+                      defaultDatabasePath()});
     parser.process(application);
 
     bool portOk = false;

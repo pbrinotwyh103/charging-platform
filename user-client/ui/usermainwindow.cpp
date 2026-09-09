@@ -5,6 +5,7 @@
 #include "pages/chargingpage.h"
 #include "pages/profilepage.h"
 #include "pages/stationdetailpage.h"
+#include "pages/navigationpage.h"
 #include "map/mapnavigator.h"
 
 #include <QFormLayout>
@@ -14,11 +15,13 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QResizeEvent>
 #include <QRegularExpression>
 #include <QRegularExpressionValidator>
 #include <QSpinBox>
 #include <QStatusBar>
 #include <QStackedWidget>
+#include <QStyle>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -89,11 +92,12 @@ UserMainWindow::UserMainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
     setWindowTitle(QStringLiteral("充电用户端"));
-    resize(390, 780);
+    resize(430, 780);
     setMinimumSize(360, 640);
     setStyleSheet(QStringLiteral(
         "QMainWindow,QWidget{background:#f5fbff;color:#102033;font-family:\"PingFang SC\",\"Microsoft YaHei\",\"Arial\";font-size:14px;}"
         "QWidget#userAppShell{background:#f5fbff;}"
+        "QWidget#userContentColumn{background:#f5fbff;}"
         "QFrame#userLoginCard{background:#ffffff;border:1px solid #dceafe;border-radius:24px;}"
         "QLabel#userLoginHero{font-size:18px;font-weight:900;color:#102033;}"
         "QLabel#userLoginHint{font-size:13px;color:#64748b;}"
@@ -110,24 +114,34 @@ UserMainWindow::UserMainWindow(QWidget *parent)
         "QPushButton:disabled{color:#94a3b8;background:#f1f5f9;}"
         "QPushButton#userPrimaryButton{background:#00CBBF;color:white;border:0;border-radius:16px;font-weight:900;}"
         "QPushButton[class=\"userBottomNavButton\"]{background:white;color:#526580;border:1px solid #dbeafe;border-radius:16px;}"
-        "QWidget#userBottomNavigation{background:#ffffff;border:1px solid #dbeafe;border-radius:22px;}"));
+        "QWidget#userBottomNavigation{background:#ffffff;border:1px solid #dbeafe;border-radius:22px;}"
+        "QWidget#userContentColumn[compact=\"true\"] QPushButton{padding:8px 10px;border-radius:11px;}"
+        "QWidget#userContentColumn[compact=\"true\"] QListWidget{padding:5px;border-radius:11px;}"
+        "QWidget#userContentColumn[compact=\"true\"] QListWidget::item{padding:9px;margin:3px 1px;border-radius:12px;}"));
 
     auto *central = new QWidget(this);
     central->setObjectName(QStringLiteral("userAppShell"));
-    auto *root = new QVBoxLayout(central);
-    root->setContentsMargins(22, 22, 22, 22);
-    root->setSpacing(14);
+    auto *outer = new QHBoxLayout(central);
+    outer->setContentsMargins(0, 0, 0, 0);
+    outer->setSpacing(0);
+    m_contentColumn = new QWidget(central);
+    m_contentColumn->setObjectName(QStringLiteral("userContentColumn"));
+    m_contentColumn->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+    outer->addWidget(m_contentColumn, 0, Qt::AlignHCenter);
+    m_rootLayout = new QVBoxLayout(m_contentColumn);
+    m_rootLayout->setContentsMargins(12, 12, 12, 12);
+    m_rootLayout->setSpacing(12);
 
-    m_pages = new QStackedWidget(central);
+    m_pages = new QStackedWidget(m_contentColumn);
     m_pages->setObjectName(QStringLiteral("userPages"));
     auto *loginPage = new QWidget(m_pages);
     auto *loginLayout = new QVBoxLayout(loginPage);
     loginLayout->setContentsMargins(0, 12, 0, 0);
     loginLayout->setSpacing(14);
-    auto *loginCard = new QFrame(loginPage);
-    loginCard->setObjectName(QStringLiteral("userLoginCard"));
-    loginCard->setMinimumHeight(380);
-    auto *loginCardLayout = new QVBoxLayout(loginCard);
+    m_loginCard = new QFrame(loginPage);
+    m_loginCard->setObjectName(QStringLiteral("userLoginCard"));
+    m_loginCard->setMinimumHeight(380);
+    auto *loginCardLayout = new QVBoxLayout(m_loginCard);
     loginCardLayout->setContentsMargins(22, 22, 22, 22);
     loginCardLayout->setSpacing(14);
 
@@ -186,15 +200,16 @@ UserMainWindow::UserMainWindow(QWidget *parent)
     loginCardLayout->addWidget(m_loginButton);
     loginCardLayout->addWidget(m_loginErrorLabel);
     loginCardLayout->addStretch();
-    loginLayout->addWidget(loginCard);
+    loginLayout->addWidget(m_loginCard, 0, Qt::AlignHCenter);
     loginLayout->addStretch();
 
     m_homePage = new HomePage(m_pages);
     m_chargingPage = new ChargingPage(m_pages);
     m_profilePage = new ProfilePage(m_pages);
     m_stationDetailPage = new StationDetailPage(m_pages);
+    m_navigationPage = new NavigationPage(m_pages);
     connect(m_profilePage, &ProfilePage::logoutRequested, this, &UserMainWindow::logoutRequested);
-    m_navWidget = new QWidget(central);
+    m_navWidget = new QWidget(m_contentColumn);
     m_navWidget->setObjectName(QStringLiteral("userBottomNavigation"));
     auto *nav = new QHBoxLayout(m_navWidget);
     nav->setContentsMargins(0, 0, 0, 0);
@@ -214,6 +229,7 @@ UserMainWindow::UserMainWindow(QWidget *parent)
     m_pages->addWidget(m_chargingPage);
     m_pages->addWidget(m_profilePage);
     m_pages->addWidget(m_stationDetailPage);
+    m_pages->addWidget(m_navigationPage);
     connect(homeButton, &QPushButton::clicked, this, [this] { m_pages->setCurrentWidget(m_homePage); });
     connect(chargingButton, &QPushButton::clicked, this, [this] {
         m_pages->setCurrentWidget(m_chargingPage);
@@ -223,6 +239,10 @@ UserMainWindow::UserMainWindow(QWidget *parent)
     connect(mineButton, &QPushButton::clicked, this, [this] { m_pages->setCurrentWidget(m_profilePage); });
     connect(m_homePage, &HomePage::stationSelected, this, [this](const QJsonObject &s) { m_stationDetailPage->setStation(s); m_pages->setCurrentWidget(m_stationDetailPage); });
     connect(m_stationDetailPage, &StationDetailPage::backRequested, this, [this] { m_pages->setCurrentWidget(m_homePage); });
+    connect(m_navigationPage, &NavigationPage::backRequested, this, [this] {
+        m_pages->setCurrentWidget(m_stationDetailPage);
+        m_navWidget->show();
+    });
     connect(m_homePage, &HomePage::stationsRequested, this,
             [this](const QString &region, const QString &address, double, double) {
         if (!m_demoMode) return;
@@ -255,17 +275,25 @@ UserMainWindow::UserMainWindow(QWidget *parent)
             m_profilePage->setFavoriteStation(station.value(QStringLiteral("name")).toString(), favorited);
             break;
         }
+        m_stationDetailPage->favoriteUpdateSucceeded(favorited);
+        m_homePage->updateFavoriteState(stationId, favorited);
         setConnectionStatus(favorited ? QStringLiteral("已加入常用充电站")
                                       : QStringLiteral("已取消收藏"), true);
     });
     connect(m_stationDetailPage, &StationDetailPage::navigationRequested, this,
             [this](const QJsonObject &station, const QString &mode) {
+        double latitude = 0.0;
+        double longitude = 0.0;
+        const bool hasOrigin = m_homePage->searchLocation(&latitude, &longitude);
+        m_navigationPage->showRoute(station, mode, latitude, longitude, hasOrigin);
+        m_pages->setCurrentWidget(m_navigationPage);
+        m_navWidget->hide();
         if (MapNavigator::isConfigured()) {
-            setConnectionStatus(QStringLiteral("已在页面内加载腾讯地图%1路线")
+            setConnectionStatus(QStringLiteral("已打开腾讯地图%1导航页")
                                     .arg(mode == QStringLiteral("walking") ? QStringLiteral("步行")
                                                                           : QStringLiteral("驾车")), true);
         } else {
-            setConnectionStatus(QStringLiteral("%1路线已生成：深圳市民中心 → %2（演示预览；配置地图Key后打开腾讯地图）")
+            setConnectionStatus(QStringLiteral("已打开%1导航页：当前位置 → %2（演示预览）")
                                     .arg(mode == QStringLiteral("walking") ? QStringLiteral("步行")
                                                                           : QStringLiteral("驾车"),
                                          station.value(QStringLiteral("name")).toString()), true);
@@ -286,10 +314,49 @@ UserMainWindow::UserMainWindow(QWidget *parent)
             pile.value(QStringLiteral("pileId")).toInteger());
         setConnectionStatus(QStringLiteral("正在向服务端提交预约…"), true);
     });
-    root->addWidget(m_pages, 1);
-    root->addWidget(m_navWidget);
+    m_rootLayout->addWidget(m_pages, 1);
+    m_rootLayout->addWidget(m_navWidget);
     m_navWidget->hide();
     setCentralWidget(central);
+    updateResponsiveLayout();
+}
+
+void UserMainWindow::resizeEvent(QResizeEvent *event)
+{
+    QMainWindow::resizeEvent(event);
+    updateResponsiveLayout();
+}
+
+void UserMainWindow::updateResponsiveLayout()
+{
+    if (!m_contentColumn || !m_rootLayout) return;
+    const int availableWidth = qMax(320, width());
+    const int contentWidth = qMin(availableWidth, 1080);
+    m_contentColumn->setFixedWidth(contentWidth);
+
+    const bool compact = contentWidth < 560;
+    const bool shortWindow = height() < 720;
+    const int horizontalMargin = compact ? (contentWidth <= 400 ? 8 : 12) : 24;
+    const int verticalMargin = shortWindow ? 6 : (compact ? 12 : 20);
+    m_rootLayout->setContentsMargins(horizontalMargin, verticalMargin,
+                                     horizontalMargin, verticalMargin);
+    m_rootLayout->setSpacing(shortWindow ? 8 : 14);
+    m_loginCard->setFixedWidth(qMax(280, qMin(520, contentWidth - horizontalMargin * 2)));
+    m_loginCard->setMinimumHeight(shortWindow ? 330 : 380);
+
+    m_homePage->setCompactLayout(compact);
+    m_chargingPage->setCompactLayout(compact || shortWindow);
+    m_profilePage->setCompactLayout(compact);
+    m_stationDetailPage->setCompactLayout(compact);
+    m_navigationPage->setCompactLayout(compact || shortWindow);
+
+    if (!m_responsiveInitialized || compact != m_compactLayout) {
+        m_compactLayout = compact;
+        m_responsiveInitialized = true;
+        m_contentColumn->setProperty("compact", compact);
+        style()->unpolish(m_contentColumn);
+        style()->polish(m_contentColumn);
+    }
 }
 
 void UserMainWindow::setConnectionStatus(const QString &text, bool connected)
@@ -317,6 +384,12 @@ void UserMainWindow::showLoginError(const QString &message)
 
 void UserMainWindow::showProfile(const QJsonObject &profile)
 {
+    // Station objects contain account-scoped `favorited` flags. Never carry
+    // those objects across a login, otherwise a newly logged-in account can
+    // see the previous account's favorite markers before its first search.
+    m_homePage->clearStations();
+    m_stationDetailPage->clearStation();
+    m_profilePage->setFavoriteStations({});
     m_profilePage->setProfile(profile);
     m_navWidget->show();
     // 登录成功后的默认入口是首页；用户资料仍保存在“我的”页面中，
@@ -326,6 +399,9 @@ void UserMainWindow::showProfile(const QJsonObject &profile)
 
 void UserMainWindow::showLoginPage()
 {
+    m_homePage->clearStations();
+    m_stationDetailPage->clearStation();
+    m_profilePage->setFavoriteStations({});
     setLoginBusy(false);
     showLoginError({});
     m_navWidget->hide();
@@ -342,9 +418,19 @@ void UserMainWindow::showFavoriteChanged(const QJsonObject &result)
     const QString name = result.value(QStringLiteral("name")).toString();
     if (name.isEmpty()) return;
     const bool favorited = result.value(QStringLiteral("favorited")).toBool();
+    if (result.value(QStringLiteral("stationId")).toInteger() == m_stationDetailPage->stationId())
+        m_stationDetailPage->favoriteUpdateSucceeded(favorited);
+    m_homePage->updateFavoriteState(result.value(QStringLiteral("stationId")).toInteger(), favorited);
     m_profilePage->setFavoriteStation(name, favorited);
     setConnectionStatus(favorited ? QStringLiteral("已加入常用充电站")
                                   : QStringLiteral("已取消收藏"), true);
+}
+
+void UserMainWindow::showFavoriteUpdateFailed(qint64 stationId, const QString &message)
+{
+    if (stationId == m_stationDetailPage->stationId())
+        m_stationDetailPage->favoriteUpdateFailed(message);
+    showFeatureMessage(QStringLiteral("收藏操作失败：%1").arg(message));
 }
 
 void UserMainWindow::showReservationCreated(const QJsonObject &reservation)
@@ -360,14 +446,18 @@ void UserMainWindow::showReservationCreated(const QJsonObject &reservation)
 
 void UserMainWindow::showChargingSnapshot(const QJsonObject &snapshot)
 {
+    const bool wasActive = m_chargingPage->hasActiveOrder();
     m_chargingPage->setSnapshot(snapshot);
-    m_pages->setCurrentWidget(m_chargingPage);
+    // 首次恢复或启动订单时进入充电页；后续实时推送只刷新数据，
+    // 避免用户查看首页、我的页面或导航时被持续抢回充电页。
+    if (!wasActive && m_chargingPage->hasActiveOrder())
+        m_pages->setCurrentWidget(m_chargingPage);
 }
 
 void UserMainWindow::showChargingStopped(const QJsonObject &result)
 {
-    m_chargingPage->setSnapshot(result);
-    m_pages->setCurrentWidget(m_chargingPage);
+    Q_UNUSED(result);
+    m_chargingPage->resetToDefault();
     setConnectionStatus(QStringLiteral("充电已停止，费用结算完成"), true);
 }
 
@@ -377,6 +467,7 @@ void UserMainWindow::showDemoWorkspace()
     m_demoStations = demoStations();
     m_profilePage->setDemoMode(true);
     m_chargingPage->setDemoMode(true);
+    m_stationDetailPage->setDemoMode(true);
     m_profilePage->setProfile({
         {QStringLiteral("nickname"), QStringLiteral("绿色出行者")},
         {QStringLiteral("phone"), QStringLiteral("138****2026")},
