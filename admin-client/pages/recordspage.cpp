@@ -9,7 +9,9 @@
 #include <QDate>
 #include <QDateEdit>
 #include <QFileDialog>
+#include <QFrame>
 #include <QGridLayout>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QJsonArray>
@@ -21,6 +23,7 @@
 #include <QRegularExpressionValidator>
 #include <QResizeEvent>
 #include <QSaveFile>
+#include <QSplitter>
 #include <QStringConverter>
 #include <QStringList>
 #include <QTabWidget>
@@ -32,7 +35,8 @@
 RecordsPage::RecordsPage(QWidget *parent) : QWidget(parent) {
   setObjectName(QStringLiteral("recordsPage"));
   auto *root = new QVBoxLayout(this);
-  root->setContentsMargins(8, 8, 8, 8);
+  root->setContentsMargins(0, 0, 0, 0);
+  root->setSpacing(10);
   auto *title = new QLabel(QStringLiteral("用户与订单"), this);
   title->setObjectName(QStringLiteral("pageTitle"));
   root->addWidget(title);
@@ -49,27 +53,32 @@ RecordsPage::RecordsPage(QWidget *parent) : QWidget(parent) {
 QWidget *RecordsPage::createUsersTab() {
   auto *page = new QWidget(this);
   auto *root = new QVBoxLayout(page);
-  root->setContentsMargins(4, 8, 4, 4);
-  root->setSpacing(8);
-  auto *tools = new QGridLayout;
-  m_phoneSearch = new QLineEdit(page);
+  root->setContentsMargins(14, 12, 14, 14);
+  root->setSpacing(12);
+  auto *filterBar = new QFrame(page);
+  filterBar->setObjectName(QStringLiteral("filterBar"));
+  auto *tools = new QHBoxLayout(filterBar);
+  tools->setContentsMargins(12, 10, 12, 10);
+  tools->setSpacing(8);
+  auto *filterTitle = new QLabel(QStringLiteral("用户筛选"), filterBar);
+  filterTitle->setObjectName(QStringLiteral("sectionTitle"));
+  m_phoneSearch = new QLineEdit(filterBar);
   m_phoneSearch->setObjectName(QStringLiteral("userPhoneSearch"));
   m_phoneSearch->setPlaceholderText(QStringLiteral("手机号片段"));
+  m_phoneSearch->setMinimumWidth(240);
   m_phoneSearch->setMaxLength(11);
   m_phoneSearch->setValidator(new QRegularExpressionValidator(
       QRegularExpression(QStringLiteral("\\d{0,11}")), m_phoneSearch));
-  auto *searchButton = new QPushButton(QStringLiteral("查询"), page);
+  auto *searchButton = new QPushButton(QStringLiteral("查询"), filterBar);
   m_freezeButton = new QPushButton(QStringLiteral("冻结用户"), page);
   m_freezeButton->setObjectName(QStringLiteral("dangerButton"));
   m_freezeButton->setEnabled(false);
-  tools->setHorizontalSpacing(8);
-  tools->setVerticalSpacing(8);
-  tools->addWidget(m_phoneSearch, 0, 0);
-  tools->addWidget(searchButton, 0, 1);
-  tools->addWidget(m_freezeButton, 1, 0, 1, 2);
-  tools->setColumnStretch(0, 1);
-  tools->setColumnStretch(1, 1);
-  root->addLayout(tools);
+  tools->addWidget(filterTitle);
+  tools->addSpacing(6);
+  tools->addWidget(m_phoneSearch);
+  tools->addWidget(searchButton);
+  tools->addStretch();
+  root->addWidget(filterBar);
 
   m_searchTimer = new QTimer(this);
   m_searchTimer->setSingleShot(true);
@@ -107,7 +116,18 @@ QWidget *RecordsPage::createUsersTab() {
     }
   });
 
-  m_userTable = new QTableWidget(page);
+  auto *splitter = new QSplitter(Qt::Horizontal, page);
+  splitter->setObjectName(QStringLiteral("userSplitter"));
+  splitter->setChildrenCollapsible(false);
+  auto *tablePanel = new QFrame(splitter);
+  tablePanel->setObjectName(QStringLiteral("tablePanel"));
+  auto *tableLayout = new QVBoxLayout(tablePanel);
+  tableLayout->setContentsMargins(14, 12, 14, 12);
+  tableLayout->setSpacing(9);
+  auto *tableTitle = new QLabel(QStringLiteral("用户列表"), tablePanel);
+  tableTitle->setObjectName(QStringLiteral("sectionTitle"));
+  tableLayout->addWidget(tableTitle);
+  m_userTable = new QTableWidget(tablePanel);
   m_userTable->setObjectName(QStringLiteral("userTable"));
   m_userTable->setColumnCount(6);
   m_userTable->setHorizontalHeaderLabels(
@@ -125,79 +145,115 @@ QWidget *RecordsPage::createUsersTab() {
   AdminUi::configureTouchTable(m_userTable);
   connect(m_userTable, &QTableWidget::itemSelectionChanged, this,
           &RecordsPage::updateUserSelection);
-  root->addWidget(m_userTable, 1);
-  m_userState = new QLabel(QStringLiteral("等待用户数据"), page);
-  m_userState->setObjectName(QStringLiteral("userStateLabel"));
-  m_userState->setWordWrap(true);
-  root->addWidget(m_userState);
-  m_userPagination = new PaginationBar(page);
+  tableLayout->addWidget(m_userTable, 1);
+  m_userPagination = new PaginationBar(tablePanel);
   connect(m_userPagination, &PaginationBar::pageRequested, this,
           &RecordsPage::requestUsers);
-  root->addWidget(m_userPagination);
+  tableLayout->addWidget(m_userPagination);
+
+  auto *detailBox = new QGroupBox(QStringLiteral("用户详情"), splitter);
+  detailBox->setObjectName(QStringLiteral("userDetailBox"));
+  detailBox->setMinimumWidth(270);
+  detailBox->setMaximumWidth(350);
+  auto *detailLayout = new QVBoxLayout(detailBox);
+  detailLayout->setSpacing(12);
+  m_userState = new QLabel(QStringLiteral("等待用户数据"), detailBox);
+  m_userState->setObjectName(QStringLiteral("userStateLabel"));
+  m_userState->setWordWrap(true);
+  m_userState->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  detailLayout->addWidget(m_userState);
+  detailLayout->addStretch();
+  detailLayout->addWidget(m_freezeButton);
+  splitter->addWidget(tablePanel);
+  splitter->addWidget(detailBox);
+  splitter->setStretchFactor(0, 1);
+  splitter->setStretchFactor(1, 0);
+  splitter->setSizes({880, 310});
+  root->addWidget(splitter, 1);
   return page;
 }
 
 QWidget *RecordsPage::createOrdersTab() {
   auto *page = new QWidget(this);
   auto *root = new QVBoxLayout(page);
-  root->setContentsMargins(4, 8, 4, 4);
-  root->setSpacing(8);
-  auto *filters = new QGridLayout;
-  m_orderStatus = new QComboBox(page);
+  root->setContentsMargins(14, 12, 14, 14);
+  root->setSpacing(12);
+  auto *filterBar = new QFrame(page);
+  filterBar->setObjectName(QStringLiteral("filterBar"));
+  auto *filters = new QHBoxLayout(filterBar);
+  filters->setContentsMargins(12, 10, 12, 10);
+  filters->setSpacing(8);
+  auto *filterTitle = new QLabel(QStringLiteral("订单筛选"), filterBar);
+  filterTitle->setObjectName(QStringLiteral("sectionTitle"));
+  m_orderStatus = new QComboBox(filterBar);
   m_orderStatus->setObjectName(QStringLiteral("orderStatusFilter"));
+  m_orderStatus->setMinimumWidth(130);
   m_orderStatus->addItem(QStringLiteral("全部状态"), QString());
   m_orderStatus->addItem(QStringLiteral("充电中"), QStringLiteral("charging"));
   m_orderStatus->addItem(QStringLiteral("已完成"), QStringLiteral("completed"));
   m_orderStatus->addItem(QStringLiteral("异常结束"),
                          QStringLiteral("fault_stopped"));
   m_orderStatus->addItem(QStringLiteral("已取消"), QStringLiteral("cancelled"));
-  m_orderNumber = new QLineEdit(page);
+  m_orderNumber = new QLineEdit(filterBar);
   m_orderNumber->setPlaceholderText(QStringLiteral("订单号"));
   m_orderNumber->setObjectName(QStringLiteral("orderNumberSearch"));
-  m_orderPhone = new QLineEdit(page);
+  m_orderNumber->setMinimumWidth(150);
+  m_orderPhone = new QLineEdit(filterBar);
   m_orderPhone->setPlaceholderText(QStringLiteral("手机号"));
   m_orderPhone->setObjectName(QStringLiteral("orderPhoneSearch"));
+  m_orderPhone->setMinimumWidth(130);
   m_orderPhone->setMaxLength(11);
   m_orderPhone->setValidator(new QRegularExpressionValidator(
       QRegularExpression(QStringLiteral("\\d{0,11}")), m_orderPhone));
-  m_limitDates = new QCheckBox(QStringLiteral("日期"), page);
-  m_fromDate = new QDateEdit(QDate::currentDate().addDays(-30), page);
+  m_limitDates = new QCheckBox(QStringLiteral("日期"), filterBar);
+  m_fromDate = new QDateEdit(QDate::currentDate().addDays(-30), filterBar);
   m_fromDate->setObjectName(QStringLiteral("orderFromDate"));
   m_fromDate->setCalendarPopup(true);
   m_fromDate->setDisplayFormat(QStringLiteral("yyyy-MM-dd"));
-  m_toDate = new QDateEdit(QDate::currentDate(), page);
+  m_fromDate->setMinimumWidth(120);
+  m_toDate = new QDateEdit(QDate::currentDate(), filterBar);
   m_toDate->setObjectName(QStringLiteral("orderToDate"));
   m_toDate->setCalendarPopup(true);
   m_toDate->setDisplayFormat(QStringLiteral("yyyy-MM-dd"));
+  m_toDate->setMinimumWidth(120);
   m_fromDate->setEnabled(false);
   m_toDate->setEnabled(false);
   connect(m_limitDates, &QCheckBox::toggled, m_fromDate, &QWidget::setEnabled);
   connect(m_limitDates, &QCheckBox::toggled, m_toDate, &QWidget::setEnabled);
   connect(m_limitDates, &QCheckBox::toggled, this,
           [this] { updateResponsiveLayout(); });
-  auto *searchButton = new QPushButton(QStringLiteral("查询"), page);
-  m_exportButton = new QPushButton(QStringLiteral("导出CSV"), page);
+  auto *searchButton = new QPushButton(QStringLiteral("查询"), filterBar);
+  m_exportButton = new QPushButton(QStringLiteral("导出 CSV"), filterBar);
   m_exportButton->setObjectName(QStringLiteral("secondaryButton"));
   m_exportButton->setEnabled(false);
-  filters->setHorizontalSpacing(8);
-  filters->setVerticalSpacing(8);
-  filters->addWidget(m_orderStatus, 0, 0);
-  filters->addWidget(m_orderNumber, 0, 1);
-  filters->addWidget(m_orderPhone, 1, 0);
-  filters->addWidget(searchButton, 1, 1);
-  filters->addWidget(m_limitDates, 2, 0);
-  filters->addWidget(m_exportButton, 2, 1);
-  filters->addWidget(m_fromDate, 3, 0);
-  filters->addWidget(m_toDate, 3, 1);
-  filters->setColumnStretch(0, 1);
-  filters->setColumnStretch(1, 1);
-  root->addLayout(filters);
+  filters->addWidget(filterTitle);
+  filters->addWidget(m_orderStatus);
+  filters->addWidget(m_orderNumber, 1);
+  filters->addWidget(m_orderPhone);
+  filters->addWidget(m_limitDates);
+  filters->addWidget(m_fromDate);
+  filters->addWidget(m_toDate);
+  filters->addWidget(searchButton);
+  filters->addStretch();
+  filters->addWidget(m_exportButton);
+  root->addWidget(filterBar);
   connect(searchButton, &QPushButton::clicked, this,
           [this] { requestOrders(1); });
   connect(m_exportButton, &QPushButton::clicked, this,
           &RecordsPage::exportOrdersInteractively);
 
-  m_orderTable = new QTableWidget(page);
+  auto *splitter = new QSplitter(Qt::Horizontal, page);
+  splitter->setObjectName(QStringLiteral("orderSplitter"));
+  splitter->setChildrenCollapsible(false);
+  auto *tablePanel = new QFrame(splitter);
+  tablePanel->setObjectName(QStringLiteral("tablePanel"));
+  auto *tableLayout = new QVBoxLayout(tablePanel);
+  tableLayout->setContentsMargins(14, 12, 14, 12);
+  tableLayout->setSpacing(9);
+  auto *tableTitle = new QLabel(QStringLiteral("订单记录"), tablePanel);
+  tableTitle->setObjectName(QStringLiteral("sectionTitle"));
+  tableLayout->addWidget(tableTitle);
+  m_orderTable = new QTableWidget(tablePanel);
   m_orderTable->setObjectName(QStringLiteral("orderTable"));
   m_orderTable->setColumnCount(9);
   m_orderTable->setHorizontalHeaderLabels(
@@ -216,15 +272,29 @@ QWidget *RecordsPage::createOrdersTab() {
   AdminUi::configureTouchTable(m_orderTable);
   connect(m_orderTable, &QTableWidget::itemSelectionChanged, this,
           &RecordsPage::updateOrderSelection);
-  root->addWidget(m_orderTable, 1);
-  m_orderState = new QLabel(QStringLiteral("等待订单数据"), page);
-  m_orderState->setObjectName(QStringLiteral("orderStateLabel"));
-  m_orderState->setWordWrap(true);
-  root->addWidget(m_orderState);
-  m_orderPagination = new PaginationBar(page);
+  tableLayout->addWidget(m_orderTable, 1);
+  m_orderPagination = new PaginationBar(tablePanel);
   connect(m_orderPagination, &PaginationBar::pageRequested, this,
           &RecordsPage::requestOrders);
-  root->addWidget(m_orderPagination);
+  tableLayout->addWidget(m_orderPagination);
+
+  auto *detailBox = new QGroupBox(QStringLiteral("订单详情"), splitter);
+  detailBox->setObjectName(QStringLiteral("orderDetailBox"));
+  detailBox->setMinimumWidth(280);
+  detailBox->setMaximumWidth(360);
+  auto *detailLayout = new QVBoxLayout(detailBox);
+  m_orderState = new QLabel(QStringLiteral("等待订单数据"), detailBox);
+  m_orderState->setObjectName(QStringLiteral("orderStateLabel"));
+  m_orderState->setWordWrap(true);
+  m_orderState->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  detailLayout->addWidget(m_orderState);
+  detailLayout->addStretch();
+  splitter->addWidget(tablePanel);
+  splitter->addWidget(detailBox);
+  splitter->setStretchFactor(0, 1);
+  splitter->setStretchFactor(1, 0);
+  splitter->setSizes({850, 330});
+  root->addWidget(splitter, 1);
   return page;
 }
 
@@ -457,7 +527,7 @@ void RecordsPage::resizeEvent(QResizeEvent *event) {
 }
 
 void RecordsPage::updateResponsiveLayout() {
-  const bool compact = width() < 720;
+  const bool compact = width() < 720 && window()->width() < 900;
   AdminUi::setResponsiveColumns(m_userTable, {1, 2, 5}, compact);
   AdminUi::setResponsiveColumns(m_orderTable, {0, 4, 7}, compact);
   const bool showDates = !compact || m_limitDates->isChecked();

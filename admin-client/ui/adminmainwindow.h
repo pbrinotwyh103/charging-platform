@@ -10,10 +10,10 @@ class OverviewPage;
 class RecordsPage;
 class QLabel;
 class QLineEdit;
+class QListWidget;
 class QSpinBox;
 class QPushButton;
 class QStackedWidget;
-class QTabBar;
 class QTimer;
 
 class AdminMainWindow final : public QMainWindow {
@@ -52,6 +52,7 @@ private:
   QLabel *m_statusLabel = nullptr;
   QLabel *m_appTitleLabel = nullptr;
   QLabel *m_workspaceTitleLabel = nullptr;
+  QLabel *m_workspaceSubtitleLabel = nullptr;
   QLabel *m_workspaceStatusLabel = nullptr;
   QLineEdit *m_hostEdit = nullptr;
   QSpinBox *m_portSpin = nullptr;
@@ -64,7 +65,7 @@ private:
   QLabel *m_permissionLabel = nullptr;
   QLabel *m_noticeLabel = nullptr;
   QStackedWidget *m_contentPages = nullptr;
-  QTabBar *m_navigation = nullptr;
+  QListWidget *m_navigation = nullptr;
   QTimer *m_refreshTimer = nullptr;
   OverviewPage *m_overviewPage = nullptr;
   MonitorPage *m_monitorPage = nullptr;

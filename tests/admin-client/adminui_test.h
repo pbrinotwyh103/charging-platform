@@ -7,7 +7,7 @@ class AdminUiTest final : public QObject {
 
 private slots:
   void demoWorkspaceContainsAllModules();
-  void mobileLayoutIsTouchFriendly();
+  void desktopLayoutUsesSidebarAndDenseTables();
   void overviewRendersMetricsAndTrend();
   void chargingPushUpdatesMatchingOrder();
   void assetsRenderStationsPilesAndDevicePush();

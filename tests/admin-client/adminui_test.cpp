@@ -18,12 +18,12 @@
 #include <QJsonArray>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSignalSpy>
 #include <QStackedWidget>
 #include <QStringList>
-#include <QTabBar>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTemporaryDir>
@@ -32,17 +32,17 @@
 void AdminUiTest::demoWorkspaceContainsAllModules() {
   AdminMainWindow window;
   window.showDemoWorkspace();
-  window.resize(360, 640);
+  window.resize(1440, 900);
 
   auto *pages =
       window.findChild<QStackedWidget *>(QStringLiteral("authenticationPages"));
   auto *navigation =
-      window.findChild<QTabBar *>(QStringLiteral("bottomNavigation"));
+      window.findChild<QListWidget *>(QStringLiteral("sideNavigation"));
   QVERIFY(pages);
   QVERIFY(navigation);
   QCOMPARE(pages->currentIndex(), 1);
   QCOMPARE(navigation->count(), 5);
-  QCOMPARE(window.minimumWidth(), 360);
+  QVERIFY(window.minimumWidth() >= 1080);
   QCOMPARE(window.findChild<QTableWidget *>(QStringLiteral("chargingTable"))
                ->rowCount(),
            2);
@@ -71,9 +71,9 @@ void AdminUiTest::demoWorkspaceContainsAllModules() {
   QCOMPARE(revenueChart->pointCount(), 30);
 }
 
-void AdminUiTest::mobileLayoutIsTouchFriendly() {
+void AdminUiTest::desktopLayoutUsesSidebarAndDenseTables() {
   AdminMainWindow window;
-  window.resize(360, 640);
+  window.resize(1440, 900);
   window.showDemoWorkspace();
   window.show();
   QCoreApplication::processEvents();
@@ -85,35 +85,39 @@ void AdminUiTest::mobileLayoutIsTouchFriendly() {
   for (const QString &name : tableNames) {
     auto *table = window.findChild<QTableWidget *>(name);
     QVERIFY2(table, qPrintable(name));
-    QCOMPARE(table->horizontalScrollBarPolicy(), Qt::ScrollBarAlwaysOff);
+    QCOMPARE(table->horizontalScrollBarPolicy(), Qt::ScrollBarAsNeeded);
     QVERIFY(!table->showGrid());
-    QVERIFY(table->verticalHeader()->defaultSectionSize() >= 52);
+    QVERIFY(table->verticalHeader()->defaultSectionSize() >= 38);
+    QVERIFY(table->verticalHeader()->defaultSectionSize() <= 46);
     int visibleColumns = 0;
     for (int column = 0; column < table->columnCount(); ++column) {
       if (!table->isColumnHidden(column))
         ++visibleColumns;
     }
-    QVERIFY2(visibleColumns <= 3, qPrintable(name));
+    QCOMPARE(visibleColumns, table->columnCount());
   }
 
   auto *navigation =
-      window.findChild<QTabBar *>(QStringLiteral("bottomNavigation"));
+      window.findChild<QListWidget *>(QStringLiteral("sideNavigation"));
   QVERIFY(navigation);
-  QVERIFY(navigation->minimumHeight() >= 52);
+  QCOMPARE(navigation->count(), 5);
   for (int index = 0; index < navigation->count(); ++index)
-    QVERIFY(!navigation->tabIcon(index).isNull());
+    QVERIFY(!navigation->item(index)->icon().isNull());
+  auto *sidebar = window.findChild<QWidget *>(QStringLiteral("sideBar"));
+  QVERIFY(sidebar);
+  QCOMPARE(sidebar->width(), 224);
   auto *workspaceTitle =
       window.findChild<QLabel *>(QStringLiteral("workspaceTitle"));
   QVERIFY(workspaceTitle);
-  navigation->setCurrentIndex(2);
+  navigation->setCurrentRow(2);
   QCOMPARE(workspaceTitle->text(), QStringLiteral("异常告警"));
   auto *nextPage =
       window.findChild<QPushButton *>(QStringLiteral("nextPageButton"));
   QVERIFY(nextPage);
-  QVERIFY(nextPage->width() >= 44);
-  QVERIFY(nextPage->height() >= 44);
+  QVERIFY(nextPage->width() >= 34 && nextPage->width() <= 40);
+  QVERIFY(nextPage->height() >= 34 && nextPage->height() <= 40);
 
-  navigation->setCurrentIndex(1);
+  navigation->setCurrentRow(1);
   QCoreApplication::processEvents();
   auto *chargingTable =
       window.findChild<QTableWidget *>(QStringLiteral("chargingTable"));
@@ -123,7 +127,7 @@ void AdminUiTest::mobileLayoutIsTouchFriendly() {
   QCoreApplication::processEvents();
   QVERIFY(monitorState->text().contains(QStringLiteral("kWh")));
 
-  navigation->setCurrentIndex(3);
+  navigation->setCurrentRow(3);
   auto *assetTabs =
       window.findChild<QTabWidget *>(QStringLiteral("assetTabs"));
   auto *pileDetailBox =
@@ -132,7 +136,7 @@ void AdminUiTest::mobileLayoutIsTouchFriendly() {
   QVERIFY(pileDetailBox);
   assetTabs->setCurrentIndex(1);
   QCoreApplication::processEvents();
-  QVERIFY(!pileDetailBox->isVisible());
+  QVERIFY(pileDetailBox->isVisible());
   auto *pileTable =
       window.findChild<QTableWidget *>(QStringLiteral("pileTable"));
   QVERIFY(pileTable);
@@ -144,9 +148,9 @@ void AdminUiTest::mobileLayoutIsTouchFriendly() {
   pileTable->setCurrentCell(-1, -1);
   pileTable->clearSelection();
   QCoreApplication::processEvents();
-  QVERIFY(!pileDetailBox->isVisible());
+  QVERIFY(pileDetailBox->isVisible());
 
-  navigation->setCurrentIndex(4);
+  navigation->setCurrentRow(4);
   auto *recordTabs =
       window.findChild<QTabWidget *>(QStringLiteral("recordTabs"));
   QVERIFY(recordTabs);
@@ -158,8 +162,8 @@ void AdminUiTest::mobileLayoutIsTouchFriendly() {
       window.findChild<QDateEdit *>(QStringLiteral("orderToDate"));
   QVERIFY(fromDate);
   QVERIFY(toDate);
-  QVERIFY(!fromDate->isVisible());
-  QVERIFY(!toDate->isVisible());
+  QVERIFY(fromDate->isVisible());
+  QVERIFY(toDate->isVisible());
 
   const QString screenshotDirectory =
       qEnvironmentVariable("ADMIN_UI_TEST_SCREENSHOT_DIR");
@@ -168,7 +172,7 @@ void AdminUiTest::mobileLayoutIsTouchFriendly() {
     QVERIFY(directory.mkpath(screenshotDirectory));
     directory.setPath(screenshotDirectory);
     AdminMainWindow loginWindow;
-    loginWindow.resize(360, 640);
+    loginWindow.resize(1440, 900);
     loginWindow.show();
     QCoreApplication::processEvents();
     QVERIFY(loginWindow.grab().save(
@@ -180,19 +184,19 @@ void AdminUiTest::mobileLayoutIsTouchFriendly() {
     assetTabs->setCurrentIndex(0);
     recordTabs->setCurrentIndex(0);
     for (int index = 0; index < pageNames.size(); ++index) {
-      navigation->setCurrentIndex(index);
+      navigation->setCurrentRow(index);
       QCoreApplication::processEvents();
       QVERIFY(window.grab().save(directory.filePath(
           QStringLiteral("admin-%1.png").arg(pageNames.at(index)))));
     }
 
-    navigation->setCurrentIndex(3);
+    navigation->setCurrentRow(3);
     assetTabs->setCurrentIndex(1);
     QCoreApplication::processEvents();
     QVERIFY(window.grab().save(
         directory.filePath(QStringLiteral("admin-assets-piles.png"))));
 
-    navigation->setCurrentIndex(4);
+    navigation->setCurrentRow(4);
     recordTabs->setCurrentIndex(1);
     QCoreApplication::processEvents();
     QVERIFY(window.grab().save(
@@ -446,11 +450,14 @@ void AdminUiTest::dashboardVisualShellIsPresent() {
   window.showDemoWorkspace();
 
   auto *shell = window.findChild<QWidget *>(QStringLiteral("dashboardShell"));
-  auto *hero = window.findChild<QWidget *>(QStringLiteral("overviewHero"));
+  auto *sidebar = window.findChild<QWidget *>(QStringLiteral("sideBar"));
+  auto *revenueChart =
+      window.findChild<QWidget *>(QStringLiteral("revenueChartWidget"));
   QVERIFY(shell);
-  QVERIFY(hero);
-  QVERIFY(window.width() >= 980);
-  QVERIFY(hero->minimumHeight() >= 104);
+  QVERIFY(sidebar);
+  QVERIFY(revenueChart);
+  QVERIFY(window.width() >= 1080);
+  QCOMPARE(sidebar->width(), 224);
 }
 
 QTEST_MAIN(AdminUiTest)

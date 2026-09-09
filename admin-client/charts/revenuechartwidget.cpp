@@ -53,8 +53,8 @@ double pointRevenue(const QJsonObject &point) {
 RevenueChartWidget::RevenueChartWidget(QWidget *parent) : QWidget(parent) {
   setObjectName(QStringLiteral("revenueChartWidget"));
   auto *root = new QVBoxLayout(this);
-  root->setContentsMargins(0, 0, 0, 0);
-  root->setSpacing(6);
+  root->setContentsMargins(18, 16, 18, 14);
+  root->setSpacing(10);
 
   auto *toolbar = new QHBoxLayout;
   toolbar->setSpacing(0);
@@ -74,8 +74,8 @@ RevenueChartWidget::RevenueChartWidget(QWidget *parent) : QWidget(parent) {
 
   m_series = new QLineSeries(this);
   m_series->setName(QStringLiteral("营收"));
-  QPen seriesPen(QColor(QStringLiteral("#0f766e")));
-  seriesPen.setWidthF(2.6);
+  QPen seriesPen(QColor(QStringLiteral("#168b80")));
+  seriesPen.setWidthF(2.4);
   seriesPen.setCapStyle(Qt::RoundCap);
   seriesPen.setJoinStyle(Qt::RoundJoin);
   m_series->setPen(seriesPen);
@@ -91,9 +91,9 @@ RevenueChartWidget::RevenueChartWidget(QWidget *parent) : QWidget(parent) {
   m_axisX->setFormat(QStringLiteral("MM-dd"));
   m_axisX->setTickCount(7);
   m_axisX->setLabelsAngle(-35);
-  m_axisX->setLabelsColor(QColor(QStringLiteral("#6b7c78")));
-  m_axisX->setGridLineColor(QColor(QStringLiteral("#e5ebe9")));
-  m_axisX->setLinePenColor(QColor(QStringLiteral("#c9d5d2")));
+  m_axisX->setLabelsColor(QColor(QStringLiteral("#68777c")));
+  m_axisX->setGridLineColor(QColor(QStringLiteral("#e6ebed")));
+  m_axisX->setLinePenColor(QColor(QStringLiteral("#cfd8db")));
   chart->addAxis(m_axisX, Qt::AlignBottom);
   m_series->attachAxis(m_axisX);
 
@@ -101,9 +101,9 @@ RevenueChartWidget::RevenueChartWidget(QWidget *parent) : QWidget(parent) {
   m_axisY->setLabelFormat(QStringLiteral("%.0f"));
   m_axisY->setTitleText(QStringLiteral("元"));
   m_axisY->setRange(0.0, 10.0);
-  m_axisY->setLabelsColor(QColor(QStringLiteral("#6b7c78")));
-  m_axisY->setGridLineColor(QColor(QStringLiteral("#e5ebe9")));
-  m_axisY->setLinePenColor(QColor(QStringLiteral("#c9d5d2")));
+  m_axisY->setLabelsColor(QColor(QStringLiteral("#68777c")));
+  m_axisY->setGridLineColor(QColor(QStringLiteral("#e6ebed")));
+  m_axisY->setLinePenColor(QColor(QStringLiteral("#cfd8db")));
   chart->addAxis(m_axisY, Qt::AlignLeft);
   m_series->attachAxis(m_axisY);
 
@@ -112,7 +112,7 @@ RevenueChartWidget::RevenueChartWidget(QWidget *parent) : QWidget(parent) {
   view->setRenderHint(QPainter::Antialiasing);
   view->setFrameShape(QFrame::NoFrame);
   view->setBackgroundBrush(Qt::transparent);
-  view->setMinimumHeight(210);
+  view->setMinimumHeight(280);
   root->addWidget(view);
 
   connect(m_sevenDaysButton, &QPushButton::clicked, this,

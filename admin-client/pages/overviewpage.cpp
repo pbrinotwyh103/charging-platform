@@ -6,6 +6,7 @@
 
 #include <QFrame>
 #include <QGridLayout>
+#include <QHBoxLayout>
 #include <QJsonArray>
 #include <QLabel>
 #include <QScrollArea>
@@ -41,43 +42,19 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
   AdminUi::enableTouchScrolling(scroll);
   auto *content = new QWidget(scroll);
   auto *layout = new QVBoxLayout(content);
-  layout->setContentsMargins(12, 12, 12, 18);
-  layout->setSpacing(12);
+  layout->setContentsMargins(0, 0, 4, 8);
+  layout->setSpacing(14);
 
   auto *heading = new QLabel(QStringLiteral("运营概览"), content);
   heading->setObjectName(QStringLiteral("pageTitle"));
   layout->addWidget(heading);
 
-  auto *hero = new QFrame(content);
-  hero->setObjectName(QStringLiteral("overviewHero"));
-  hero->setMinimumHeight(116);
-  auto *heroLayout = new QGridLayout(hero);
-  heroLayout->setContentsMargins(20, 16, 20, 16);
-  heroLayout->setHorizontalSpacing(12);
-  heroLayout->setVerticalSpacing(8);
-  auto *heroTitle = new QLabel(QStringLiteral("汽车充电桩数据分析可视化大屏"), hero);
-  heroTitle->setObjectName(QStringLiteral("overviewHeroTitle"));
-  auto *heroSubtitle = new QLabel(
-      QStringLiteral("从需求矩阵到运营闭环：订单、设备、告警和营收在同一工作台汇总"), hero);
-  heroSubtitle->setObjectName(QStringLiteral("overviewHeroSubtitle"));
-  heroSubtitle->setWordWrap(true);
-  auto *chipDemand = new QLabel(QStringLiteral("需求覆盖 65 项"), hero);
-  chipDemand->setObjectName(QStringLiteral("overviewHeroChip"));
-  auto *chipProtocol = new QLabel(QStringLiteral("TCP/JSON 协议"), hero);
-  chipProtocol->setObjectName(QStringLiteral("overviewHeroChip"));
-  auto *chipRuntime = new QLabel(QStringLiteral("1s 充电推送"), hero);
-  chipRuntime->setObjectName(QStringLiteral("overviewHeroChip"));
-  heroLayout->addWidget(heroTitle, 0, 0, 1, 3);
-  heroLayout->addWidget(heroSubtitle, 1, 0, 1, 3);
-  heroLayout->addWidget(chipDemand, 2, 0);
-  heroLayout->addWidget(chipProtocol, 2, 1);
-  heroLayout->addWidget(chipRuntime, 2, 2);
-  heroLayout->setColumnStretch(3, 1);
-  layout->addWidget(hero);
-
+  auto *metricsTitle = new QLabel(QStringLiteral("关键指标"), content);
+  metricsTitle->setObjectName(QStringLiteral("sectionTitle"));
+  layout->addWidget(metricsTitle);
   auto *metrics = new QGridLayout;
-  metrics->setHorizontalSpacing(8);
-  metrics->setVerticalSpacing(8);
+  metrics->setHorizontalSpacing(12);
+  metrics->setVerticalSpacing(12);
   m_todayRevenue = createMetricCard(
       QStringLiteral("今日营收"), QStringLiteral("todayRevenueValue"), content);
   m_monthRevenue = createMetricCard(
@@ -92,28 +69,34 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
                                    QStringLiteral("totalOrderValue"), content);
   metrics->addWidget(m_todayRevenue->parentWidget(), 0, 0);
   metrics->addWidget(m_monthRevenue->parentWidget(), 0, 1);
-  metrics->addWidget(m_totalRevenue->parentWidget(), 1, 0);
-  metrics->addWidget(m_todayOrders->parentWidget(), 1, 1);
-  metrics->addWidget(m_monthOrders->parentWidget(), 2, 0);
-  metrics->addWidget(m_totalOrders->parentWidget(), 2, 1);
+  metrics->addWidget(m_totalRevenue->parentWidget(), 0, 2);
+  metrics->addWidget(m_todayOrders->parentWidget(), 0, 3);
+  metrics->addWidget(m_monthOrders->parentWidget(), 0, 4);
+  metrics->addWidget(m_totalOrders->parentWidget(), 0, 5);
+  for (int column = 0; column < 6; ++column)
+    metrics->setColumnStretch(column, 1);
   layout->addLayout(metrics);
 
+  auto *chartRow = new QHBoxLayout;
+  chartRow->setSpacing(12);
   m_revenueChart = new RevenueChartWidget(content);
+  m_revenueChart->setMinimumWidth(480);
   connect(m_revenueChart, &RevenueChartWidget::rangeChanged, this,
           [this](int days) {
             emit commandRequested(QStringLiteral("report.revenue"),
                                   {{QStringLiteral("days"), days}});
           });
-  layout->addWidget(m_revenueChart);
   m_pileStatusChart = new PileStatusChartWidget(content);
-  layout->addWidget(m_pileStatusChart);
+  m_pileStatusChart->setMinimumWidth(280);
+  chartRow->addWidget(m_revenueChart, 2);
+  chartRow->addWidget(m_pileStatusChart, 1);
+  layout->addLayout(chartRow, 1);
 
   m_stateLabel = new QLabel(QStringLiteral("等待运营数据"), content);
   m_stateLabel->setObjectName(QStringLiteral("overviewStateLabel"));
-  m_stateLabel->setAlignment(Qt::AlignCenter);
+  m_stateLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
   m_stateLabel->setWordWrap(true);
   layout->addWidget(m_stateLabel);
-  layout->addStretch();
   scroll->setWidget(content);
   root->addWidget(scroll);
 }
@@ -195,9 +178,10 @@ QLabel *OverviewPage::createMetricCard(const QString &title,
                                        QWidget *parent) {
   auto *card = new QFrame(parent);
   card->setObjectName(QStringLiteral("metricCard"));
-  card->setMinimumHeight(82);
+  card->setMinimumHeight(96);
   auto *layout = new QVBoxLayout(card);
-  layout->setContentsMargins(11, 9, 11, 9);
+  layout->setContentsMargins(15, 13, 15, 13);
+  layout->setSpacing(7);
   auto *caption = new QLabel(title, card);
   caption->setObjectName(QStringLiteral("metricCaption"));
   auto *value = new QLabel(QStringLiteral("--"), card);

@@ -4,6 +4,8 @@
 #include "widgets/paginationbar.h"
 
 #include <QAbstractItemView>
+#include <QFrame>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QJsonArray>
@@ -11,20 +13,34 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QResizeEvent>
+#include <QSplitter>
 #include <QTableWidget>
 #include <QVBoxLayout>
 
 MonitorPage::MonitorPage(QWidget *parent) : QWidget(parent) {
   setObjectName(QStringLiteral("monitorPage"));
   auto *root = new QVBoxLayout(this);
-  root->setContentsMargins(12, 12, 12, 12);
-  root->setSpacing(9);
+  root->setContentsMargins(0, 0, 0, 0);
+  root->setSpacing(12);
 
   auto *title = new QLabel(QStringLiteral("实时充电监控"), this);
   title->setObjectName(QStringLiteral("pageTitle"));
   root->addWidget(title);
 
-  m_table = new QTableWidget(this);
+  auto *splitter = new QSplitter(Qt::Horizontal, this);
+  splitter->setObjectName(QStringLiteral("monitorSplitter"));
+  splitter->setChildrenCollapsible(false);
+
+  auto *tablePanel = new QFrame(splitter);
+  tablePanel->setObjectName(QStringLiteral("tablePanel"));
+  auto *tableLayout = new QVBoxLayout(tablePanel);
+  tableLayout->setContentsMargins(14, 12, 14, 12);
+  tableLayout->setSpacing(10);
+  auto *tableTitle = new QLabel(QStringLiteral("充电中订单"), tablePanel);
+  tableTitle->setObjectName(QStringLiteral("sectionTitle"));
+  tableLayout->addWidget(tableTitle);
+
+  m_table = new QTableWidget(tablePanel);
   m_table->setObjectName(QStringLiteral("chargingTable"));
   m_table->setColumnCount(8);
   m_table->setHorizontalHeaderLabels(
@@ -43,15 +59,27 @@ MonitorPage::MonitorPage(QWidget *parent) : QWidget(parent) {
   AdminUi::configureTouchTable(m_table);
   connect(m_table, &QTableWidget::itemSelectionChanged, this,
           &MonitorPage::updateSelection);
-  root->addWidget(m_table, 1);
+  tableLayout->addWidget(m_table, 1);
 
-  m_stateLabel = new QLabel(QStringLiteral("等待实时充电数据"), this);
+  m_pagination = new PaginationBar(tablePanel);
+  connect(m_pagination, &PaginationBar::pageRequested, this,
+          &MonitorPage::requestPage);
+  tableLayout->addWidget(m_pagination);
+
+  auto *detailBox = new QGroupBox(QStringLiteral("订单详情"), splitter);
+  detailBox->setObjectName(QStringLiteral("monitorDetailBox"));
+  detailBox->setMinimumWidth(270);
+  detailBox->setMaximumWidth(340);
+  auto *detailLayout = new QVBoxLayout(detailBox);
+  detailLayout->setSpacing(12);
+  m_stateLabel = new QLabel(QStringLiteral("等待实时充电数据"), detailBox);
   m_stateLabel->setObjectName(QStringLiteral("monitorStateLabel"));
   m_stateLabel->setWordWrap(true);
-  root->addWidget(m_stateLabel);
+  m_stateLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  detailLayout->addWidget(m_stateLabel);
+  detailLayout->addStretch();
 
-  auto *footer = new QHBoxLayout;
-  m_stopButton = new QPushButton(QStringLiteral("远程停止"), this);
+  m_stopButton = new QPushButton(QStringLiteral("远程停止"), detailBox);
   m_stopButton->setObjectName(QStringLiteral("dangerButton"));
   m_stopButton->setEnabled(false);
   connect(m_stopButton, &QPushButton::clicked, this, [this] {
@@ -74,12 +102,13 @@ MonitorPage::MonitorPage(QWidget *parent) : QWidget(parent) {
            {QStringLiteral("reason"), QStringLiteral("管理员远程停止")}});
     }
   });
-  m_pagination = new PaginationBar(this);
-  connect(m_pagination, &PaginationBar::pageRequested, this,
-          &MonitorPage::requestPage);
-  footer->addWidget(m_stopButton);
-  footer->addWidget(m_pagination, 1);
-  root->addLayout(footer);
+  detailLayout->addWidget(m_stopButton);
+  splitter->addWidget(tablePanel);
+  splitter->addWidget(detailBox);
+  splitter->setStretchFactor(0, 1);
+  splitter->setStretchFactor(1, 0);
+  splitter->setSizes({900, 300});
+  root->addWidget(splitter, 1);
   updateResponsiveLayout();
 }
 
@@ -208,7 +237,7 @@ void MonitorPage::resizeEvent(QResizeEvent *event) {
 }
 
 void MonitorPage::updateResponsiveLayout() {
-  const bool compact = width() < 720;
+  const bool compact = width() < 720 && window()->width() < 900;
   AdminUi::setResponsiveColumns(m_table, {0, 2, 6}, compact);
   m_stopButton->setVisible(!compact || m_table->currentRow() >= 0);
 }
