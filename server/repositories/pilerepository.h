@@ -27,6 +27,7 @@ public:
     bool countByStation(qint64 stationId, const QString &status, int *total, QString *error) const;
 
     bool findById(qint64 pileId, PileRecord *record, QString *error) const;
+    bool findByCode(const QString &pileCode, PileRecord *record, QString *error) const;
     bool listByStation(qint64 stationId, const QString &status,
                        QList<PileRecord> *records, QString *error) const;
     bool insert(const PileRecord &record, qint64 *pileId, QString *error) const;

@@ -31,6 +31,14 @@ ClientApi::ClientApi(QObject *parent) : QObject(parent)
             if (m.header.statusCode == Charging::ErrorCode::Success) emit stationsReceived(m.payload.value(QStringLiteral("items")).toArray()); else emit featureUnavailable(QStringLiteral("站点查询失败：%1").arg(m.payload.value(QStringLiteral("message")).toString()));
         } else if (m.header.messageType == Charging::MessageType::PileListResponse) {
             if (m.header.statusCode == Charging::ErrorCode::Success) emit pilesReceived(m.payload.value(QStringLiteral("items")).toArray()); else emit featureUnavailable(QStringLiteral("电桩查询失败：%1").arg(m.payload.value(QStringLiteral("message")).toString()));
+        } else if (m.header.messageType == Charging::MessageType::PileCodeLookupResponse) {
+            if (m.header.statusCode == Charging::ErrorCode::Success)
+                emit pileCodeResolved(m.payload.value(QStringLiteral("station")).toObject(),
+                                      m.payload.value(QStringLiteral("pile")).toObject());
+            else
+                emit pileCodeLookupFailed(Charging::errorMessage(
+                    m.header.statusCode,
+                    m.payload.value(QStringLiteral("message")).toString()));
         } else if (m.header.messageType == Charging::MessageType::UserProfileResponse) {
             if (m.header.statusCode == Charging::ErrorCode::Success) emit profileReceived(m.payload);
             else emit featureUnavailable(QStringLiteral("资料读取失败：%1").arg(m.payload.value(QStringLiteral("message")).toString()));
@@ -53,8 +61,11 @@ ClientApi::ClientApi(QObject *parent) : QObject(parent)
                    m.header.messageType == Charging::MessageType::ChargingProgressPush) {
             if (m.header.statusCode != Charging::ErrorCode::Success)
                 emit featureUnavailable(QStringLiteral("充电状态读取失败：%1").arg(m.payload.value(QStringLiteral("message")).toString()));
-            else if (m.header.messageType != Charging::MessageType::ActiveOrderResponse ||
-                     m.payload.value(QStringLiteral("active")).toBool())
+            else if (m.header.messageType == Charging::MessageType::ActiveOrderResponse) {
+                const bool active = m.payload.value(QStringLiteral("active")).toBool();
+                emit activeOrderChecked(active, m.payload);
+                if (active) emit chargingSnapshotReceived(m.payload);
+            } else
                 emit chargingSnapshotReceived(m.payload);
         } else if (m.header.messageType == Charging::MessageType::ChargingStopResponse ||
                    m.header.messageType == Charging::MessageType::ChargingStoppedPush) {
@@ -89,3 +100,10 @@ void ClientApi::logout() { if (!m_connection.send(Charging::MessageType::LogoutR
 void ClientApi::requestUnsupported(const QString &feature) { emit featureUnavailable(feature + QStringLiteral("接口尚未由服务端提供，等待联调")); }
 void ClientApi::requestStations(const QString &region,const QString &address,double latitude,double longitude){ const QString normalizedRegion=region==QStringLiteral("全部区域")?QString():region; if(!m_connection.send(Charging::MessageType::StationListRequest,m_connection.nextRequestId(),{{"region",normalizedRegion},{"address",address},{"latitude",latitude},{"longitude",longitude},{"radiusKm",10},{"sort","distance"}})) emit featureUnavailable(QStringLiteral("站点查询接口暂不可用")); }
 void ClientApi::requestPiles(qint64 stationId){ if(!m_connection.send(Charging::MessageType::PileListRequest,m_connection.nextRequestId(),{{"stationId",stationId}})) emit featureUnavailable(QStringLiteral("电桩详情接口暂不可用")); }
+void ClientApi::requestPileByCode(const QString &pileCode)
+{
+    if (!m_connection.send(Charging::MessageType::PileCodeLookupRequest,
+                           m_connection.nextRequestId(),
+                           {{QStringLiteral("pileCode"), pileCode.trimmed()}}))
+        emit pileCodeLookupFailed(QStringLiteral("当前未连接服务器"));
+}

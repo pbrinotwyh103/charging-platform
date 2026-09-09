@@ -315,6 +315,19 @@ void ServiceTest::pileStatusAndFavoriteIdempotency()
     QVERIFY(items[0].toObject().contains("type"));
     QVERIFY(items[0].toObject().contains("priceCentsPerKwh"));
     QVERIFY(items[0].toObject().value("updatedAt").toString().endsWith('Z'));
+    const auto direct = piles.findByCode(id, {{"pileCode", " dl-sp-001 "}});
+    QVERIFY(direct.succeeded());
+    QCOMPARE(direct.payload.value("station").toObject().value("stationId").toInt(), 1);
+    QCOMPARE(direct.payload.value("pile").toObject().value("pileCode").toString(),
+             QString("DL-SP-001"));
+    QCOMPARE(direct.payload.value("pile").toObject().value("status").toString(),
+             QString("available"));
+    QCOMPARE(piles.findByCode(id, {{"pileCode", ""}}).error,
+             ErrorCode::ValidationFailed);
+    QCOMPARE(piles.findByCode(id, {{"pileCode", 123}}).error,
+             ErrorCode::ValidationFailed);
+    QCOMPARE(piles.findByCode(id, {{"pileCode", "NOT-EXISTS"}}).error,
+             ErrorCode::NotFound);
     QCOMPARE(piles.listForStation({{"stationId", "1"}}).error, ErrorCode::ValidationFailed);
     QCOMPARE(piles.listForStation({{"stationId", 1.5}}).error, ErrorCode::ValidationFailed);
     QCOMPARE(piles.listForStation({{"stationId", 999999}}).error, ErrorCode::NotFound);
@@ -343,6 +356,8 @@ void ServiceTest::databaseFailures()
     QCOMPARE(stations.nearby(1, {}).error, ErrorCode::DatabaseError);
     QCOMPARE(stations.toggleFavorite(1, {{"stationId", 1}, {"favorited", true}}).error, ErrorCode::DatabaseError);
     QCOMPARE(piles.listForStation({{"stationId", 1}}).error, ErrorCode::DatabaseError);
+    QCOMPARE(piles.findByCode(1, {{"pileCode", "DL-SP-001"}}).error,
+             ErrorCode::DatabaseError);
 }
 
 void ServiceTest::reservationSelectionAndDuration()
@@ -1199,7 +1214,7 @@ void ServiceTest::adminMaintenanceAndAliases()
     AdminService admin(&f.database);
     QJsonObject station{{"action", "station.create"}, {"name", "测试站"}, {"address", "测试地址"},
                         {"longitude", 121.5},         {"latitude", 38.8}, {"priceCentsPerKwh", 150},
-                        {"status", "online"}};
+                        {"status", "online"},        {"pileCount", 3}};
     const auto created = admin.execute(1, 1, station, nullptr);
     QVERIFY(created.succeeded());
     const auto id = created.payload.value("stationId");
@@ -1207,6 +1222,9 @@ void ServiceTest::adminMaintenanceAndAliases()
                  .payload.value("name")
                  .toString(),
              QString("测试站"));
+    QCOMPARE(admin.execute(1, 2, {{"action", "station.detail"}, {"stationId", id}}, nullptr)
+                 .payload.value("piles").toArray().size(),
+             3);
     QCOMPARE(admin.execute(1, 3, {{"action", "stations.detail"}, {"stationId", id}}, nullptr)
                  .payload.value("name")
                  .toString(),
@@ -1222,6 +1240,7 @@ void ServiceTest::adminMaintenanceAndAliases()
     QVERIFY(StationRepository(&f.database).findById(qint64(id.toDouble()), &saved, &f.error));
     QCOMPARE(saved.name, QString("新站名"));
     QCOMPARE(saved.priceCentsPerKwh, 200);
+    QCOMPARE(saved.totalPileCount, 3);
     station.insert("action", "stations.create");
     QVERIFY(admin.execute(1, 6, station, nullptr).succeeded());
     QCOMPARE(admin.execute(1, 7, {{"action", "piles.detail"}, {"pileId", 1}}, nullptr)

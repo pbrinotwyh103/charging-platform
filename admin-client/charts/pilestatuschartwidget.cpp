@@ -7,10 +7,13 @@
 #include <QtCharts/QPieSlice>
 
 #include <QColor>
+#include <QAbstractItemView>
 #include <QFrame>
+#include <QHeaderView>
 #include <QLabel>
 #include <QList>
 #include <QPainter>
+#include <QTableWidget>
 #include <QVBoxLayout>
 
 namespace {
@@ -47,6 +50,19 @@ PileStatusChartWidget::PileStatusChartWidget(QWidget *parent)
   view->setMinimumHeight(235);
   root->addWidget(view);
 
+  m_statusTable = new QTableWidget(3, 3, this);
+  m_statusTable->setObjectName(QStringLiteral("pileStatusTable"));
+  m_statusTable->setHorizontalHeaderLabels(
+      {QStringLiteral("状态"), QStringLiteral("数量"), QStringLiteral("占比")});
+  m_statusTable->setVerticalHeaderLabels(
+      {QStringLiteral("在用"), QStringLiteral("闲置"), QStringLiteral("故障")});
+  m_statusTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  m_statusTable->setSelectionMode(QAbstractItemView::NoSelection);
+  m_statusTable->horizontalHeader()->setStretchLastSection(true);
+  m_statusTable->verticalHeader()->setVisible(false);
+  m_statusTable->setMaximumHeight(132);
+  root->addWidget(m_statusTable);
+
   m_summaryLabel = new QLabel(this);
   m_summaryLabel->setObjectName(QStringLiteral("pileStatusSummaryLabel"));
   m_summaryLabel->setAlignment(Qt::AlignCenter);
@@ -67,6 +83,23 @@ void PileStatusChartWidget::setStatusData(const QJsonObject &status) {
   const int sum = idle + reserved + charging + fault + offline + disabled;
   const int total = qMax(sum, status.value(QStringLiteral("total")).toInt(sum));
 
+  const QList<QPair<QString, int>> requiredRows = {
+      {QStringLiteral("在用"), charging + reserved},
+      {QStringLiteral("闲置"), idle},
+      {QStringLiteral("故障"), fault + offline + disabled}};
+  for (int row = 0; row < requiredRows.size(); ++row) {
+    const int count = requiredRows.at(row).second;
+    const double percentage = total > 0 ? count * 100.0 / total : 0.0;
+    m_statusTable->setItem(row, 0,
+                           new QTableWidgetItem(requiredRows.at(row).first));
+    m_statusTable->setItem(row, 1,
+                           new QTableWidgetItem(QString::number(count)));
+    m_statusTable->setItem(
+        row, 2,
+        new QTableWidgetItem(
+            QStringLiteral("%1%").arg(percentage, 0, 'f', 1)));
+  }
+
   struct SliceData {
     QString name;
     int count;
@@ -82,8 +115,15 @@ void PileStatusChartWidget::setStatusData(const QJsonObject &status) {
   for (const SliceData &item : slices) {
     if (item.count == 0)
       continue;
+    const double percentage = total > 0
+                                  ? item.count * 100.0 / total
+                                  : 0.0;
     auto *slice = m_series->append(
-        QStringLiteral("%1 %2").arg(item.name).arg(item.count), item.count);
+        QStringLiteral("%1 %2 (%3%)")
+            .arg(item.name)
+            .arg(item.count)
+            .arg(percentage, 0, 'f', 1),
+        item.count);
     slice->setBrush(item.color);
     slice->setBorderColor(QColor(QStringLiteral("#ffffff")));
     slice->setBorderWidth(2);

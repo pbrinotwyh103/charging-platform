@@ -115,6 +115,8 @@ void AdminController::requestAdminCommand(const QString &action,
   QJsonObject payload = parameters;
   if (normalizedAction == QStringLiteral("report.summary")) {
     wireAction = QStringLiteral("dashboard.summary");
+  } else if (normalizedAction == QStringLiteral("report.revenue")) {
+    wireAction = QStringLiteral("revenue.trend");
   } else if (normalizedAction == QStringLiteral("report.pileStates")) {
     wireAction = QStringLiteral("pile.status.summary");
   } else if (normalizedAction == QStringLiteral("admin.monitor")) {

@@ -18,6 +18,18 @@ def source_id(value):
     return str(int(number))
 
 
+def demo_pile_status(pile_source_id):
+    """为课程演示生成稳定的状态分布，不冒充数据集中的实时状态。"""
+    bucket = int(hashlib.sha256(pile_source_id.encode('utf-8')).hexdigest()[:8], 16) % 100
+    if bucket < 70:
+        return 'idle'
+    if bucket < 85:
+        return 'charging'
+    if bucket < 95:
+        return 'offline'
+    return 'fault'
+
+
 def run(db_path, data_dir):
     stations_path = data_dir / 'station_information.csv'
     piles_path = data_dir / 'pile_rated_power.csv'
@@ -59,7 +71,7 @@ def run(db_path, data_dir):
         'coordinate_system': 'GCJ-02 per latest author README; older Dryad metadata says WGS84; original values preserved without conversion',
         'station_name_address': 'Synthetic labels; real names and street addresses absent',
         'price': 'Dataset omits current tariff; stations.price_cents_per_kwh=150 is an explicit demo value, not an observed tariff',
-        'status': 'Stations online for location discovery only; all imported piles offline pending verification',
+        'status': 'Synthetic classroom demo state: about 70% idle, 15% charging, 10% offline and 5% fault; not observed realtime state',
         'pile_types': 'AC mapped to slow; DC mapped to fast',
         'csv_sha256': {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in (stations_path, piles_path)},
     }
@@ -99,8 +111,9 @@ def run(db_path, data_dir):
             if reason:
                 report['quarantined_piles'] += 1
             else:
+                status = demo_pile_status(pid)
                 local_id = con.execute('INSERT INTO charging_piles (station_id,pile_code,charge_type,power_kw,status) VALUES (?,?,?,?,?)',
-                    (mapping[sid], 'URBANEV-' + pid, 'slow' if row['pileType'] == 'AC' else 'fast', power, 'offline')).lastrowid
+                    (mapping[sid], 'URBANEV-' + pid, 'slow' if row['pileType'] == 'AC' else 'fast', power, status)).lastrowid
                 report['inserted_piles'] += 1
             # 不合法记录仍完整保留，避免为了满足数据库约束随意补造功率。
             con.execute('INSERT INTO urbanev_piles VALUES (?,?,?,?)', (pid, local_id, json.dumps(row), reason))

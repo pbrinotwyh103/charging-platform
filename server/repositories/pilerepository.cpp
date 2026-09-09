@@ -64,6 +64,33 @@ bool PileRepository::findById(qint64 pileId, PileRecord *record, QString *error)
     return true;
 }
 
+bool PileRepository::findByCode(const QString &pileCode, PileRecord *record,
+                                QString *error) const
+{
+    QSqlDatabase db = database()->database(error);
+    if (!db.isValid() || !db.isOpen()) return false;
+    QSqlQuery query(db);
+    // Exact spelling wins; the case-insensitive fallback makes printed codes
+    // friendlier to enter without changing the stored identifier.
+    query.prepare(QStringLiteral(
+        "SELECT %1 FROM charging_piles WHERE pile_code=? COLLATE NOCASE "
+        "ORDER BY CASE WHEN pile_code=? THEN 0 ELSE 1 END,id LIMIT 1")
+                      .arg(pileColumns()));
+    const QString normalized = pileCode.trimmed();
+    query.addBindValue(normalized);
+    query.addBindValue(normalized);
+    if (!query.exec()) {
+        if (error) *error = query.lastError().text();
+        return false;
+    }
+    if (!query.next()) {
+        record->id = 0;
+        return true;
+    }
+    readPile(query, record);
+    return true;
+}
+
 bool PileRepository::listByStation(qint64 stationId, const QString &status,
                                    QList<PileRecord> *records, QString *error) const
 {

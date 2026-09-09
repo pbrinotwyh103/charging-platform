@@ -28,6 +28,7 @@ MessageType responseFor(MessageType request)
     case MessageType::StationListRequest: return MessageType::StationListResponse;
     case MessageType::PileListRequest: return MessageType::PileListResponse;
     case MessageType::FavoriteToggleRequest: return MessageType::FavoriteToggleResponse;
+    case MessageType::PileCodeLookupRequest: return MessageType::PileCodeLookupResponse;
     case MessageType::ReservationCreateRequest: return MessageType::ReservationCreateResponse;
     case MessageType::ReservationCancelRequest: return MessageType::ReservationCancelResponse;
     case MessageType::ChargingStartRequest: return MessageType::ChargingStartResponse;
@@ -183,6 +184,7 @@ void MessageDispatcher::dispatch(ClientSession *session, const Charging::Message
         case MessageType::WalletLedgerRequest: return services->users()->walletLedger(principalId, payload);
         case MessageType::StationListRequest: return services->stations()->nearby(principalId, payload);
         case MessageType::PileListRequest: return services->piles()->listForStation(payload);
+        case MessageType::PileCodeLookupRequest: return services->piles()->findByCode(principalId, payload);
         case MessageType::FavoriteToggleRequest: return services->stations()->toggleFavorite(principalId, payload);
         case MessageType::ReservationCreateRequest: return services->reservations()->create(principalId, payload);
         case MessageType::ReservationCancelRequest: return services->reservations()->cancel(principalId, payload);

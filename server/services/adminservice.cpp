@@ -10,7 +10,9 @@
 #include <QDateTime>
 #include <QHash>
 #include <QJsonDocument>
+#include <QMap>
 #include <QMutex>
+#include <QSqlDatabase>
 
 using namespace ServiceHelpers;
 using namespace AdminServiceHelpers;
@@ -235,11 +237,26 @@ ServiceResult AdminService::stations(qint64, quint32, const QJsonObject &payload
     }
     if (action == "station.detail")
     {
+        QList<PileRecord> piles;
+        if (!PileRepository(database()).listByStation(station.id, {}, &piles, &error))
+            return databaseError();
+        QJsonArray pileItems;
+        for (const auto &pile : piles)
+            pileItems.append(pileJson(pile));
         ServiceResult result;
+        // Keep the station fields at the top level for older clients, and add
+        // the live pile list as an additive detail field.
         result.payload = stationJson(station);
+        result.payload.insert("piles", pileItems);
         return result;
     }
     const bool create = action == "station.create";
+    int requestedPileCount = 0;
+    if (create && payload.contains("pileCount")) {
+        if (!integer(payload.value("pileCount"), 1, 200))
+            return invalid();
+        requestedPileCount = payload.value("pileCount").toInt();
+    }
     bool changed = false;
     for (const auto &key :
          QStringList{"name", "address", "longitude", "latitude", "priceCentsPerKwh", "status"})
@@ -283,8 +300,33 @@ ServiceResult AdminService::stations(qint64, quint32, const QJsonObject &payload
         station.status = "online";
     if (create)
     {
-        if (!repository.insert(station, &station.id, &error))
+        QSqlDatabase db = database()->database(&error);
+        if (!db.isValid() || !db.isOpen() || !db.transaction())
             return databaseError();
+        if (!repository.insert(station, &station.id, &error)) {
+            db.rollback();
+            return databaseError();
+        }
+        PileRepository piles(database());
+        for (int index = 1; index <= requestedPileCount; ++index) {
+            PileRecord pile;
+            pile.stationId = station.id;
+            pile.pileCode = QStringLiteral("S%1-P%2")
+                                .arg(station.id, 4, 10, QLatin1Char('0'))
+                                .arg(index, 3, 10, QLatin1Char('0'));
+            pile.chargeType = index % 2 == 1 ? QStringLiteral("fast")
+                                              : QStringLiteral("slow");
+            pile.powerKw = pile.chargeType == QStringLiteral("fast") ? 60.0 : 7.0;
+            pile.status = QStringLiteral("idle");
+            if (!piles.insert(pile, nullptr, &error)) {
+                db.rollback();
+                return databaseError();
+            }
+        }
+        if (!db.commit()) {
+            db.rollback();
+            return databaseError();
+        }
     }
     else
     {
@@ -337,6 +379,8 @@ ServiceResult AdminService::piles(qint64, quint32, const QJsonObject &payload, C
     if (!QStringList{"", "idle", "reserved", "charging", "fault", "offline", "disabled"}.contains(status))
         return invalid();
     QJsonArray items;
+    QMap<qint64, QJsonArray> itemsByStation;
+    QList<qint64> stationOrder;
     for (const auto &pile : records)
     {
         if (!detail &&
@@ -348,7 +392,36 @@ ServiceResult AdminService::piles(qint64, quint32, const QJsonObject &payload, C
         auto item = pileJson(pile);
         item.insert("stationName", station.name);
         item.insert("priceCentsPerKwh", double(station.priceCentsPerKwh));
-        items.append(item);
+        if (detail || stationId)
+        {
+            items.append(item);
+        }
+        else
+        {
+            // “全部站点”下按站点轮询排列，避免一个大站的数十个电桩
+            // 连续占满多个分页，让管理员首页就能看到多个站点。
+            if (!itemsByStation.contains(pile.stationId))
+                stationOrder.append(pile.stationId);
+            itemsByStation[pile.stationId].append(item);
+        }
+    }
+    if (!detail && !stationId)
+    {
+        for (qsizetype row = 0;; ++row)
+        {
+            bool appended = false;
+            for (const qint64 id : stationOrder)
+            {
+                const auto &stationItems = itemsByStation[id];
+                if (row < stationItems.size())
+                {
+                    items.append(stationItems.at(row));
+                    appended = true;
+                }
+            }
+            if (!appended)
+                break;
+        }
     }
     if (detail)
     {

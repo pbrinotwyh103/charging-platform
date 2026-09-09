@@ -5,6 +5,7 @@
 
 class QLabel;
 class QPieSeries;
+class QTableWidget;
 
 class PileStatusChartWidget final : public QWidget {
   Q_OBJECT
@@ -18,4 +19,5 @@ public slots:
 private:
   QPieSeries *m_series = nullptr;
   QLabel *m_summaryLabel = nullptr;
+  QTableWidget *m_statusTable = nullptr;
 };

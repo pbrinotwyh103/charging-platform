@@ -19,6 +19,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QSignalSpy>
 #include <QStackedWidget>
 #include <QStringList>
@@ -201,6 +202,7 @@ void AdminUiTest::mobileLayoutIsTouchFriendly() {
 
 void AdminUiTest::overviewRendersMetricsAndTrend() {
   OverviewPage page;
+  QSignalSpy requests(&page, &OverviewPage::commandRequested);
   page.setSummary(
       {{QStringLiteral("data"),
         QJsonObject{
@@ -233,6 +235,20 @@ void AdminUiTest::overviewRendersMetricsAndTrend() {
   QCOMPARE(page.findChild<QLabel *>(QStringLiteral("monthOrderValue"))->text(),
            QStringLiteral("81 单"));
   QCOMPARE(page.findChild<RevenueChartWidget *>()->pointCount(), 2);
+  QTest::mouseClick(
+      page.findChild<QPushButton *>(QStringLiteral("thirtyDaysButton")),
+      Qt::LeftButton);
+  QCOMPARE(requests.count(), 1);
+  QCOMPARE(requests.at(0).at(0).toString(), QStringLiteral("report.revenue"));
+  QCOMPARE(qvariant_cast<QJsonObject>(requests.at(0).at(1))
+               .value(QStringLiteral("days"))
+               .toInt(),
+           30);
+  auto *statusTable =
+      page.findChild<QTableWidget *>(QStringLiteral("pileStatusTable"));
+  QVERIFY(statusTable);
+  QCOMPARE(statusTable->item(0, 1)->text(), QStringLiteral("3"));
+  QCOMPARE(statusTable->item(1, 2)->text(), QStringLiteral("62.5%"));
 }
 
 void AdminUiTest::chargingPushUpdatesMatchingOrder() {
@@ -274,6 +290,10 @@ void AdminUiTest::assetsRenderStationsPilesAndDevicePush() {
                  {QStringLiteral("name"), QStringLiteral("软件园站")},
                  {QStringLiteral("address"), QStringLiteral("软件园路")},
                  {QStringLiteral("priceCentsPerKwh"), 120},
+                 {QStringLiteral("longitude"), 114.0579},
+                 {QStringLiteral("latitude"), 22.5431},
+                 {QStringLiteral("pileCount"), 4},
+                 {QStringLiteral("onlinePileCount"), 3},
                  {QStringLiteral("status"), QStringLiteral("online")}}}},
             {QStringLiteral("meta"),
              QJsonObject{{QStringLiteral("page"), 1},
@@ -294,12 +314,37 @@ void AdminUiTest::assetsRenderStationsPilesAndDevicePush() {
       {{QStringLiteral("pileId"), 2},
        {QStringLiteral("status"), QStringLiteral("fault")},
        {QStringLiteral("updatedAt"), QStringLiteral("10:31")}});
+  const QJsonObject detailPile{
+      {QStringLiteral("pileCode"), QStringLiteral("PILE-2")},
+      {QStringLiteral("chargeType"), QStringLiteral("fast")},
+      {QStringLiteral("powerKw"), 60.0},
+      {QStringLiteral("status"), QStringLiteral("available")}};
+  const QJsonObject stationDetail{
+      {QStringLiteral("stationId"), 1},
+      {QStringLiteral("name"), QStringLiteral("软件园站")},
+      {QStringLiteral("address"), QStringLiteral("软件园路")},
+      {QStringLiteral("longitude"), 114.0579},
+      {QStringLiteral("latitude"), 22.5431},
+      {QStringLiteral("priceCentsPerKwh"), 120},
+      {QStringLiteral("pileCount"), 1},
+      {QStringLiteral("status"), QStringLiteral("online")},
+      {QStringLiteral("piles"), QJsonArray{detailPile}}};
+  page.setStationDetail(stationDetail);
   auto *stationTable =
       page.findChild<QTableWidget *>(QStringLiteral("stationTable"));
   auto *pileTable = page.findChild<QTableWidget *>(QStringLiteral("pileTable"));
   QCOMPARE(stationTable->rowCount(), 1);
-  QCOMPARE(stationTable->item(0, 2)->text(), QStringLiteral("¥1.20"));
+  QCOMPARE(stationTable->columnCount(), 9);
+  QCOMPARE(stationTable->item(0, 0)->text(), QStringLiteral("1"));
+  QCOMPARE(stationTable->item(0, 6)->text(), QStringLiteral("75.0%"));
+  QCOMPARE(stationTable->item(0, 7)->text(), QStringLiteral("¥1.20"));
   QCOMPARE(pileTable->item(0, 4)->text(), QStringLiteral("故障"));
+  QVERIFY(page.findChild<QLabel *>(QStringLiteral("stationDetailLabel"))
+              ->text()
+              .contains(QStringLiteral("站内电桩实时明细")));
+  QVERIFY(page.findChild<QScrollArea *>(
+      QStringLiteral("stationDetailScrollArea")));
+  QVERIFY(stationTable->minimumHeight() >= 200);
 }
 
 void AdminUiTest::phoneSearchIsDebouncedAndNumeric() {

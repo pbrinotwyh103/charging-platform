@@ -101,7 +101,7 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
   m_revenueChart = new RevenueChartWidget(content);
   connect(m_revenueChart, &RevenueChartWidget::rangeChanged, this,
           [this](int days) {
-            emit commandRequested(QStringLiteral("report.summary"),
+            emit commandRequested(QStringLiteral("report.revenue"),
                                   {{QStringLiteral("days"), days}});
           });
   layout->addWidget(m_revenueChart);
@@ -121,7 +121,8 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
 int OverviewPage::revenueDays() const { return m_revenueChart->days(); }
 
 void OverviewPage::requestRefresh() {
-  emit commandRequested(QStringLiteral("report.summary"),
+  emit commandRequested(QStringLiteral("report.summary"), {});
+  emit commandRequested(QStringLiteral("report.revenue"),
                         {{QStringLiteral("days"), revenueDays()}});
   emit commandRequested(QStringLiteral("report.pileStates"), {});
 }

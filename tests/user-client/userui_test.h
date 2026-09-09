@@ -12,8 +12,13 @@ private slots:
     void demoRechargeUpdatesBalanceAndLedger();
     void mapUrlCarriesTravelModeAndCoordinates();
     void mapKeyCanBeLoadedFromWorkingDirectoryConfig();
+    void geocodingRequestAndResponseUseTencentWebService();
+    void navigationUsesExpandedMapMode();
     void emptyStationDoesNotRequestPiles();
     void stationSearchUsesSeedDataCityByDefault();
     void simulatedLocationDoesNotFilterByDisplayText();
+    void pileCodeEntryEmitsTrimmedIdentifier();
+    void directPileIsSelectedEvenOutsideLoadedPage();
+    void chargingEntryChecksActiveOrder();
     void compactAppVisualShellIsPresent();
 };

@@ -21,6 +21,7 @@ const QList<RequestPair> userPairs{
     {MessageType::WalletLedgerRequest, MessageType::WalletLedgerResponse},
     {MessageType::StationListRequest, MessageType::StationListResponse},
     {MessageType::PileListRequest, MessageType::PileListResponse},
+    {MessageType::PileCodeLookupRequest, MessageType::PileCodeLookupResponse},
     {MessageType::FavoriteToggleRequest, MessageType::FavoriteToggleResponse},
     {MessageType::ReservationCreateRequest, MessageType::ReservationCreateResponse},
     {MessageType::ReservationCancelRequest, MessageType::ReservationCancelResponse},
@@ -274,6 +275,8 @@ void BusinessIntegrationTest::invalidFields_data()
     row("ledger", MessageType::WalletLedgerRequest, MessageType::WalletLedgerResponse, {{"page", 0}});
     row("stations", MessageType::StationListRequest, MessageType::StationListResponse, {{"radiusKm", 101}});
     row("piles", MessageType::PileListRequest, MessageType::PileListResponse, {{"stationId", "1"}});
+    row("pile-code", MessageType::PileCodeLookupRequest, MessageType::PileCodeLookupResponse,
+        {{"pileCode", ""}});
     row("favorite", MessageType::FavoriteToggleRequest, MessageType::FavoriteToggleResponse, {{"stationId", 1}, {"favorited", 1}});
     row("reservation", MessageType::ReservationCreateRequest, MessageType::ReservationCreateResponse, {{"stationId", 1}, {"durationMinutes", 0}});
     row("cancel", MessageType::ReservationCancelRequest, MessageType::ReservationCancelResponse, {{"reservationId", 0}});
@@ -316,6 +319,12 @@ void BusinessIntegrationTest::userWorkflowAndPushes()
     QCOMPARE(request(user, MessageType::WalletLedgerRequest, MessageType::WalletLedgerResponse).payload.value("total").toInt(), 1);
     QVERIFY(!request(user, MessageType::StationListRequest, MessageType::StationListResponse).payload.value("items").toArray().isEmpty());
     QCOMPARE(request(user, MessageType::PileListRequest, MessageType::PileListResponse, {{"stationId", 1}}).payload.value("items").toArray().size(), 2);
+    const auto directPile = request(user, MessageType::PileCodeLookupRequest,
+                                    MessageType::PileCodeLookupResponse,
+                                    {{"pileCode", "dl-sp-001"}}).payload;
+    QCOMPARE(directPile.value("station").toObject().value("stationId").toInt(), 1);
+    QCOMPARE(directPile.value("pile").toObject().value("pileCode").toString(),
+             QString("DL-SP-001"));
     QVERIFY(request(user, MessageType::FavoriteToggleRequest, MessageType::FavoriteToggleResponse, {{"stationId", 1}, {"favorited", true}}).payload.value("favorited").toBool());
     QVERIFY(!request(user, MessageType::ActiveOrderRequest, MessageType::ActiveOrderResponse).payload.value("active").toBool());
     auto reservation = request(user, MessageType::ReservationCreateRequest, MessageType::ReservationCreateResponse,

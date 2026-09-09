@@ -29,6 +29,8 @@ enum class MessageType : quint16 {
     PileListResponse = 2011,
     FavoriteToggleRequest = 2020,
     FavoriteToggleResponse = 2021,
+    PileCodeLookupRequest = 2030,
+    PileCodeLookupResponse = 2031,
 
     ReservationCreateRequest = 3001,
     ReservationCreateResponse = 3002,

@@ -12,6 +12,7 @@
 #include <QFile>
 #include <QJsonArray>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
 #include <QSignalSpy>
@@ -117,6 +118,56 @@ void UserUiTest::mapKeyCanBeLoadedFromWorkingDirectoryConfig()
     QVERIFY(QDir::setCurrent(previousPath));
 }
 
+void UserUiTest::geocodingRequestAndResponseUseTencentWebService()
+{
+    qputenv("TENCENT_MAP_KEY", "demo-key");
+    const QUrl url = MapNavigator::geocodingUrl(QStringLiteral("北京理工大学深圳校区"),
+                                                QStringLiteral("深圳市"));
+    const QUrlQuery query(url);
+    QVERIFY(url.path().contains(QStringLiteral("geocoder")));
+    QCOMPARE(query.queryItemValue(QStringLiteral("address")),
+             QStringLiteral("北京理工大学深圳校区"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("region")), QStringLiteral("深圳市"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("key")), QStringLiteral("demo-key"));
+
+    double latitude = 0.0;
+    double longitude = 0.0;
+    QString error;
+    const QByteArray response = R"({"status":0,"message":"query ok","result":{"location":{"lat":22.600001,"lng":113.900002}}})";
+    QVERIFY(MapNavigator::parseGeocodingResponse(response, &latitude, &longitude, &error));
+    QCOMPARE(latitude, 22.600001);
+    QCOMPARE(longitude, 113.900002);
+    qunsetenv("TENCENT_MAP_KEY");
+}
+
+void UserUiTest::navigationUsesExpandedMapMode()
+{
+    qputenv("TENCENT_MAP_KEY", "demo-key");
+    StationDetailPage page;
+    page.setStation({{"stationId", 1}, {"name", QStringLiteral("测试站")},
+                     {"address", QStringLiteral("深圳市")}, {"latitude", 22.55},
+                     {"longitude", 114.08}, {"originLatitude", 22.5431},
+                     {"originLongitude", 114.0579}, {"originName", QStringLiteral("测试起点")},
+                     {"priceCentsPerKwh", 150}, {"availablePiles", 1},
+                     {"totalPiles", 1}, {"distanceKm", 2.1}});
+    auto *walk = page.findChild<QPushButton *>(QStringLiteral("walkNavigationButton"));
+    auto *close = page.findChild<QPushButton *>(QStringLiteral("closeNavigationButton"));
+    auto *map = page.findChild<QWidget *>(QStringLiteral("navigationWebView"));
+    auto *piles = page.findChild<QListWidget *>(QStringLiteral("pileList"));
+    QVERIFY(walk);
+    QVERIFY(close);
+    QVERIFY(map);
+    QVERIFY(piles);
+    QTest::mouseClick(walk, Qt::LeftButton);
+    QVERIFY(!map->isHidden());
+    QVERIFY(piles->isHidden());
+    QVERIFY(map->minimumHeight() >= 420);
+    QTest::mouseClick(close, Qt::LeftButton);
+    QVERIFY(map->isHidden());
+    QVERIFY(!piles->isHidden());
+    qunsetenv("TENCENT_MAP_KEY");
+}
+
 void UserUiTest::emptyStationDoesNotRequestPiles()
 {
     StationDetailPage stationPage;
@@ -165,6 +216,62 @@ void UserUiTest::simulatedLocationDoesNotFilterByDisplayText()
 
     QCOMPARE(stationSpy.count(), 1);
     QCOMPARE(stationSpy.at(0).at(1).toString(), QString());
+}
+
+void UserUiTest::pileCodeEntryEmitsTrimmedIdentifier()
+{
+    HomePage home;
+    QSignalSpy lookupSpy(&home, &HomePage::pileCodeRequested);
+    auto *input = home.findChild<QLineEdit *>(QStringLiteral("pileCodeInput"));
+    auto *button = home.findChild<QPushButton *>(QStringLiteral("pileCodeConnectButton"));
+    QVERIFY(input);
+    QVERIFY(button);
+    input->setText(QStringLiteral("  DL-SP-001  "));
+    QTest::mouseClick(button, Qt::LeftButton);
+    QCOMPARE(lookupSpy.count(), 1);
+    QCOMPARE(lookupSpy.takeFirst().at(0).toString(), QStringLiteral("DL-SP-001"));
+}
+
+void UserUiTest::directPileIsSelectedEvenOutsideLoadedPage()
+{
+    StationDetailPage page;
+    const QJsonObject station{{"stationId", 1}, {"name", QStringLiteral("测试站")},
+                              {"address", QStringLiteral("深圳市")},
+                              {"priceCentsPerKwh", 150}, {"availablePiles", 1},
+                              {"totalPiles", 30}};
+    const QJsonObject first{{"pileId", 1}, {"pileCode", QStringLiteral("FIRST")},
+                            {"type", QStringLiteral("slow")}, {"powerKw", 7},
+                            {"status", QStringLiteral("offline")}};
+    const QJsonObject target{{"pileId", 30}, {"pileCode", QStringLiteral("TARGET-030")},
+                             {"type", QStringLiteral("fast")}, {"powerKw", 60},
+                             {"status", QStringLiteral("available")}};
+    page.setDirectPile(station, target);
+    page.setPiles(QJsonArray{first});
+    auto *list = page.findChild<QListWidget *>(QStringLiteral("pileList"));
+    auto *reserve = page.findChild<QPushButton *>(QStringLiteral("reserveButton"));
+    QVERIFY(list);
+    QCOMPARE(list->count(), 2);
+    QCOMPARE(list->currentItem()->data(Qt::UserRole).toJsonObject()
+                 .value(QStringLiteral("pileId")).toInteger(), qint64(30));
+    QVERIFY(reserve->isEnabled());
+    QVERIFY(page.findChild<QLabel *>(QStringLiteral("stationStatusLabel"))
+                ->text().contains(QStringLiteral("已通过编号连接")));
+}
+
+void UserUiTest::chargingEntryChecksActiveOrder()
+{
+    UserMainWindow window;
+    QSignalSpy checkSpy(&window, &UserMainWindow::activeOrderCheckRequested);
+    auto *button = window.findChild<QPushButton *>(
+        QStringLiteral("chargingNavigationButton"));
+    auto *pages = window.findChild<QStackedWidget *>(QStringLiteral("userPages"));
+    QVERIFY(button);
+    QVERIFY(pages);
+
+    button->click();
+    QCOMPARE(checkSpy.count(), 1);
+    window.handleActiveOrderCheck(false, {});
+    QCOMPARE(pages->currentWidget()->objectName(), QStringLiteral("chargingPage"));
 }
 
 void UserUiTest::compactAppVisualShellIsPresent()

@@ -21,7 +21,10 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QResizeEvent>
+#include <QScrollArea>
 #include <QSignalBlocker>
+#include <QSpinBox>
+#include <QSplitter>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QVBoxLayout>
@@ -76,6 +79,15 @@ QJsonObject stationFromDialog(QWidget *parent, const QJsonObject &initial,
   form->addRow(QStringLiteral("纬度"), latitude);
   form->addRow(QStringLiteral("充电单价"), price);
   form->addRow(QStringLiteral("状态"), status);
+  QSpinBox *pileCount = nullptr;
+  if (initial.isEmpty()) {
+    pileCount = new QSpinBox(&dialog);
+    pileCount->setObjectName(QStringLiteral("newStationPileCount"));
+    pileCount->setRange(1, 200);
+    pileCount->setValue(4);
+    pileCount->setSuffix(QStringLiteral(" 个"));
+    form->addRow(QStringLiteral("电桩数量"), pileCount);
+  }
   root->addLayout(form);
   auto *buttons = new QDialogButtonBox(
       QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dialog);
@@ -102,6 +114,8 @@ QJsonObject stationFromDialog(QWidget *parent, const QJsonObject &initial,
       {QStringLiteral("latitude"), latitude->value()},
       {QStringLiteral("priceCentsPerKwh"), qRound64(price->value() * 100.0)},
       {QStringLiteral("status"), status->currentData().toString()}};
+  if (pileCount)
+    station.insert(QStringLiteral("pileCount"), pileCount->value());
   const qint64 stationId =
       AdminUi::integerId(initial, QStringLiteral("stationId"));
   if (stationId > 0)
@@ -165,11 +179,11 @@ QWidget *AssetsPage::createStationsTab() {
 
   m_stationTable = new QTableWidget(page);
   m_stationTable->setObjectName(QStringLiteral("stationTable"));
-  m_stationTable->setColumnCount(6);
+  m_stationTable->setColumnCount(9);
   m_stationTable->setHorizontalHeaderLabels(
-      {QStringLiteral("名称"), QStringLiteral("地址"), QStringLiteral("单价"),
-       QStringLiteral("状态"), QStringLiteral("电桩数"),
-       QStringLiteral("更新时间")});
+      {QStringLiteral("站点ID"), QStringLiteral("名称"), QStringLiteral("地址"),
+       QStringLiteral("经度"), QStringLiteral("纬度"), QStringLiteral("电桩数"),
+       QStringLiteral("在线率"), QStringLiteral("单价"), QStringLiteral("状态")});
   m_stationTable->setSelectionBehavior(QAbstractItemView::SelectRows);
   m_stationTable->setSelectionMode(QAbstractItemView::SingleSelection);
   m_stationTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -181,21 +195,38 @@ QWidget *AssetsPage::createStationsTab() {
   AdminUi::configureTouchTable(m_stationTable);
   connect(m_stationTable, &QTableWidget::itemSelectionChanged, this,
           &AssetsPage::updateStationSelection);
-  root->addWidget(m_stationTable, 1);
-
   m_stationState = new QLabel(QStringLiteral("等待站点数据"), page);
   m_stationState->setObjectName(QStringLiteral("stationStateLabel"));
   m_stationState->setWordWrap(true);
   root->addWidget(m_stationState);
+
+  // 列表和详情使用可调节的上下分区，避免电桩较多时详情文本挤压表格。
+  auto *stationSplitter = new QSplitter(Qt::Vertical, page);
+  stationSplitter->setObjectName(QStringLiteral("stationDetailSplitter"));
+  stationSplitter->setChildrenCollapsible(false);
+  m_stationTable->setMinimumHeight(210);
+  stationSplitter->addWidget(m_stationTable);
+
   m_stationDetailBox = new QGroupBox(QStringLiteral("站点详情"), page);
   m_stationDetailBox->setObjectName(QStringLiteral("stationDetailBox"));
+  m_stationDetailBox->setMinimumHeight(150);
   auto *detailLayout = new QVBoxLayout(m_stationDetailBox);
+  auto *detailScroll = new QScrollArea(m_stationDetailBox);
+  detailScroll->setObjectName(QStringLiteral("stationDetailScrollArea"));
+  detailScroll->setWidgetResizable(true);
+  detailScroll->setFrameShape(QFrame::NoFrame);
   m_stationDetail =
       new QLabel(QStringLiteral("请选择一个充电站"), m_stationDetailBox);
   m_stationDetail->setObjectName(QStringLiteral("stationDetailLabel"));
   m_stationDetail->setWordWrap(true);
-  detailLayout->addWidget(m_stationDetail);
-  root->addWidget(m_stationDetailBox);
+  m_stationDetail->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+  detailScroll->setWidget(m_stationDetail);
+  detailLayout->addWidget(detailScroll);
+  stationSplitter->addWidget(m_stationDetailBox);
+  stationSplitter->setStretchFactor(0, 3);
+  stationSplitter->setStretchFactor(1, 2);
+  stationSplitter->setSizes({360, 240});
+  root->addWidget(stationSplitter, 1);
   m_stationPagination = new PaginationBar(page);
   connect(m_stationPagination, &PaginationBar::pageRequested, this,
           &AssetsPage::requestStations);
@@ -319,16 +350,34 @@ void AssetsPage::setStations(const QJsonObject &payload) {
   m_stationTable->setRowCount(items.size());
   for (int row = 0; row < items.size(); ++row) {
     const QJsonObject station = items.at(row).toObject();
-    auto *nameItem =
-        new QTableWidgetItem(station.value(QStringLiteral("name")).toString());
-    nameItem->setData(Qt::UserRole, station.toVariantMap());
-    m_stationTable->setItem(row, 0, nameItem);
+    auto *idItem = new QTableWidgetItem(QString::number(
+        AdminUi::integerId(station, QStringLiteral("stationId"))));
+    idItem->setData(Qt::UserRole, station.toVariantMap());
+    m_stationTable->setItem(row, 0, idItem);
     m_stationTable->setItem(
-        row, 1,
+        row, 1, new QTableWidgetItem(
+                    station.value(QStringLiteral("name")).toString()));
+    m_stationTable->setItem(
+        row, 2,
         new QTableWidgetItem(
             station.value(QStringLiteral("address")).toString()));
     m_stationTable->setItem(
-        row, 2,
+        row, 3, new QTableWidgetItem(QString::number(
+                    station.value(QStringLiteral("longitude")).toDouble(), 'f', 6)));
+    m_stationTable->setItem(
+        row, 4, new QTableWidgetItem(QString::number(
+                    station.value(QStringLiteral("latitude")).toDouble(), 'f', 6)));
+    const int pileCount = station.value(QStringLiteral("pileCount")).toInt(
+        station.value(QStringLiteral("totalPileCount")).toInt());
+    const int onlineCount = station.value(QStringLiteral("onlinePileCount")).toInt();
+    m_stationTable->setItem(row, 5,
+        new QTableWidgetItem(QString::number(pileCount)));
+    m_stationTable->setItem(row, 6,
+        new QTableWidgetItem(pileCount > 0
+            ? QStringLiteral("%1%").arg(onlineCount * 100.0 / pileCount, 0, 'f', 1)
+            : QStringLiteral("--")));
+    m_stationTable->setItem(
+        row, 7,
         new QTableWidgetItem(QStringLiteral("¥%1").arg(
             station.value(QStringLiteral("priceCentsPerKwh")).toDouble() /
                 100.0,
@@ -341,15 +390,7 @@ void AssetsPage::setStations(const QJsonObject &payload) {
                             stationStatus == QStringLiteral("online")
                                 ? AdminUi::Tone::Success
                                 : AdminUi::Tone::Neutral);
-    m_stationTable->setItem(row, 3, statusItem);
-    m_stationTable->setItem(
-        row, 4,
-        new QTableWidgetItem(QString::number(
-            station.value(QStringLiteral("pileCount")).toInt())));
-    m_stationTable->setItem(
-        row, 5,
-        new QTableWidgetItem(
-            station.value(QStringLiteral("updatedAt")).toString()));
+    m_stationTable->setItem(row, 8, statusItem);
   }
   m_stationPagination->setPage(
       meta.value(QStringLiteral("page")).toInt(1),
@@ -383,7 +424,7 @@ void AssetsPage::setStationDetail(const QJsonObject &payload) {
           : data.value(QStringLiteral("station")).toObject();
   if (!station.isEmpty())
     m_selectedStation = station;
-  m_stationDetail->setText(
+  QString detail =
       QStringLiteral("%1\n%2\n坐标：%3, %4\n单价：%5\n电桩：%6 个 · 状态：%7")
           .arg(
               station.value(QStringLiteral("name"))
@@ -401,7 +442,26 @@ void AssetsPage::setStationDetail(const QJsonObject &payload) {
               QString::number(
                   station.value(QStringLiteral("pileCount")).toInt()),
               stationStatusText(
-                  station.value(QStringLiteral("status")).toString())));
+                  station.value(QStringLiteral("status")).toString()));
+  const QJsonArray piles = data.value(QStringLiteral("piles")).toArray();
+  if (!piles.isEmpty()) {
+    detail += QStringLiteral("\n\n站内电桩实时明细：");
+    for (const QJsonValue &value : piles) {
+      const QJsonObject pile = value.toObject();
+      detail += QStringLiteral("\n%1 · %2 · %3 kW · %4")
+                    .arg(pile.value(QStringLiteral("pileCode")).toString(),
+                         pile.value(QStringLiteral("chargeType")).toString() ==
+                                 QStringLiteral("fast")
+                             ? QStringLiteral("快充")
+                             : QStringLiteral("慢充"),
+                         QString::number(
+                             pile.value(QStringLiteral("powerKw")).toDouble(),
+                             'f', 1),
+                         AdminUi::pileStatus(
+                             pile.value(QStringLiteral("status")).toString()));
+    }
+  }
+  m_stationDetail->setText(detail);
 }
 
 void AssetsPage::setPiles(const QJsonObject &payload) {
@@ -663,7 +723,7 @@ void AssetsPage::resizeEvent(QResizeEvent *event) {
 
 void AssetsPage::updateResponsiveLayout() {
   const bool compact = width() < 720;
-  AdminUi::setResponsiveColumns(m_stationTable, {0, 3, 4}, compact);
+    AdminUi::setResponsiveColumns(m_stationTable, {0, 1, 8}, compact);
   AdminUi::setResponsiveColumns(m_pileTable, {0, 4, 6}, compact);
   if (m_stationDetailBox)
     m_stationDetailBox->setVisible(!compact || !m_selectedStation.isEmpty());

@@ -32,13 +32,16 @@ public slots:
     void showDemoWorkspace();
     void showReservationCreated(const QJsonObject &reservation);
     void showChargingSnapshot(const QJsonObject &snapshot);
+    void handleActiveOrderCheck(bool active, const QJsonObject &snapshot);
     void showChargingStopped(const QJsonObject &result);
+    void showDirectPile(const QJsonObject &station, const QJsonObject &pile);
 
 signals:
     void connectionRequested(const QString &host, quint16 port);
     void loginRequested(const QString &phone, const QString &host, quint16 port);
     void logoutRequested();
     void reservationRequested(qint64 stationId, qint64 pileId);
+    void activeOrderCheckRequested();
 
 private:
     QLabel *m_statusLabel = nullptr;
@@ -54,6 +57,7 @@ private:
     ProfilePage *m_profilePage = nullptr;
     StationDetailPage *m_stationDetailPage = nullptr;
     bool m_demoMode = false;
+    bool m_waitingForChargingEntry = false;
     QJsonArray m_demoStations;
     QJsonObject m_pendingStation;
     QJsonObject m_pendingPile;

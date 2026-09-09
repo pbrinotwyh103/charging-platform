@@ -51,13 +51,21 @@ int main(int argc, char *argv[])
                      &window, &UserMainWindow::showFeatureMessage);
     if (!parser.isSet(demoOption)) {
         QObject::connect(window.findChild<HomePage *>(), &HomePage::stationsRequested, &controller, &ClientApi::requestStations);
+        QObject::connect(window.findChild<HomePage *>(), &HomePage::pileCodeRequested,
+                         &controller, &ClientApi::requestPileByCode);
         QObject::connect(window.findChild<StationDetailPage *>(), &StationDetailPage::pilesRequested, &controller, &ClientApi::requestPiles);
         QObject::connect(&window, &UserMainWindow::reservationRequested, &controller, &ClientApi::createReservation);
         QObject::connect(window.findChild<ChargingPage *>(), &ChargingPage::startChargingRequested, &controller, &ClientApi::startCharging);
         QObject::connect(window.findChild<ChargingPage *>(), &ChargingPage::stopChargingRequested, &controller, &ClientApi::stopCharging);
+        QObject::connect(&window, &UserMainWindow::activeOrderCheckRequested,
+                         &controller, &ClientApi::requestActiveOrder);
     }
     QObject::connect(&controller, &ClientApi::stationsReceived, window.findChild<HomePage *>(), &HomePage::setStations);
     QObject::connect(&controller, &ClientApi::pilesReceived, window.findChild<StationDetailPage *>(), &StationDetailPage::setPiles);
+    QObject::connect(&controller, &ClientApi::pileCodeResolved,
+                     &window, &UserMainWindow::showDirectPile);
+    QObject::connect(&controller, &ClientApi::pileCodeLookupFailed,
+                     window.findChild<HomePage *>(), &HomePage::showPileLookupError);
     if (!parser.isSet(demoOption)) {
         QObject::connect(window.findChild<StationDetailPage *>(), &StationDetailPage::favoriteRequested,
                          &controller, &ClientApi::toggleFavorite);
@@ -72,6 +80,8 @@ int main(int argc, char *argv[])
         QObject::connect(&controller, &ClientApi::ledgerReceived, profile, &ProfilePage::setLedger);
         QObject::connect(&controller, &ClientApi::reservationCreated, &window, &UserMainWindow::showReservationCreated);
         QObject::connect(&controller, &ClientApi::chargingSnapshotReceived, &window, &UserMainWindow::showChargingSnapshot);
+        QObject::connect(&controller, &ClientApi::activeOrderChecked,
+                         &window, &UserMainWindow::handleActiveOrderCheck);
         QObject::connect(&controller, &ClientApi::chargingStopped, &window, &UserMainWindow::showChargingStopped);
         QObject::connect(&controller, &ClientApi::loginSucceeded, &controller, [&controller] {
             controller.requestLedger();

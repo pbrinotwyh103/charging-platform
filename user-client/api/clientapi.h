@@ -26,6 +26,7 @@ public:
     void requestUnsupported(const QString &feature);
     void requestStations(const QString &region, const QString &address, double latitude, double longitude);
     void requestPiles(qint64 stationId);
+    void requestPileByCode(const QString &pileCode);
     bool connected() const { return m_connection.isConnected(); }
 
 signals:
@@ -38,10 +39,13 @@ signals:
     void featureUnavailable(const QString &);
     void stationsReceived(const QJsonArray &);
     void pilesReceived(const QJsonArray &);
+    void pileCodeResolved(const QJsonObject &station, const QJsonObject &pile);
+    void pileCodeLookupFailed(const QString &message);
     void walletChanged(const QJsonObject &);
     void ledgerReceived(const QJsonArray &);
     void reservationCreated(const QJsonObject &);
     void chargingSnapshotReceived(const QJsonObject &);
+    void activeOrderChecked(bool active, const QJsonObject &snapshot);
     void chargingStopped(const QJsonObject &);
 
 private:

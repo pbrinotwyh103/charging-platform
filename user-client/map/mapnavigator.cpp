@@ -3,6 +3,8 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QSettings>
 #include <QUrlQuery>
 
@@ -46,4 +48,49 @@ QUrl MapNavigator::navigationUrl(double fromLat, double fromLon, double toLat,
     query.addQueryItem(QStringLiteral("key"), apiKey());
     url.setQuery(query);
     return url;
+}
+
+QUrl MapNavigator::geocodingUrl(const QString &address, const QString &region)
+{
+    if (!isConfigured() || address.trimmed().isEmpty()) return {};
+    QUrl url(QStringLiteral("https://apis.map.qq.com/ws/geocoder/v1/"));
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("address"), address.trimmed());
+    const QString normalizedRegion = region.trimmed();
+    if (!normalizedRegion.isEmpty() && normalizedRegion != QStringLiteral("全部区域"))
+        query.addQueryItem(QStringLiteral("region"), normalizedRegion);
+    query.addQueryItem(QStringLiteral("key"), apiKey());
+    url.setQuery(query);
+    return url;
+}
+
+bool MapNavigator::parseGeocodingResponse(const QByteArray &body, double *latitude,
+                                           double *longitude, QString *error)
+{
+    if (!latitude || !longitude) return false;
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(body, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        if (error) *error = QStringLiteral("地图服务返回了无法解析的数据");
+        return false;
+    }
+    const QJsonObject root = document.object();
+    if (root.value(QStringLiteral("status")).toInt(-1) != 0) {
+        if (error) {
+            *error = root.value(QStringLiteral("message")).toString(
+                QStringLiteral("腾讯地图未找到该地址"));
+        }
+        return false;
+    }
+    const QJsonObject location = root.value(QStringLiteral("result")).toObject()
+                                     .value(QStringLiteral("location")).toObject();
+    const double lat = location.value(QStringLiteral("lat")).toDouble(999.0);
+    const double lon = location.value(QStringLiteral("lng")).toDouble(999.0);
+    if (lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0) {
+        if (error) *error = QStringLiteral("地图服务没有返回有效坐标");
+        return false;
+    }
+    *latitude = lat;
+    *longitude = lon;
+    return true;
 }

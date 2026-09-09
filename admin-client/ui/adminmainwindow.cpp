@@ -369,7 +369,7 @@ void AdminMainWindow::showDemoWorkspace() {
   setConnectionStatus(QStringLiteral("演示数据 · 未连接服务器"), false);
   connect(this, &AdminMainWindow::adminCommandRequested, this,
           [this](const QString &action, const QJsonObject &parameters) {
-            if (action == QStringLiteral("report.summary")) {
+            if (action == QStringLiteral("report.revenue")) {
               const int requestedDays =
                   parameters.value(QStringLiteral("days")).toInt(7);
               const int days = requestedDays == 30 ? 30 : 7;
@@ -614,6 +614,8 @@ void AdminMainWindow::handleCommandSucceeded(const QString &action,
                                              const QJsonObject &payload) {
   if (action == QStringLiteral("report.summary"))
     m_overviewPage->setSummary(payload);
+  else if (action == QStringLiteral("report.revenue"))
+    m_overviewPage->setRevenue(payload);
   else if (action == QStringLiteral("report.pileStates"))
     m_overviewPage->setPileStatus(payload);
   else if (action == QStringLiteral("admin.monitor"))

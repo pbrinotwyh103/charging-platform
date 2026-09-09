@@ -12,6 +12,7 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMessageBox>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QRegularExpression>
@@ -64,7 +65,7 @@ UserMainWindow::UserMainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
     setWindowTitle(QStringLiteral("充电用户端"));
-    resize(390, 780);
+    resize(430, 820);
     setMinimumSize(360, 640);
     setStyleSheet(QStringLiteral(
         "QMainWindow,QWidget{background:#f5fbff;color:#102033;font-family:\"PingFang SC\",\"Microsoft YaHei\",\"Arial\";font-size:14px;}"
@@ -207,9 +208,15 @@ UserMainWindow::UserMainWindow(QWidget *parent)
     m_pages->addWidget(m_stationDetailPage);
     connect(homeButton, &QPushButton::clicked, this, [this] { m_pages->setCurrentWidget(m_homePage); });
     connect(chargingButton, &QPushButton::clicked, this, [this] {
-        m_pages->setCurrentWidget(m_chargingPage);
-        if (m_demoMode && m_chargingPage->hasActiveOrder())
-            setConnectionStatus(QStringLiteral("检测到未完成订单，已进入充电状态页"), true);
+        if (m_demoMode) {
+            m_pages->setCurrentWidget(m_chargingPage);
+            if (m_chargingPage->hasActiveOrder())
+                setConnectionStatus(QStringLiteral("检测到未完成订单，已进入充电状态页"), true);
+            return;
+        }
+        m_waitingForChargingEntry = true;
+        setConnectionStatus(QStringLiteral("正在检查未完成充电订单…"), true);
+        emit activeOrderCheckRequested();
     });
     connect(mineButton, &QPushButton::clicked, this, [this] { m_pages->setCurrentWidget(m_profilePage); });
     connect(m_homePage, &HomePage::stationSelected, this, [this](const QJsonObject &s) { m_stationDetailPage->setStation(s); m_pages->setCurrentWidget(m_stationDetailPage); });
@@ -226,6 +233,24 @@ UserMainWindow::UserMainWindow(QWidget *parent)
         }
         m_homePage->setStations(filtered);
         setConnectionStatus(QStringLiteral("演示数据已刷新 · 站点状态更新于刚刚"), true);
+    });
+    connect(m_homePage, &HomePage::pileCodeRequested, this,
+            [this](const QString &pileCode) {
+        if (!m_demoMode) return;
+        for (const auto &stationValue : m_demoStations) {
+            const QJsonObject station = stationValue.toObject();
+            const QJsonArray piles = demoPiles(
+                station.value(QStringLiteral("stationId")).toInteger());
+            for (const auto &pileValue : piles) {
+                const QJsonObject pile = pileValue.toObject();
+                if (pile.value(QStringLiteral("pileCode")).toString()
+                        .compare(pileCode, Qt::CaseInsensitive) == 0) {
+                    showDirectPile(station, pile);
+                    return;
+                }
+            }
+        }
+        m_homePage->showPileLookupError(QStringLiteral("未找到该电桩编号"));
     });
     connect(m_stationDetailPage, &StationDetailPage::pilesRequested, this,
             [this](qint64 stationId) {
@@ -344,6 +369,37 @@ void UserMainWindow::showChargingStopped(const QJsonObject &result)
     m_chargingPage->setSnapshot(result);
     m_pages->setCurrentWidget(m_chargingPage);
     setConnectionStatus(QStringLiteral("充电已停止，费用结算完成"), true);
+}
+
+void UserMainWindow::handleActiveOrderCheck(bool active,
+                                             const QJsonObject &snapshot)
+{
+    if (!m_waitingForChargingEntry) return;
+    m_waitingForChargingEntry = false;
+    if (active) {
+        m_chargingPage->setSnapshot(snapshot);
+        QMessageBox::warning(this, QStringLiteral("未完成订单"),
+                             QStringLiteral("您有未完成的充电订单，请先结算"));
+        setConnectionStatus(QStringLiteral("已恢复未完成订单，请先结束充电并结算"), true);
+    } else {
+        setConnectionStatus(QStringLiteral("当前没有未完成订单"), true);
+    }
+    m_pages->setCurrentWidget(m_chargingPage);
+}
+
+void UserMainWindow::showDirectPile(const QJsonObject &station,
+                                    const QJsonObject &pile)
+{
+    if (station.value(QStringLiteral("stationId")).toInteger() <= 0
+        || pile.value(QStringLiteral("pileId")).toInteger() <= 0) {
+        m_homePage->showPileLookupError(QStringLiteral("服务器返回的电桩资料无效"));
+        return;
+    }
+    m_stationDetailPage->setDirectPile(station, pile);
+    m_pages->setCurrentWidget(m_stationDetailPage);
+    setConnectionStatus(
+        QStringLiteral("已通过编号连接电桩 %1")
+            .arg(pile.value(QStringLiteral("pileCode")).toString()), true);
 }
 
 void UserMainWindow::showDemoWorkspace()

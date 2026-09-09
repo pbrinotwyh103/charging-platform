@@ -54,7 +54,8 @@ inline QString duration(int seconds) {
 }
 
 inline QString pileStatus(const QString &status) {
-  if (status == QStringLiteral("idle") || status == QStringLiteral("IDLE"))
+  if (status == QStringLiteral("idle") || status == QStringLiteral("IDLE") ||
+      status == QStringLiteral("available"))
     return QStringLiteral("空闲");
   if (status == QStringLiteral("reserved"))
     return QStringLiteral("已预约");
