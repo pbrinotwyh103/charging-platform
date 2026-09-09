@@ -140,8 +140,8 @@ void UserUiTest::stationSearchUsesSeedDataCityByDefault()
     QTest::mouseClick(search, Qt::LeftButton);
 
     QCOMPARE(stationSpy.count(), 1);
-    QCOMPARE(stationSpy.at(0).at(2).toDouble(), 38.8584);
-    QCOMPARE(stationSpy.at(0).at(3).toDouble(), 121.5312);
+    QCOMPARE(stationSpy.at(0).at(2).toDouble(), 22.5431);
+    QCOMPARE(stationSpy.at(0).at(3).toDouble(), 114.0579);
 }
 
 void UserUiTest::simulatedLocationDoesNotFilterByDisplayText()
