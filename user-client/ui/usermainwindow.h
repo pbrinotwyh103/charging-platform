@@ -29,6 +29,7 @@ public slots:
     void showProfile(const QJsonObject &profile);
     void showLoginPage();
     void showFeatureMessage(const QString &message);
+    void showFavoriteChanged(const QJsonObject &result);
     void showDemoWorkspace();
     void showReservationCreated(const QJsonObject &reservation);
     void showChargingSnapshot(const QJsonObject &snapshot);
@@ -41,7 +42,6 @@ signals:
     void reservationRequested(qint64 stationId, qint64 pileId);
 
 private:
-    QLabel *m_statusLabel = nullptr;
     QLineEdit *m_hostEdit = nullptr;
     QSpinBox *m_portSpin = nullptr;
     QLineEdit *m_phoneEdit = nullptr;

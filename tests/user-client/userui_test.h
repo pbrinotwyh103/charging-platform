@@ -16,4 +16,5 @@ private slots:
     void stationSearchUsesSeedDataCityByDefault();
     void simulatedLocationDoesNotFilterByDisplayText();
     void compactAppVisualShellIsPresent();
+    void favoriteResponseUpdatesProfileList();
 };

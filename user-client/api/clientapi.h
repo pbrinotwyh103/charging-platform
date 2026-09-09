@@ -40,6 +40,7 @@ signals:
     void pilesReceived(const QJsonArray &);
     void walletChanged(const QJsonObject &);
     void ledgerReceived(const QJsonArray &);
+    void favoriteChanged(const QJsonObject &);
     void reservationCreated(const QJsonObject &);
     void chargingSnapshotReceived(const QJsonObject &);
     void chargingStopped(const QJsonObject &);

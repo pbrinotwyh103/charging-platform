@@ -178,4 +178,20 @@ void UserUiTest::compactAppVisualShellIsPresent()
     QVERIFY(window.minimumWidth() <= 360);
 }
 
+void UserUiTest::favoriteResponseUpdatesProfileList()
+{
+    UserMainWindow window;
+    auto *favorites = window.findChild<QListWidget *>(QStringLiteral("favoriteStationList"));
+    QVERIFY(favorites);
+
+    window.showFavoriteChanged({{QStringLiteral("name"), QStringLiteral("测试充电站")},
+                                {QStringLiteral("favorited"), true}});
+    QCOMPARE(favorites->count(), 1);
+    QCOMPARE(favorites->item(0)->text(), QStringLiteral("测试充电站"));
+
+    window.showFavoriteChanged({{QStringLiteral("name"), QStringLiteral("测试充电站")},
+                                {QStringLiteral("favorited"), false}});
+    QCOMPARE(favorites->count(), 0);
+}
+
 QTEST_MAIN(UserUiTest)

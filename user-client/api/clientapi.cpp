@@ -44,7 +44,10 @@ ClientApi::ClientApi(QObject *parent) : QObject(parent)
             if (m.header.statusCode == Charging::ErrorCode::Success) emit ledgerReceived(m.payload.value(QStringLiteral("items")).toArray());
             else emit featureUnavailable(QStringLiteral("流水读取失败：%1").arg(m.payload.value(QStringLiteral("message")).toString()));
         } else if (m.header.messageType == Charging::MessageType::FavoriteToggleResponse) {
-            if (m.header.statusCode != Charging::ErrorCode::Success) emit featureUnavailable(QStringLiteral("收藏操作失败：%1").arg(m.payload.value(QStringLiteral("message")).toString()));
+            if (m.header.statusCode == Charging::ErrorCode::Success)
+                emit favoriteChanged(m.payload);
+            else
+                emit featureUnavailable(QStringLiteral("收藏操作失败：%1").arg(m.payload.value(QStringLiteral("message")).toString()));
         } else if (m.header.messageType == Charging::MessageType::ReservationCreateResponse) {
             if (m.header.statusCode == Charging::ErrorCode::Success) emit reservationCreated(m.payload);
             else emit featureUnavailable(QStringLiteral("预约失败：%1").arg(m.payload.value(QStringLiteral("message")).toString()));

@@ -105,7 +105,8 @@ ServiceResult StationService::toggleFavorite(qint64 userId, const QJsonObject &p
     if (target ? !favorites.add(userId, stationId, &changed, &error)
                : !favorites.remove(userId, stationId, &changed, &error)) return databaseError();
     ServiceResult result;
-    result.payload = {{"stationId", double(stationId)}, {"favorited", target},
+    result.payload = {{"stationId", double(stationId)}, {"name", station.name},
+                      {"favorited", target},
                       {"updatedAt", QDateTime::currentDateTimeUtc().toString(Qt::ISODate)}};
     return result;
 }

@@ -49,6 +49,8 @@ int main(int argc, char *argv[])
                      &window, &UserMainWindow::showLoginPage);
     QObject::connect(&controller, &ClientApi::featureUnavailable,
                      &window, &UserMainWindow::showFeatureMessage);
+    QObject::connect(&controller, &ClientApi::favoriteChanged,
+                     &window, &UserMainWindow::showFavoriteChanged);
     if (!parser.isSet(demoOption)) {
         QObject::connect(window.findChild<HomePage *>(), &HomePage::stationsRequested, &controller, &ClientApi::requestStations);
         QObject::connect(window.findChild<StationDetailPage *>(), &StationDetailPage::pilesRequested, &controller, &ClientApi::requestPiles);

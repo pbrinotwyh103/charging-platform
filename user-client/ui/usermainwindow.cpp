@@ -17,6 +17,7 @@
 #include <QRegularExpression>
 #include <QRegularExpressionValidator>
 #include <QSpinBox>
+#include <QStatusBar>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -70,8 +71,6 @@ UserMainWindow::UserMainWindow(QWidget *parent)
         "QMainWindow,QWidget{background:#f5fbff;color:#102033;font-family:\"PingFang SC\",\"Microsoft YaHei\",\"Arial\";font-size:14px;}"
         "QWidget#userAppShell{background:#f5fbff;}"
         "QFrame#userLoginCard{background:#ffffff;border:1px solid #dceafe;border-radius:24px;}"
-        "QLabel#userAppTitle{font-size:28px;font-weight:900;color:#073b4c;}"
-        "QLabel#userAppSubtitle{font-size:13px;color:#5b708c;}"
         "QLabel#userLoginHero{font-size:18px;font-weight:900;color:#102033;}"
         "QLabel#userLoginHint{font-size:13px;color:#64748b;}"
         "QLineEdit,QSpinBox,QDoubleSpinBox,QComboBox,QListWidget,QTabWidget::pane{background:white;border:1px solid #dbeafe;border-radius:14px;padding:8px;selection-background-color:#99f6e4;}"
@@ -94,20 +93,6 @@ UserMainWindow::UserMainWindow(QWidget *parent)
     auto *root = new QVBoxLayout(central);
     root->setContentsMargins(22, 22, 22, 22);
     root->setSpacing(14);
-
-    auto *title = new QLabel(QStringLiteral("电动汽车充电"), central);
-    title->setObjectName(QStringLiteral("userAppTitle"));
-    QFont titleFont = title->font();
-    titleFont.setPointSize(20);
-    titleFont.setBold(true);
-    title->setFont(titleFont);
-    auto *subtitle = new QLabel(QStringLiteral("用户手机客户端"), central);
-    subtitle->setObjectName(QStringLiteral("userAppSubtitle"));
-
-    m_statusLabel = new QLabel(QStringLiteral("尚未连接服务器"), central);
-    m_statusLabel->setWordWrap(true);
-    m_statusLabel->setStyleSheet(QStringLiteral(
-        "padding:10px 12px;background:#ffffff;color:#475569;border:1px solid #dbeafe;border-radius:16px;"));
 
     m_pages = new QStackedWidget(central);
     m_pages->setObjectName(QStringLiteral("userPages"));
@@ -273,9 +258,6 @@ UserMainWindow::UserMainWindow(QWidget *parent)
             pile.value(QStringLiteral("pileId")).toInteger());
         setConnectionStatus(QStringLiteral("正在向服务端提交预约…"), true);
     });
-    root->addWidget(title);
-    root->addWidget(subtitle);
-    root->addWidget(m_statusLabel);
     root->addWidget(m_pages, 1);
     root->addWidget(m_navWidget);
     m_navWidget->hide();
@@ -284,10 +266,13 @@ UserMainWindow::UserMainWindow(QWidget *parent)
 
 void UserMainWindow::setConnectionStatus(const QString &text, bool connected)
 {
-    m_statusLabel->setText(text);
-    m_statusLabel->setStyleSheet(connected
-        ? QStringLiteral("padding:9px;background:#dcfce7;color:#166534;border-radius:8px;")
-        : QStringLiteral("padding:9px;background:#fef2f2;color:#991b1b;border-radius:8px;"));
+    const QString statusStyle = connected
+        ? QStringLiteral("QStatusBar{color:#166534;background:#dcfce7;}"
+                         "QStatusBar::item{border:0;}")
+        : QStringLiteral("QStatusBar{color:#991b1b;background:#fef2f2;}"
+                         "QStatusBar::item{border:0;}");
+    statusBar()->setStyleSheet(statusStyle);
+    statusBar()->showMessage(text);
 }
 
 void UserMainWindow::setLoginBusy(bool busy)
@@ -306,7 +291,9 @@ void UserMainWindow::showProfile(const QJsonObject &profile)
 {
     m_profilePage->setProfile(profile);
     m_navWidget->show();
-    m_pages->setCurrentWidget(m_profilePage);
+    // 登录成功后的默认入口是首页；用户资料仍保存在“我的”页面中，
+    // 用户点击底部导航后即可查看。
+    m_pages->setCurrentWidget(m_homePage);
 }
 
 void UserMainWindow::showLoginPage()
@@ -319,7 +306,17 @@ void UserMainWindow::showLoginPage()
 
 void UserMainWindow::showFeatureMessage(const QString &message)
 {
-    m_statusLabel->setText(message);
+    statusBar()->showMessage(message);
+}
+
+void UserMainWindow::showFavoriteChanged(const QJsonObject &result)
+{
+    const QString name = result.value(QStringLiteral("name")).toString();
+    if (name.isEmpty()) return;
+    const bool favorited = result.value(QStringLiteral("favorited")).toBool();
+    m_profilePage->setFavoriteStation(name, favorited);
+    setConnectionStatus(favorited ? QStringLiteral("已加入常用充电站")
+                                  : QStringLiteral("已取消收藏"), true);
 }
 
 void UserMainWindow::showReservationCreated(const QJsonObject &reservation)
