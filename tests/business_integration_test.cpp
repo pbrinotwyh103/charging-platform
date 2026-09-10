@@ -329,6 +329,18 @@ void BusinessIntegrationTest::userWorkflowAndPushes()
     QCOMPARE(directPile.value("pile").toObject().value("pileCode").toString(),
              QString("DL-SP-001"));
     QVERIFY(request(user, MessageType::FavoriteToggleRequest, MessageType::FavoriteToggleResponse, {{"stationId", 1}, {"favorited", true}}).payload.value("favorited").toBool());
+    // The profile page uses the same station-list protocol with favoritesOnly
+    // to render the user's real collection. Verify this path over the full
+    // TCP dispatcher/session stack, including the current-user scope.
+    const auto favoriteStations = request(user, MessageType::StationListRequest,
+                                          MessageType::StationListResponse,
+                                          {{"favoritesOnly", true}, {"page", 1},
+                                           {"pageSize", 50}, {"sort", "name"}}).payload;
+    QCOMPARE(favoriteStations.value("total").toInt(), 1);
+    const auto favoriteItems = favoriteStations.value("items").toArray();
+    QCOMPARE(favoriteItems.size(), 1);
+    QCOMPARE(favoriteItems.first().toObject().value("stationId").toInteger(), qint64(1));
+    QVERIFY(favoriteItems.first().toObject().value("favorited").toBool());
     QVERIFY(!request(user, MessageType::ActiveOrderRequest, MessageType::ActiveOrderResponse).payload.value("active").toBool());
     auto reservation = request(user, MessageType::ReservationCreateRequest, MessageType::ReservationCreateResponse,
                                {{"stationId", 1}, {"pileId", 1}}).payload;

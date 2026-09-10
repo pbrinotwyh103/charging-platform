@@ -87,6 +87,8 @@
 
 请求：`stationId`、目标状态 `favorited`。
 
+服务端同时支持在 `StationListRequest` 中传入 `favoritesOnly=true` 获取当前用户的收藏站点列表；返回字段与站点列表一致，并遵循分页格式。
+
 响应：最终状态、`updatedAt`。请确认重复请求是否幂等，以及站点被删除/下线时的错误码。
 
 ### 6. 预约

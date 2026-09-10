@@ -293,6 +293,14 @@ void ServiceTest::nearbyTextSearchAndCoordinates()
     QCOMPARE(items[1].toObject().value("distanceKm").toDouble(), 2.22);
     QVERIFY(first.contains("availablePiles"));
     QVERIFY(first.contains("totalPiles"));
+    QVERIFY(service.toggleFavorite(id, {{"stationId", nearId}, {"favorited", true}}).succeeded());
+    result = service.nearby(id, {{"favoritesOnly", true}, {"sort", "name"}});
+    QVERIFY(result.succeeded());
+    items = result.payload.value("items").toArray();
+    QCOMPARE(items.size(), 1);
+    QCOMPARE(items.first().toObject().value("stationId").toDouble(), double(nearId));
+    QCOMPARE(service.nearby(id, {{"favoritesOnly", "true"}}).error,
+             ErrorCode::ValidationFailed);
     result = service.nearby(id, {{"region", "全部区域"}, {"latitude", 0}, {"longitude", 0}, {"radiusKm", 3}, {"sort", "distance"}});
     QVERIFY(result.succeeded());
     QCOMPARE(result.payload.value("items").toArray().size(), 2);
@@ -306,6 +314,7 @@ void ServiceTest::nearbyTextSearchAndCoordinates()
 void ServiceTest::pileStatusAndFavoriteIdempotency()
 {
     const auto id = createUser("13800138108");
+    const auto otherId = createUser("13800138111");
     PileService piles(&m_database);
     auto result = piles.listForStation({{"stationId", 1}});
     QVERIFY(result.succeeded());
@@ -340,6 +349,13 @@ void ServiceTest::pileStatusAndFavoriteIdempotency()
         const auto nearby = stations.nearby(id, {}).payload.value("items").toArray();
         QCOMPARE(nearby.first().toObject().value("favorited").toBool(), favorite);
     }
+    QVERIFY(stations.toggleFavorite(id, {{"stationId", 1}, {"favorited", true}}).succeeded());
+    const auto otherStations = stations.nearby(otherId, {{"sort", "name"}}).payload.value("items").toArray();
+    QVERIFY(!otherStations.isEmpty());
+    for (const auto &item : otherStations)
+        QVERIFY(!item.toObject().value("favorited").toBool());
+    QCOMPARE(stations.nearby(otherId, {{"favoritesOnly", true}})
+                 .payload.value("items").toArray().size(), 0);
     QCOMPARE(stations.toggleFavorite(id, {{"stationId", 1}, {"favorited", "true"}}).error, ErrorCode::ValidationFailed);
     QCOMPARE(stations.toggleFavorite(id, {{"stationId", 999999}, {"favorited", true}}).error, ErrorCode::NotFound);
 }
@@ -400,11 +416,13 @@ void ServiceTest::reservationValidationAndConflicts()
     auto result = service.create(id, {{"stationId", 1}});
     QCOMPARE(result.error, ErrorCode::Conflict);
     QCOMPARE(result.reason, QString("insufficient_balance"));
+    QCOMPARE(result.message, QString("余额不足，请先充值后再预约"));
     QString error;
     QVERIFY(UserRepository(&m_database).setStatus(id, "frozen", &error));
     result = service.create(id, {{"stationId", 1}});
     QCOMPARE(result.error, ErrorCode::Conflict);
     QCOMPARE(result.reason, QString("user_frozen"));
+    QCOMPARE(result.message, QString("账号已被冻结，暂时无法预约"));
     QVERIFY(UserRepository(&m_database).setStatus(id, "normal", &error));
     QVERIFY(UserService(&m_database).recharge(id, {{"amountCents", 1000}, {"transactionId", "reserve-conflicts"}}).succeeded());
     QCOMPARE(service.create(999999, {{"stationId", 1}}).error, ErrorCode::NotFound);

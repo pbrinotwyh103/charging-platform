@@ -40,6 +40,8 @@ enum class MessageType : quint16 {
     ChargingStopResponse = 3021,
     ActiveOrderRequest = 3030,
     ActiveOrderResponse = 3031,
+    OrderHistoryRequest = 3050,
+    OrderHistoryResponse = 3051,
     ReservationCancelRequest = 3040,
     ReservationCancelResponse = 3041,
 

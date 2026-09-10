@@ -12,7 +12,18 @@ using Charging::ErrorCode;
 namespace {
 ServiceResult conflict(const QString &reason)
 {
-    return failure(ErrorCode::Conflict, QStringLiteral("当前状态不允许预约操作"), reason);
+    QString message = QStringLiteral("当前状态不允许预约操作");
+    if (reason == QStringLiteral("insufficient_balance"))
+        message = QStringLiteral("余额不足，请先充值后再预约");
+    else if (reason == QStringLiteral("user_frozen"))
+        message = QStringLiteral("账号已被冻结，暂时无法预约");
+    else if (reason == QStringLiteral("order_conflict"))
+        message = QStringLiteral("您已有进行中的充电订单，暂时无法预约");
+    else if (reason == QStringLiteral("reservation_conflict"))
+        message = QStringLiteral("您已有生效中的预约，请先取消后再预约");
+    else if (reason == QStringLiteral("pile_unavailable"))
+        message = QStringLiteral("该充电桩刚刚被占用，请刷新后选择其他空闲桩");
+    return failure(ErrorCode::Conflict, message, reason);
 }
 
 QJsonObject snapshot(const ReservationRecord &reservation, qint64 stationId)

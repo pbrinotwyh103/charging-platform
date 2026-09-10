@@ -24,6 +24,8 @@ struct OrderRecord {
     QString stopReason;
     QString createdAt;
     QString updatedAt;
+    QString stationName;
+    QString pileCode;
 };
 
 class OrderRepository final : public RepositoryBase

@@ -15,4 +15,5 @@ public:
     static bool parseGeocodingResponse(const QByteArray &body, double *latitude,
                                        double *longitude, QString *error = nullptr);
     static bool isConfigured();
+    static bool isAllowedNavigationUrl(const QUrl &url);
 };

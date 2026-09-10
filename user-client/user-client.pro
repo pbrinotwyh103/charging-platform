@@ -17,7 +17,9 @@ HEADERS += \
     pages/profilepage.h \
     pages/stationutils.h \
     pages/stationdetailpage.h \
-    map/mapnavigator.h
+    pages/navigationpage.h \
+    map/mapnavigator.h \
+    map/tencentgeocoder.h
 
 SOURCES += \
     main.cpp \
@@ -31,4 +33,6 @@ SOURCES += \
     pages/profilepage.cpp \
     pages/stationutils.cpp \
     pages/stationdetailpage.cpp \
-    map/mapnavigator.cpp
+    pages/navigationpage.cpp \
+    map/mapnavigator.cpp \
+    map/tencentgeocoder.cpp

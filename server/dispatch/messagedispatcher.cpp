@@ -35,6 +35,7 @@ MessageType responseFor(MessageType request)
     case MessageType::ChargingStopRequest: return MessageType::ChargingStopResponse;
     case MessageType::ActiveOrderRequest: return MessageType::ActiveOrderResponse;
     case MessageType::CustomerServiceRequest: return MessageType::CustomerServiceResponse;
+    case MessageType::OrderHistoryRequest: return MessageType::OrderHistoryResponse;
     case MessageType::AdminCommandRequest: return MessageType::AdminCommandResponse;
     default: return request;
     }
@@ -193,6 +194,7 @@ void MessageDispatcher::dispatch(ClientSession *session, const Charging::Message
         case MessageType::ChargingStopRequest: return services->charging()->stop(principalId, Role::User, payload);
         case MessageType::ActiveOrderRequest: return services->orders()->active(principalId);
         case MessageType::CustomerServiceRequest: return services->customerService()->ask(principalId, payload);
+        case MessageType::OrderHistoryRequest: return services->orders()->history(principalId, payload);
         case MessageType::AdminCommandRequest:
             return services->admin()->execute(principalId, requestId, payload, services->charging());
         default: {

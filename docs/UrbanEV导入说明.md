@@ -44,4 +44,14 @@ python3 /home/bit/charging-platform-release-81d2716/scripts/import_urbanev.py \
 
 客户端模拟定位已设为深圳市中心（纬度 22.5431、经度 114.0579），附近搜索半径为 10 公里。例如来源站 1001 的经度为 113.784724、纬度为 22.714121。
 
+## 初始化演示运行状态
+
+如需演示预约和充电流程，可对模拟定位 10 公里内的 UrbanEV 电桩生成可重复的模拟状态。脚本默认每站最多启用 10 个电桩，至少保留 1 个空闲桩，其余按稳定规则约 70% 空闲、20% 充电中、10% 故障；未选中和范围外的电桩保持离线。
+
+```bash
+python3 scripts/initialize_demo_pile_statuses.py --db database/charging.db
+```
+
+执行前会在 `database/backups/` 创建完整备份，并在数据库的 `demo_pile_status_runs` 表中记录参数和结果。若目标电桩存在有效预约、活动订单或被停用，脚本会拒绝覆盖。站点位置和额定功率仍来自 UrbanEV，运行状态仅供课程演示。
+
 已在数据库快照验证首次导入及重复导入（重复新增为 0），实际导入事务通过 SQLite 完整性和外键检查。此次没有进行全工程验证，也没有推送 GitHub。
