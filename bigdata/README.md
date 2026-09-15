@@ -11,7 +11,8 @@
 5. 使用 PySpark 完成去重、类型转换、枚举修正、异常隔离、外键校验、金额重算和天气值修复。
 6. 使用 SparkSQL 建立 ODS、DWD、DWS、ADS 四层数据仓库，并同步写入本地 Parquet 和 HDFS。
 7. 使用 Flask 提供 ADS 查询接口，Vue 负责页面状态，ECharts 展示经营、设备、质量和预测图表。
-8. 使用 Spark MLlib RandomForestRegressor 预测站点未来 1、6、24 小时的充电会话数和空闲桩数，输出 RMSE、MAE、R² 与特征重要性。
+8. 使用 Spark MLlib 对随机森林、线性回归和梯度提升树进行统一评估与原子注册，预测未来 1、6、24、48、72 小时负荷、空闲桩及区间，输出 RMSE、MAE、R²、特征重要性和漂移报告。
+9. Web 提供运营、监管、租户专题；Qt 用户端提供周期与低拥堵排序，管理端提供预警筛选和只读决策建议。
 
 ## 目录结构
 
@@ -99,7 +100,18 @@ PyCharm 仅作为可选编辑器，不影响流水线和大屏运行。代码可
 
 ```bash
 export CHARGING_ANALYTICS_URL=http://127.0.0.1:5000
+export CHARGING_API_KEY='replace-with-a-random-secret' # 跨主机部署时 Flask 与 Qt 服务端保持一致
 ./build/bin/charging_server
 ```
 
 服务端请求 Flask 的超时为 2 秒。请求成功后按查询条件缓存最后一次结果；Flask 暂时不可用时返回缓存并标记 `stale: true`。没有缓存时仅分析功能返回不可用，找桩、预约、充电、计费和设备控制不受影响。
+
+## 验收证据
+
+```bash
+python3 scripts/acceptance/run.py --verify-traceability
+CHARGING_ACCEPTANCE_PYTHON=/path/to/venv/bin/python python3 scripts/acceptance/run.py --profile local
+python3 scripts/acceptance/run.py --profile course-vm
+```
+
+输出位于 `artifacts/acceptance/<runId>/`。外部工具缺失时状态为 `not_run`，不计作通过；课程虚拟机须实际完成 Spark、HDFS 与浏览器检查。
