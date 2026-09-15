@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from pyspark.ml.evaluation import RegressionEvaluator
 from pyspark.ml.feature import VectorAssembler
 from pyspark.ml.regression import RandomForestRegressor
+from pyspark.ml.regression import LinearRegression, GBTRegressor
 from pyspark.ml import Pipeline
 from pyspark.sql import functions as F
 
@@ -20,6 +21,9 @@ from common import (
     local_uri,
     write_json,
 )
+from model_registry import ModelRegistry, select_candidate
+from run_manifest import current_run_metadata
+import os
 
 
 FEATURE_COLUMNS = [
@@ -72,36 +76,48 @@ def main() -> None:
         train, test = dataset.randomSplit([0.8, 0.2], seed=20260915)
 
     assembler = VectorAssembler(inputCols=FEATURE_COLUMNS, outputCol="features")
-    regressor = RandomForestRegressor(
-        featuresCol="features",
-        labelCol="label",
-        predictionCol="prediction",
-        numTrees=60,
-        maxDepth=8,
-        minInstancesPerNode=3,
-        subsamplingRate=0.85,
-        seed=20260915,
-    )
-    pipeline = Pipeline(stages=[assembler, regressor])
-    model = pipeline.fit(train)
-    predictions = model.transform(test).cache()
+    regressors = {
+        "random_forest": RandomForestRegressor(featuresCol="features", labelCol="label", predictionCol="prediction", numTrees=60, maxDepth=8, minInstancesPerNode=3, subsamplingRate=0.85, seed=20260915),
+        "linear_regression": LinearRegression(featuresCol="features", labelCol="label", predictionCol="prediction", maxIter=80, regParam=0.1),
+        "gradient_boosted_trees": GBTRegressor(featuresCol="features", labelCol="label", predictionCol="prediction", maxIter=40, maxDepth=6, seed=20260915),
+    }
+    trained = {}
+    candidates = []
+    evaluators = {name: RegressionEvaluator(labelCol="label", predictionCol="prediction", metricName=name)
+                  for name in ("rmse", "mae", "r2")}
+    for name, regressor in regressors.items():
+        candidate_model = Pipeline(stages=[assembler, regressor]).fit(train)
+        candidate_predictions = candidate_model.transform(test).cache()
+        candidate_metrics = {metric: round(evaluator.evaluate(candidate_predictions), 4)
+                             for metric, evaluator in evaluators.items()}
+        candidate_metrics.update({"name": name, "constraintsPassed":
+            candidate_predictions.filter(F.isnan("prediction") | F.col("prediction").isNull()).limit(1).count() == 0})
+        candidates.append(candidate_metrics)
+        trained[name] = (candidate_model, candidate_predictions)
+    selected = select_candidate(candidates)
+    model, predictions = trained[selected["name"]]
 
     metrics = {
-        "algorithm": "Spark MLlib RandomForestRegressor",
+        "algorithm": selected["name"],
         "target": "station hourly charging session count",
         "train_start": min_date.isoformat(),
         "test_end": max_date.isoformat(),
         "train_rows": train.count(),
         "test_rows": test.count(),
-        "rmse": round(RegressionEvaluator(labelCol="label", predictionCol="prediction", metricName="rmse").evaluate(predictions), 4),
-        "mae": round(RegressionEvaluator(labelCol="label", predictionCol="prediction", metricName="mae").evaluate(predictions), 4),
-        "r2": round(RegressionEvaluator(labelCol="label", predictionCol="prediction", metricName="r2").evaluate(predictions), 4),
+        "rmse": selected["rmse"], "mae": selected["mae"], "r2": selected["r2"],
+        "candidates": candidates,
     }
-    rf_model = model.stages[-1]
+    fitted_model = model.stages[-1]
+    if hasattr(fitted_model, "featureImportances"):
+        importances = fitted_model.featureImportances.toArray()
+    else:
+        coefficients = [abs(float(value)) for value in fitted_model.coefficients]
+        total = sum(coefficients) or 1.0
+        importances = [value / total for value in coefficients]
     metrics["feature_importance"] = [
         {"feature": name, "importance": round(float(value), 6)}
         for name, value in sorted(
-            zip(FEATURE_COLUMNS, rf_model.featureImportances.toArray()),
+            zip(FEATURE_COLUMNS, importances),
             key=lambda pair: pair[1],
             reverse=True,
         )
@@ -110,7 +126,14 @@ def main() -> None:
     model.write().overwrite().save(local_uri(MODEL_ROOT))
     model.write().overwrite().save(hdfs_path("models", "station_load_rf"))
 
-    # 选择历史订单量最高的 20 个站点，预测未来 1、6、24 小时负荷。
+    metadata = current_run_metadata()
+    model_version = f"{selected['name']}-{metadata['batch_id']}"
+    metrics.update({"modelVersion": model_version, "featureVersion": "station-hour-v2", **metadata})
+    registry = ModelRegistry(MODEL_ROOT.parent / "registry")
+    registry.register(metrics)
+    registry.promote(model_version)
+
+    # 选择历史订单量最高的 20 个站点，预测配置的未来时段负荷。
     station_profiles = (
         source.groupBy("station_id", "station_name")
         .agg(
@@ -129,7 +152,8 @@ def main() -> None:
     base_time = datetime.combine(max_date, datetime.min.time()) + timedelta(hours=23)
     future_rows = []
     for station in station_profiles:
-        for horizon in (1, 6, 24):
+        horizons = sorted({int(value) for value in os.environ.get("CHARGING_FORECAST_HORIZONS", "1,6,24,48,72").split(",") if int(value) > 0})
+        for horizon in horizons:
             target = base_time + timedelta(hours=horizon)
             day_of_week = ((target.weekday() + 1) % 7) + 1  # Spark: 周日=1
             future_rows.append(
@@ -152,6 +176,7 @@ def main() -> None:
             )
 
     future_df = spark.createDataFrame(future_rows)
+    residual_radius = predictions.withColumn("absolute_error", F.abs(F.col("prediction") - F.col("label"))).approxQuantile("absolute_error", [0.95], 0.01)[0]
     forecast = (
         model.transform(future_df)
         .withColumn("predicted_sessions", F.round(F.greatest(F.col("prediction"), F.lit(0.0)), 2))
@@ -164,6 +189,10 @@ def main() -> None:
                 F.lit(0),
             ),
         )
+        .withColumn("predicted_sessions_lower", F.round(F.greatest(F.col("predicted_sessions") - F.lit(residual_radius), F.lit(0.0)), 2))
+        .withColumn("predicted_sessions_upper", F.round(F.col("predicted_sessions") + F.lit(residual_radius), 2))
+        .withColumn("model_version", F.lit(model_version))
+        .withColumn("generated_at", F.lit(metadata["generated_at"]))
         .select(
             F.col("station_id").cast("long").alias("station_id"),
             "station_name",
@@ -171,6 +200,7 @@ def main() -> None:
             "forecast_time",
             "predicted_sessions",
             "predicted_idle_piles",
+            "predicted_sessions_lower", "predicted_sessions_upper", "model_version", "generated_at",
             F.col("pile_count").cast("int").alias("pile_count"),
         )
         .orderBy("forecast_horizon_hours", F.desc("predicted_sessions"))
