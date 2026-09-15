@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import argparse
 
 from pyspark.ml.evaluation import RegressionEvaluator
 from pyspark.ml.feature import VectorAssembler
@@ -22,6 +23,8 @@ from common import (
     write_json,
 )
 from model_registry import ModelRegistry, select_candidate
+from model_drift import build_drift_report
+from incremental_features import publish_checkpoint
 from run_manifest import current_run_metadata
 import os
 
@@ -41,7 +44,41 @@ FEATURE_COLUMNS = [
 ]
 
 
+def scenario_test() -> None:
+    """Train a small real MLlib model and verify paired scenario directions."""
+    spark = create_spark("charging-load-scenario-test")
+    rows = []
+    for repeat in range(30):
+        for hour in range(24):
+            for rain in (0.0, 8.0):
+                peak = 1 if hour in {8, 9, 17, 18} else 0
+                rows.append({"station_id": 1.0, "start_hour": float(hour), "day_of_week": float(repeat % 7 + 1),
+                    "is_weekend": float(repeat % 7 in {5, 6}), "is_holiday": 0.0,
+                    "temperature_c": 25.0, "rainfall_mm": rain, "price_cents_per_kwh": 150.0,
+                    "pile_count": 20.0, "fast_pile_count": 10.0, "unavailable_pile_count": 0.0,
+                    "label": 4.0 + peak * 12.0 - rain * 0.15})
+    frame = spark.createDataFrame(rows)
+    model = Pipeline(stages=[VectorAssembler(inputCols=FEATURE_COLUMNS, outputCol="features"),
+                             RandomForestRegressor(numTrees=30, maxDepth=6, seed=20260915)]).fit(frame)
+    paired = spark.createDataFrame([
+        {**rows[0], "scenario": "offpeak", "start_hour": 3.0, "rainfall_mm": 0.0},
+        {**rows[0], "scenario": "peak", "start_hour": 8.0, "rainfall_mm": 0.0},
+        {**rows[0], "scenario": "rain", "start_hour": 8.0, "rainfall_mm": 8.0},
+    ])
+    values = {row["scenario"]: row["prediction"] for row in model.transform(paired).select("scenario", "prediction").collect()}
+    assert values["peak"] > values["offpeak"], values
+    assert values["rain"] <= values["peak"], values
+    print("scenario directions passed", values)
+    spark.stop()
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--scenario-test", action="store_true")
+    args = parser.parse_args()
+    if args.scenario_test:
+        scenario_test()
+        return
     ensure_local_directories()
     spark = create_spark("charging-load-prediction")
     spark.sparkContext.setLogLevel("WARN")
@@ -189,8 +226,10 @@ def main() -> None:
                 F.lit(0),
             ),
         )
-        .withColumn("predicted_sessions_lower", F.round(F.greatest(F.col("predicted_sessions") - F.lit(residual_radius), F.lit(0.0)), 2))
-        .withColumn("predicted_sessions_upper", F.round(F.col("predicted_sessions") + F.lit(residual_radius), 2))
+        .withColumn("lower_bound", F.round(F.greatest(F.col("predicted_sessions") - F.lit(residual_radius), F.lit(0.0)), 2))
+        .withColumn("upper_bound", F.round(F.col("predicted_sessions") + F.lit(residual_radius), 2))
+        .withColumn("predicted_peak_period", F.concat(F.lpad(F.hour("forecast_time"), 2, "0"), F.lit(":00-"),
+                                                       F.lpad((F.hour("forecast_time") + 1) % 24, 2, "0"), F.lit(":00")))
         .withColumn("model_version", F.lit(model_version))
         .withColumn("generated_at", F.lit(metadata["generated_at"]))
         .select(
@@ -200,7 +239,7 @@ def main() -> None:
             "forecast_time",
             "predicted_sessions",
             "predicted_idle_piles",
-            "predicted_sessions_lower", "predicted_sessions_upper", "model_version", "generated_at",
+            "lower_bound", "upper_bound", "predicted_peak_period", "model_version", "generated_at",
             F.col("pile_count").cast("int").alias("pile_count"),
         )
         .orderBy("forecast_horizon_hours", F.desc("predicted_sessions"))
@@ -211,6 +250,45 @@ def main() -> None:
     forecast_rows = [row.asDict(recursive=True) for row in forecast.collect()]
     write_json(EXPORT_ROOT / "predictions.json", forecast_rows)
     write_json(EXPORT_ROOT / "model_metrics.json", metrics)
+    write_json(EXPORT_ROOT / "model_comparison.json", {"selected": selected["name"],
+        "candidates": candidates, "generatedAt": metadata["generated_at"], "modelVersion": model_version})
+    hour_bins = []
+    for frame in (train, test):
+        hour_bins.append([frame.filter((F.col("start_hour") >= start) & (F.col("start_hour") < start + 6)).count()
+                          for start in (0, 6, 12, 18)])
+    drift = build_drift_report({"startHour": (hour_bins[0], hour_bins[1])},
+                               float(selected["mae"]), float(selected["mae"]))
+    drift.update({"generatedAt": metadata["generated_at"], "modelVersion": model_version})
+    write_json(EXPORT_ROOT / "drift_report.json", drift)
+    scheduling = []
+    maintenance = []
+    expansion = []
+    for row in forecast_rows:
+        station_id = int(row["station_id"])
+        horizon = int(row["forecast_horizon_hours"])
+        stable = f"{station_id}-{horizon}-{model_version}"
+        base = {"stationId": station_id, "stationName": row["station_name"],
+                "generatedAt": metadata["generated_at"], "modelVersion": model_version,
+                "stale": False, "readOnly": True}
+        scheduling.append({**base, "adviceId": f"schedule-{stable}", "kind": "scheduling",
+            "severity": "severe" if row["predicted_idle_piles"] == 0 else "attention" if row["predicted_idle_piles"] <= 2 else "normal",
+            "reasons": [f"未来 {horizon} 小时预测会话 {row['predicted_sessions']}", f"预计空闲桩 {row['predicted_idle_piles']}"]})
+        if horizon == 24:
+            maintenance.append({**base, "adviceId": f"maintenance-{stable}", "kind": "maintenance",
+                "severity": "attention" if row["predicted_idle_piles"] <= 2 else "normal",
+                "reasons": ["结合不可用设备与预测负荷安排人工巡检"]})
+            expansion.append({**base, "adviceId": f"expansion-{stable}", "kind": "expansion",
+                "severity": "attention" if row["predicted_sessions"] >= row["pile_count"] * 0.8 else "normal",
+                "reasons": ["持续利用率与排队压力需结合多批次趋势复核"]})
+    write_json(EXPORT_ROOT / "scheduling_advice.json", scheduling)
+    write_json(EXPORT_ROOT / "maintenance_advice.json", maintenance)
+    write_json(EXPORT_ROOT / "expansion_advice.json", expansion)
+    write_json(EXPORT_ROOT / "regulator_summary.json", {"stationCount": len(station_profiles),
+        "predictionCount": len(forecast_rows), "generatedAt": metadata["generated_at"],
+        "dataVersion": metadata["data_version"], "containsPersonalData": False})
+    publish_checkpoint(WAREHOUSE_ROOT / "checkpoints" / "station_features.json",
+        [EXPORT_ROOT / "predictions.json", EXPORT_ROOT / "model_metrics.json", EXPORT_ROOT / "drift_report.json"],
+        max_date.isoformat())
     print(
         "Spark MLlib 训练完成: "
         f"RMSE={metrics['rmse']}, MAE={metrics['mae']}, R2={metrics['r2']}"

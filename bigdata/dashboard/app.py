@@ -120,11 +120,11 @@ def normalized_prediction(row):
             prediction_value(row, "modelVersion", "model_version", default="unknown")
         ),
         "lowerBound": float(
-            prediction_value(row, "lowerBound", "lower_bound", default=0)
+            prediction_value(row, "lowerBound", "lower_bound", "predicted_sessions_lower", default=0)
         ),
         "upperBound": float(
             prediction_value(
-                row, "upperBound", "upper_bound",
+                row, "upperBound", "upper_bound", "predicted_sessions_upper",
                 default=prediction_value(
                     row, "predictedSessions", "predicted_sessions", "prediction", default=0
                 ),
