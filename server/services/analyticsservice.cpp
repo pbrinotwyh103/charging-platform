@@ -32,10 +32,10 @@ bool horizonValue(const QJsonObject &payload, int *horizon)
         return true;
     }
     const auto value = payload.value("horizonHours");
-    if (!integer(value, 1, 24))
+    if (!integer(value, 1, 72))
         return false;
     *horizon = value.toInt();
-    return *horizon == 1 || *horizon == 6 || *horizon == 24;
+    return *horizon == 1 || *horizon == 6 || *horizon == 24 || *horizon == 48 || *horizon == 72;
 }
 
 QString warningLevel(const QJsonObject &item)
@@ -63,7 +63,7 @@ bool validNumber(const QJsonValue &value, double minimum)
 bool normalizeItem(const QJsonObject &raw, int requestedHorizon, QJsonObject *item)
 {
     if (!identifier(raw.value("stationId"))
-        || !integer(raw.value("horizonHours"), 1, 24)
+        || !integer(raw.value("horizonHours"), 1, 72)
         || raw.value("horizonHours").toInt() != requestedHorizon
         || !validNumber(raw.value("predictedSessions"), 0)
         || !integer(raw.value("predictedAvailablePiles"), 0, 1000000)
@@ -103,6 +103,8 @@ AnalyticsFetchResult AnalyticsService::fetch(const QUrl &url) const
     QNetworkAccessManager manager;
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("charging-platform-server/2"));
+    const auto apiKey = QProcessEnvironment::systemEnvironment().value(QStringLiteral("CHARGING_API_KEY"));
+    if (!apiKey.isEmpty()) request.setRawHeader("X-Analytics-Key", apiKey.toUtf8());
     QNetworkReply *reply = manager.get(request);
     QTimer timer;
     timer.setSingleShot(true);
@@ -262,5 +264,26 @@ ServiceResult AnalyticsService::status()
         return malformed();
     ServiceResult result;
     result.payload = document.object();
+    return result;
+}
+
+ServiceResult AnalyticsService::report(const QString &name, const QJsonObject &payload)
+{
+    static const QSet<QString> allowed{"model-comparison", "drift", "scheduling", "maintenance",
+                                       "expansion", "regulator"};
+    if (!allowed.contains(name) || !payload.isEmpty())
+        return invalid();
+    const auto fetched = fetch(endpoint(QStringLiteral("/api/") + name));
+    if (!fetched.transportOk || fetched.statusCode < 200 || fetched.statusCode >= 300)
+        return failure(fetched.error.contains(QStringLiteral("超时")) ? ErrorCode::RequestTimeout
+                                                                       : ErrorCode::NetworkUnavailable,
+                       QStringLiteral("分析服务暂不可用"), QStringLiteral("analytics_unavailable"));
+    QJsonParseError error;
+    const auto document = QJsonDocument::fromJson(fetched.body, &error);
+    if (error.error != QJsonParseError::NoError || !document.isObject()) return malformed();
+    const auto envelope = document.object();
+    if (!envelope.contains("data") || !envelope.value("meta").isObject()) return malformed();
+    ServiceResult result;
+    result.payload = QJsonObject{{"data", envelope.value("data")}, {"meta", envelope.value("meta")}};
     return result;
 }

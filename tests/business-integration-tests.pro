@@ -37,6 +37,7 @@ SOURCES += business_integration_test.cpp \
     ../server/services/adminservice.cpp \
     ../server/services/alarmservice.cpp \
     ../server/services/analyticsservice.cpp \
+    ../server/services/decisionservice.cpp \
     ../server/services/authservice.cpp \
     ../server/services/billingservice.cpp \
     ../server/services/chargingservice.cpp \

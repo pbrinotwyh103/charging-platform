@@ -32,6 +32,16 @@ const QList<RequestPair> userPairs{
     ,{MessageType::LoadPredictionRequest, MessageType::LoadPredictionResponse}
     ,{MessageType::StationRecommendationRequest, MessageType::StationRecommendationResponse}
 };
+const QList<RequestPair> analyticsAdminPairs{
+    {MessageType::LoadWarningRequest, MessageType::LoadWarningResponse},
+    {MessageType::AnalyticsStatusRequest, MessageType::AnalyticsStatusResponse},
+    {MessageType::ModelComparisonRequest, MessageType::ModelComparisonResponse},
+    {MessageType::ModelDriftRequest, MessageType::ModelDriftResponse},
+    {MessageType::SchedulingAdviceRequest, MessageType::SchedulingAdviceResponse},
+    {MessageType::MaintenanceAdviceRequest, MessageType::MaintenanceAdviceResponse},
+    {MessageType::ExpansionAdviceRequest, MessageType::ExpansionAdviceResponse},
+    {MessageType::RegulatorSummaryRequest, MessageType::RegulatorSummaryResponse}
+};
 
 // A byte sink replaces only the operating-system TCP transport. The real
 // dispatcher, session encoder, services, SQLite and event loop still execute.
@@ -230,8 +240,7 @@ void BusinessIntegrationTest::unauthorizedResponses_data()
     QTest::addColumn<int>("responseType");
     auto pairs = userPairs;
     pairs.append({MessageType::AdminCommandRequest, MessageType::AdminCommandResponse});
-    pairs.append({MessageType::LoadWarningRequest, MessageType::LoadWarningResponse});
-    pairs.append({MessageType::AnalyticsStatusRequest, MessageType::AnalyticsStatusResponse});
+    pairs.append(analyticsAdminPairs);
     pairs.append({MessageType::LogoutRequest, MessageType::LogoutResponse});
     for (const auto &pair : pairs)
         QTest::newRow(qPrintable(QString::number(int(pair.request)))) << int(pair.request) << int(pair.response);
@@ -260,10 +269,8 @@ void BusinessIntegrationTest::roleGuards()
         request(admin, pair.request, pair.response, {}, ErrorCode::Forbidden);
     request(user, MessageType::AdminCommandRequest, MessageType::AdminCommandResponse,
             {{"action", "dashboard.summary"}}, ErrorCode::Forbidden);
-    request(user, MessageType::LoadWarningRequest, MessageType::LoadWarningResponse,
-            {{"horizonHours", 6}}, ErrorCode::Forbidden);
-    request(user, MessageType::AnalyticsStatusRequest, MessageType::AnalyticsStatusResponse,
-            {}, ErrorCode::Forbidden);
+    for (const auto &pair : analyticsAdminPairs)
+        request(user, pair.request, pair.response, {}, ErrorCode::Forbidden);
     request(user, MessageType::AdminLoginRequest, MessageType::AdminLoginResponse, {}, ErrorCode::Forbidden);
     request(admin, MessageType::UserLoginRequest, MessageType::UserLoginResponse, {}, ErrorCode::Forbidden);
     request(user, MessageType(65000), MessageType(65000), {}, ErrorCode::UnsupportedMessage);
@@ -300,6 +307,8 @@ void BusinessIntegrationTest::invalidFields_data()
         {{"horizonHours", 1}, {"stationIds", QJsonArray{0}}});
     row("load-warning", MessageType::LoadWarningRequest,
         MessageType::LoadWarningResponse, {{"horizonHours", "6"}});
+    row("scheduling-advice", MessageType::SchedulingAdviceRequest,
+        MessageType::SchedulingAdviceResponse, {{"unexpected", true}});
     row("admin-fields", MessageType::AdminCommandRequest, MessageType::AdminCommandResponse, {{"action", 1}});
     row("admin-unknown", MessageType::AdminCommandRequest, MessageType::AdminCommandResponse, {{"action", "unknown.action"}}, ErrorCode::UnsupportedMessage);
 }
@@ -313,7 +322,8 @@ void BusinessIntegrationTest::invalidFields()
     ClientConnection client;
     if (MessageType(requestType) == MessageType::AdminCommandRequest
         || MessageType(requestType) == MessageType::LoadWarningRequest
-        || MessageType(requestType) == MessageType::AnalyticsStatusRequest)
+        || MessageType(requestType) == MessageType::AnalyticsStatusRequest
+        || MessageType(requestType) == MessageType::SchedulingAdviceRequest)
         loginAdmin(client);
     else
         login(client);

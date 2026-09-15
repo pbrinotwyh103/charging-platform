@@ -17,6 +17,7 @@
 #include "services/adminservice.h"
 #include "services/statisticsservice.h"
 #include "services/analyticsservice.h"
+#include "services/decisionservice.h"
 #include "protocol/packetcodec.h"
 #include <limits>
 #include <QBuffer>
@@ -95,6 +96,36 @@ void ServiceTest::analyticsValidationAndWarnings()
 
     response = AnalyticsFetchResult{true, 200, R"([{"stationId":"bad"}])", {}};
     QCOMPARE(service.predictions({{"horizonHours", 1}}).error, ErrorCode::InvalidPacket);
+}
+
+void ServiceTest::decisionAdviceIsStableRankedAndReadOnly()
+{
+    DecisionService service;
+    const QJsonArray input{
+        QJsonObject{{"stationId", 1}, {"predictedSessions", 4}, {"predictedAvailablePiles", 3}, {"modelVersion", "m1"}},
+        QJsonObject{{"stationId", 2}, {"predictedSessions", 12}, {"predictedAvailablePiles", 0}, {"modelVersion", "m1"}}
+    };
+    const auto first = service.scheduling(input);
+    const auto second = service.scheduling(input);
+    QCOMPARE(first, second);
+    QCOMPARE(first.first().toObject().value("stationId").toInt(), 2);
+    QVERIFY(first.first().toObject().value("readOnly").toBool());
+    QCOMPARE(first.first().toObject().value("adviceId"), second.first().toObject().value("adviceId"));
+    QVERIFY(first.first().toObject().value("reasons").isArray());
+}
+
+void ServiceTest::analyticsAdvancedReportsValidateEnvelope()
+{
+    AnalyticsFetchResult response{true, 200,
+        R"({"data":[{"adviceId":"s-1","readOnly":true}],"meta":{"requestId":"r1","stale":false}})", {}};
+    AnalyticsService service([&response](const QUrl &) { return response; });
+    const auto result = service.report("scheduling");
+    QVERIFY(result.succeeded());
+    QCOMPARE(result.payload.value("data").toArray().first().toObject().value("adviceId").toString(), QString("s-1"));
+    QCOMPARE(service.report("unknown").error, ErrorCode::ValidationFailed);
+    QCOMPARE(service.report("drift", {{"unexpected", true}}).error, ErrorCode::ValidationFailed);
+    response.body = R"({"data":[]})";
+    QCOMPARE(service.report("scheduling").error, ErrorCode::InvalidPacket);
 }
 void ServiceTest::initTestCase()
 {

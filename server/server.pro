@@ -28,6 +28,7 @@ HEADERS += \
     repositories/walletrepository.h \
     services/adminservice.h \
     services/analyticsservice.h \
+    services/decisionservice.h \
     services/adminservicehelpers.h \
     services/alarmservice.h \
     services/authservice.h \
@@ -78,6 +79,7 @@ SOURCES += \
     services/alarmservice.cpp \
     services/adminservice.cpp \
     services/analyticsservice.cpp \
+    services/decisionservice.cpp \
     services/statisticsservice.cpp \
     services/serviceregistry.cpp
 

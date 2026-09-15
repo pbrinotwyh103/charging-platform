@@ -28,6 +28,7 @@ public:
     ServiceResult recommendations(const QJsonObject &payload);
     ServiceResult warnings(const QJsonObject &payload);
     ServiceResult status();
+    ServiceResult report(const QString &name, const QJsonObject &payload = {});
 
 private:
     ServiceResult predictionQuery(const QJsonObject &payload, const QString &mode);

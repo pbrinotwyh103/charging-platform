@@ -18,6 +18,7 @@ SOURCES += service_test.cpp \
     ../server/services/alarmservice.cpp \
     ../server/services/adminservice.cpp \
     ../server/services/analyticsservice.cpp \
+    ../server/services/decisionservice.cpp \
     ../server/services/statisticsservice.cpp \
     ../server/repositories/controlrecordrepository.cpp \
     ../server/repositories/alarmrepository.cpp \

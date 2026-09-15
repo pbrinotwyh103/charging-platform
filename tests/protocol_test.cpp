@@ -111,6 +111,18 @@ void ProtocolTest::businessProtocolRoundTrip()
     QCOMPARE(static_cast<quint16>(Charging::MessageType::LoadWarningResponse), quint16(5101));
     QCOMPARE(static_cast<quint16>(Charging::MessageType::AnalyticsStatusRequest), quint16(5110));
     QCOMPARE(static_cast<quint16>(Charging::MessageType::AnalyticsStatusResponse), quint16(5111));
+    QCOMPARE(static_cast<quint16>(Charging::MessageType::ModelComparisonRequest), quint16(5120));
+    QCOMPARE(static_cast<quint16>(Charging::MessageType::ModelComparisonResponse), quint16(5121));
+    QCOMPARE(static_cast<quint16>(Charging::MessageType::ModelDriftRequest), quint16(5130));
+    QCOMPARE(static_cast<quint16>(Charging::MessageType::ModelDriftResponse), quint16(5131));
+    QCOMPARE(static_cast<quint16>(Charging::MessageType::SchedulingAdviceRequest), quint16(5140));
+    QCOMPARE(static_cast<quint16>(Charging::MessageType::SchedulingAdviceResponse), quint16(5141));
+    QCOMPARE(static_cast<quint16>(Charging::MessageType::MaintenanceAdviceRequest), quint16(5150));
+    QCOMPARE(static_cast<quint16>(Charging::MessageType::MaintenanceAdviceResponse), quint16(5151));
+    QCOMPARE(static_cast<quint16>(Charging::MessageType::ExpansionAdviceRequest), quint16(5160));
+    QCOMPARE(static_cast<quint16>(Charging::MessageType::ExpansionAdviceResponse), quint16(5161));
+    QCOMPARE(static_cast<quint16>(Charging::MessageType::RegulatorSummaryRequest), quint16(5170));
+    QCOMPARE(static_cast<quint16>(Charging::MessageType::RegulatorSummaryResponse), quint16(5171));
 
     QByteArray buffer = Charging::PacketCodec::encode(
         Charging::MessageType::WalletRechargeResponse,
