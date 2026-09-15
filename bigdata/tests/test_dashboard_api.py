@@ -56,6 +56,8 @@ class DashboardApiTest(unittest.TestCase):
                 "forecastTime": "",
                 "generatedAt": "2026-09-15T10:00:00+08:00",
                 "modelVersion": "rf-1",
+                "lowerBound": 0.0,
+                "upperBound": 9.5,
             }],
         )
 
