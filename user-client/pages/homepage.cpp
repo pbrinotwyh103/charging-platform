@@ -2,6 +2,7 @@
 #include "pages/stationutils.h"
 #include "map/mapnavigator.h"
 #include <QJsonObject>
+#include <QHash>
 
 #include <QComboBox>
 #include <QLabel>
@@ -158,4 +159,45 @@ void HomePage::showPileLookupError(const QString &message)
 {
     m_status->setText(QStringLiteral("编号连接失败：%1").arg(message));
 }
-void HomePage::setStations(const QJsonArray &stations){m_list->clear();if(stations.isEmpty()){renderEmpty(QStringLiteral("附近暂无可用充电站"));return;}const auto sorted=StationUtils::sortByDistance(stations,m_latitude,m_longitude);for(const auto&v:sorted){const auto o=v.toObject();const double price=o.contains(QStringLiteral("priceCentsPerKwh"))?o.value(QStringLiteral("priceCentsPerKwh")).toDouble()/100.0:o.value(QStringLiteral("price")).toDouble();auto*i=new QListWidgetItem(QStringLiteral("%1  %2\n%3\n¥%4/度    空闲 %5/%6    %7 km").arg(o.value("favorited").toBool()?QStringLiteral("★"):QStringLiteral("⚡"),o.value("name").toString(),o.value("address").toString()).arg(price,0,'f',2).arg(o.value("availablePiles").toInt()).arg(o.value("totalPiles").toInt()).arg(o.value("distanceKm").toDouble(),0,'f',1),m_list);i->setSizeHint(QSize(0,92));i->setData(Qt::UserRole,QVariant::fromValue(o));}m_status->setText(QStringLiteral("已找到 %1 个充电站，按距离为您排序").arg(sorted.size()));}
+void HomePage::setStations(const QJsonArray &stations)
+{
+    m_stations = stations;
+    m_list->clear();
+    if (stations.isEmpty()) { renderEmpty(QStringLiteral("附近暂无可用充电站")); return; }
+    QHash<qint64, QJsonObject> forecasts;
+    for (const auto &value : m_recommendations.value(QStringLiteral("items")).toArray()) {
+        const QJsonObject item = value.toObject();
+        forecasts.insert(item.value(QStringLiteral("stationId")).toInteger(), item);
+    }
+    const bool stale = m_recommendations.value(QStringLiteral("stale")).toBool();
+    const int horizon = m_recommendations.value(QStringLiteral("horizonHours")).toInt(1);
+    const auto sorted = StationUtils::sortByDistance(stations, m_latitude, m_longitude);
+    for (const auto &value : sorted) {
+        const QJsonObject station = value.toObject();
+        const double price = station.contains(QStringLiteral("priceCentsPerKwh"))
+            ? station.value(QStringLiteral("priceCentsPerKwh")).toDouble() / 100.0
+            : station.value(QStringLiteral("price")).toDouble();
+        QString forecastText;
+        const QJsonObject forecast = forecasts.value(station.value(QStringLiteral("stationId")).toInteger());
+        if (!forecast.isEmpty())
+            forecastText = QStringLiteral("    %1小时预计空闲 %2%3")
+                .arg(horizon).arg(forecast.value(QStringLiteral("predictedAvailablePiles")).toInt())
+                .arg(stale ? QStringLiteral("（缓存预测）") : QString());
+        auto *item = new QListWidgetItem(
+            QStringLiteral("%1  %2\n%3\n¥%4/度    空闲 %5/%6    %7 km%8")
+                .arg(station.value(QStringLiteral("favorited")).toBool() ? QStringLiteral("★") : QStringLiteral("⚡"),
+                     station.value(QStringLiteral("name")).toString(), station.value(QStringLiteral("address")).toString())
+                .arg(price, 0, 'f', 2).arg(station.value(QStringLiteral("availablePiles")).toInt())
+                .arg(station.value(QStringLiteral("totalPiles")).toInt())
+                .arg(station.value(QStringLiteral("distanceKm")).toDouble(), 0, 'f', 1).arg(forecastText), m_list);
+        item->setSizeHint(QSize(0, forecastText.isEmpty() ? 92 : 108));
+        item->setData(Qt::UserRole, QVariant::fromValue(station));
+    }
+    m_status->setText(QStringLiteral("已找到 %1 个充电站，按距离为您排序").arg(sorted.size()));
+}
+
+void HomePage::setRecommendations(const QJsonObject &recommendations)
+{
+    m_recommendations = recommendations;
+    if (!m_stations.isEmpty()) setStations(m_stations);
+}

@@ -65,6 +65,7 @@ int main(int argc, char *argv[])
                          &controller, &ClientApi::requestActiveOrder);
     }
     QObject::connect(&controller, &ClientApi::stationsReceived, window.findChild<HomePage *>(), &HomePage::setStations);
+    QObject::connect(&controller, &ClientApi::recommendationsReceived, window.findChild<HomePage *>(), &HomePage::setRecommendations);
     QObject::connect(&controller, &ClientApi::pilesReceived, window.findChild<StationDetailPage *>(), &StationDetailPage::setPiles);
     QObject::connect(&controller, &ClientApi::pileCodeResolved,
                      &window, &UserMainWindow::showDirectPile);

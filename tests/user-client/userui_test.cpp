@@ -24,6 +24,19 @@
 #include <QUrlQuery>
 #include <QtTest>
 
+void UserUiTest::homePageShowsForecastAndStaleState()
+{
+    HomePage page;
+    page.setStations(QJsonArray{QJsonObject{{"stationId", 1}, {"name", QStringLiteral("测试站")},
+                                             {"totalPiles", 8}, {"availablePiles", 3}}});
+    page.setRecommendations(QJsonObject{{"horizonHours", 1}, {"stale", true},
+        {"items", QJsonArray{QJsonObject{{"stationId", 1}, {"predictedAvailablePiles", 5}}}}});
+    auto *list = page.findChild<QListWidget *>(QStringLiteral("stationList"));
+    QVERIFY(list);
+    QVERIFY(list->item(0)->text().contains(QStringLiteral("预计空闲 5")));
+    QVERIFY(list->item(0)->text().contains(QStringLiteral("缓存预测")));
+}
+
 void UserUiTest::demoWorkspaceShowsCoreFeatures()
 {
     UserMainWindow window;

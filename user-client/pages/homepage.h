@@ -2,6 +2,7 @@
 
 #include <QWidget>
 #include <QJsonArray>
+#include <QJsonObject>
 
 class QLabel;
 class QLineEdit;
@@ -17,6 +18,7 @@ class HomePage final : public QWidget
 public:
     explicit HomePage(QWidget *parent = nullptr);
     void setStations(const QJsonArray &stations);
+    void setRecommendations(const QJsonObject &recommendations);
     void showLoading();
     void showError(const QString &message);
     void showPileLookupError(const QString &message);
@@ -39,4 +41,6 @@ private:
     double m_latitude = 22.5431;
     double m_longitude = 114.0579;
     bool m_simulatedLocationActive = false;
+    QJsonArray m_stations;
+    QJsonObject m_recommendations;
 };

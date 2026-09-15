@@ -25,6 +25,7 @@ public:
     void logout();
     void requestUnsupported(const QString &feature);
     void requestStations(const QString &region, const QString &address, double latitude, double longitude);
+    void requestStationRecommendations(const QJsonArray &stationIds, int horizonHours = 1);
     void requestPiles(qint64 stationId);
     void requestPileByCode(const QString &pileCode);
     void askCustomerService(const QString &question);
@@ -39,6 +40,7 @@ signals:
     void loggedOut();
     void featureUnavailable(const QString &);
     void stationsReceived(const QJsonArray &);
+    void recommendationsReceived(const QJsonObject &);
     void pilesReceived(const QJsonArray &);
     void pileCodeResolved(const QJsonObject &station, const QJsonObject &pile);
     void pileCodeLookupFailed(const QString &message);

@@ -28,7 +28,15 @@ ClientApi::ClientApi(QObject *parent) : QObject(parent)
                 emit loginSucceeded(m.payload);
             }
         } else if (m.header.messageType == Charging::MessageType::StationListResponse) {
-            if (m.header.statusCode == Charging::ErrorCode::Success) emit stationsReceived(m.payload.value(QStringLiteral("items")).toArray()); else emit featureUnavailable(QStringLiteral("站点查询失败：%1").arg(m.payload.value(QStringLiteral("message")).toString()));
+            if (m.header.statusCode == Charging::ErrorCode::Success) {
+                const QJsonArray stations = m.payload.value(QStringLiteral("items")).toArray();
+                emit stationsReceived(stations);
+                QJsonArray ids;
+                for (const auto &value : stations) ids.append(value.toObject().value(QStringLiteral("stationId")));
+                if (!ids.isEmpty()) requestStationRecommendations(ids);
+            } else emit featureUnavailable(QStringLiteral("站点查询失败：%1").arg(m.payload.value(QStringLiteral("message")).toString()));
+        } else if (m.header.messageType == Charging::MessageType::StationRecommendationResponse) {
+            if (m.header.statusCode == Charging::ErrorCode::Success) emit recommendationsReceived(m.payload);
         } else if (m.header.messageType == Charging::MessageType::PileListResponse) {
             if (m.header.statusCode == Charging::ErrorCode::Success) emit pilesReceived(m.payload.value(QStringLiteral("items")).toArray()); else emit featureUnavailable(QStringLiteral("电桩查询失败：%1").arg(m.payload.value(QStringLiteral("message")).toString()));
         } else if (m.header.messageType == Charging::MessageType::PileCodeLookupResponse) {
@@ -109,6 +117,7 @@ void ClientApi::requestActiveOrder() { if (!m_connection.send(Charging::MessageT
 void ClientApi::logout() { if (!m_connection.send(Charging::MessageType::LogoutRequest, m_connection.nextRequestId())) emit loggedOut(); }
 void ClientApi::requestUnsupported(const QString &feature) { emit featureUnavailable(feature + QStringLiteral("接口尚未由服务端提供，等待联调")); }
 void ClientApi::requestStations(const QString &region,const QString &address,double latitude,double longitude){ const QString normalizedRegion=region==QStringLiteral("全部区域")?QString():region; if(!m_connection.send(Charging::MessageType::StationListRequest,m_connection.nextRequestId(),{{"region",normalizedRegion},{"address",address},{"latitude",latitude},{"longitude",longitude},{"radiusKm",10},{"sort","distance"}})) emit featureUnavailable(QStringLiteral("站点查询接口暂不可用")); }
+void ClientApi::requestStationRecommendations(const QJsonArray &stationIds, int horizonHours) { m_connection.send(Charging::MessageType::StationRecommendationRequest, m_connection.nextRequestId(), {{"stationIds", stationIds}, {"horizonHours", horizonHours}}); }
 void ClientApi::requestPiles(qint64 stationId){ if(!m_connection.send(Charging::MessageType::PileListRequest,m_connection.nextRequestId(),{{"stationId",stationId}})) emit featureUnavailable(QStringLiteral("电桩详情接口暂不可用")); }
 void ClientApi::requestPileByCode(const QString &pileCode)
 {
