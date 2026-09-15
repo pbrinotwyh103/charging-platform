@@ -22,3 +22,9 @@ database/backups/*.sqlite
 *.log
 core
 core.*
+
+# 第二阶段大数据运行产物与第三方前端依赖
+bigdata/data/
+bigdata/logs/
+bigdata/pipeline/__pycache__/
+bigdata/dashboard/__pycache__/

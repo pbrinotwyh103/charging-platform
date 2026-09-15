@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>深圳充电运营大数据中心</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body>
+  <div id="app" v-cloak>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">CHARGING OPERATIONS DATA CENTER</p>
+        <h1>深圳充电运营大数据中心</h1>
+        <p class="subtitle">UrbanEV 数据底座 · SparkSQL 四层数仓 · MLlib 负荷预测</p>
+      </div>
+      <div class="status">
+        <span class="status-dot"></span>
+        数据服务在线
+        <small>{{ currentTime }}</small>
+      </div>
+    </header>
+
+    <main>
+      <section class="kpi-grid">
+        <article class="kpi"><span>累计营收</span><strong>¥{{ money(overview.total_revenue_yuan) }}</strong><small>已完成订单口径</small></article>
+        <article class="kpi"><span>充电电量</span><strong>{{ number(overview.total_energy_kwh) }} kWh</strong><small>全部有效充电记录</small></article>
+        <article class="kpi"><span>充电订单</span><strong>{{ integer(overview.order_count) }}</strong><small>完成率 {{ number(overview.completion_rate_percent) }}%</small></article>
+        <article class="kpi"><span>站点与电桩</span><strong>{{ integer(overview.station_count) }} / {{ integer(overview.pile_count) }}</strong><small>UrbanEV 深圳站点</small></article>
+        <article class="kpi warning"><span>原始质量问题</span><strong>{{ integer(quality.total_issues) }}</strong><small>问题率 {{ number(quality.issue_rate_percent) }}%</small></article>
+        <article class="kpi prediction"><span>模型 RMSE</span><strong>{{ number(model.rmse) }}</strong><small>R² {{ number(model.r2) }}</small></article>
+      </section>
+
+      <section class="dashboard-grid">
+        <article class="panel span-2">
+          <div class="panel-title"><h2>近 30 日营收与订单趋势</h2><span>ADS revenue_trend</span></div>
+          <div ref="revenueChart" class="chart"></div>
+        </article>
+        <article class="panel">
+          <div class="panel-title"><h2>充电桩状态分布</h2><span>实时资产快照</span></div>
+          <div ref="pileChart" class="chart"></div>
+        </article>
+        <article class="panel">
+          <div class="panel-title"><h2>全天充电负荷</h2><span>小时平均会话数</span></div>
+          <div ref="hourChart" class="chart"></div>
+        </article>
+        <article class="panel span-2">
+          <div class="panel-title"><h2>高营收站点 TOP 10</h2><span>站点经营排名</span></div>
+          <div ref="stationChart" class="chart"></div>
+        </article>
+        <article class="panel">
+          <div class="panel-title"><h2>区域经营贡献</h2><span>深圳各区营收</span></div>
+          <div ref="districtChart" class="chart"></div>
+        </article>
+        <article class="panel">
+          <div class="panel-title"><h2>数据质量问题构成</h2><span>PySpark 自动检测</span></div>
+          <div ref="qualityChart" class="chart"></div>
+        </article>
+        <article class="panel span-2">
+          <div class="panel-title"><h2>未来负荷预测</h2><span>Spark MLlib RandomForest</span></div>
+          <div class="prediction-tabs">
+            <button v-for="h in [1, 6, 24]" :key="h" :class="{active: horizon === h}" @click="horizon = h; renderPrediction()">未来 {{ h }} 小时</button>
+          </div>
+          <div ref="predictionChart" class="chart prediction-chart"></div>
+        </article>
+      </section>
+
+      <section class="panel table-panel">
+        <div class="panel-title"><h2>预测调度建议</h2><span>优先关注预计繁忙且空闲桩较少的站点</span></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>站点</th><th>预测时点</th><th>预测会话</th><th>预测空闲桩</th><th>总桩数</th><th>建议</th></tr></thead>
+            <tbody>
+              <tr v-for="item in currentPredictions.slice(0, 10)" :key="item.station_id + item.forecast_horizon_hours">
+                <td>{{ item.station_name }}</td>
+                <td>{{ item.forecast_time.replace('T', ' ') }}</td>
+                <td>{{ number(item.predicted_sessions) }}</td>
+                <td>{{ integer(item.predicted_idle_piles) }}</td>
+                <td>{{ integer(item.pile_count) }}</td>
+                <td><span :class="['advice', item.predicted_idle_piles <= 2 ? 'hot' : 'normal']">{{ item.predicted_idle_piles <= 2 ? '提前调度与预警' : '正常值守' }}</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <footer>数据链路：第一阶段 SQLite / UrbanEV → ODS → DWD → DWS → ADS → Flask API → Vue + ECharts</footer>
+  </div>
+  <script src="{{ url_for('static', filename='vendor/vue.global.prod.js') }}"></script>
+  <script src="{{ url_for('static', filename='vendor/echarts.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
+
