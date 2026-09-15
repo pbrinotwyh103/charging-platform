@@ -45,11 +45,19 @@ enum class MessageType : quint16 {
 
     CustomerServiceRequest = 4001,
     CustomerServiceResponse = 4002,
+    LoadPredictionRequest = 4100,
+    LoadPredictionResponse = 4101,
+    StationRecommendationRequest = 4110,
+    StationRecommendationResponse = 4111,
 
     AdminLoginRequest = 5001,
     AdminLoginResponse = 5002,
     AdminCommandRequest = 5010,
     AdminCommandResponse = 5011,
+    LoadWarningRequest = 5100,
+    LoadWarningResponse = 5101,
+    AnalyticsStatusRequest = 5110,
+    AnalyticsStatusResponse = 5111,
 
     ChargingProgressPush = 8001,
     ChargingStoppedPush = 8002,

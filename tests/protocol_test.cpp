@@ -103,6 +103,14 @@ void ProtocolTest::businessProtocolRoundTrip()
     QCOMPARE(static_cast<quint16>(Charging::MessageType::PileCodeLookupResponse), quint16(2031));
     QCOMPARE(static_cast<quint16>(Charging::MessageType::CustomerServiceRequest), quint16(4001));
     QCOMPARE(static_cast<quint16>(Charging::MessageType::CustomerServiceResponse), quint16(4002));
+    QCOMPARE(static_cast<quint16>(Charging::MessageType::LoadPredictionRequest), quint16(4100));
+    QCOMPARE(static_cast<quint16>(Charging::MessageType::LoadPredictionResponse), quint16(4101));
+    QCOMPARE(static_cast<quint16>(Charging::MessageType::StationRecommendationRequest), quint16(4110));
+    QCOMPARE(static_cast<quint16>(Charging::MessageType::StationRecommendationResponse), quint16(4111));
+    QCOMPARE(static_cast<quint16>(Charging::MessageType::LoadWarningRequest), quint16(5100));
+    QCOMPARE(static_cast<quint16>(Charging::MessageType::LoadWarningResponse), quint16(5101));
+    QCOMPARE(static_cast<quint16>(Charging::MessageType::AnalyticsStatusRequest), quint16(5110));
+    QCOMPARE(static_cast<quint16>(Charging::MessageType::AnalyticsStatusResponse), quint16(5111));
 
     QByteArray buffer = Charging::PacketCodec::encode(
         Charging::MessageType::WalletRechargeResponse,

@@ -35,8 +35,24 @@ MessageType responseFor(MessageType request)
     case MessageType::ChargingStopRequest: return MessageType::ChargingStopResponse;
     case MessageType::ActiveOrderRequest: return MessageType::ActiveOrderResponse;
     case MessageType::CustomerServiceRequest: return MessageType::CustomerServiceResponse;
+    case MessageType::LoadPredictionRequest: return MessageType::LoadPredictionResponse;
+    case MessageType::StationRecommendationRequest: return MessageType::StationRecommendationResponse;
     case MessageType::AdminCommandRequest: return MessageType::AdminCommandResponse;
+    case MessageType::LoadWarningRequest: return MessageType::LoadWarningResponse;
+    case MessageType::AnalyticsStatusRequest: return MessageType::AnalyticsStatusResponse;
     default: return request;
+    }
+}
+
+Role requiredRoleFor(MessageType type)
+{
+    switch (type) {
+    case MessageType::AdminCommandRequest:
+    case MessageType::LoadWarningRequest:
+    case MessageType::AnalyticsStatusRequest:
+        return Role::Administrator;
+    default:
+        return Role::User;
     }
 }
 
@@ -166,7 +182,7 @@ void MessageDispatcher::dispatch(ClientSession *session, const Charging::Message
         sendError(session, response, requestId, ErrorCode::Unauthorized);
         return;
     }
-    const auto requiredRole = type == MessageType::AdminCommandRequest ? Role::Administrator : Role::User;
+    const auto requiredRole = requiredRoleFor(type);
     if (session->role() != requiredRole) {
         sendError(session, response, requestId, ErrorCode::Forbidden);
         return;
@@ -193,6 +209,10 @@ void MessageDispatcher::dispatch(ClientSession *session, const Charging::Message
         case MessageType::ChargingStopRequest: return services->charging()->stop(principalId, Role::User, payload);
         case MessageType::ActiveOrderRequest: return services->orders()->active(principalId);
         case MessageType::CustomerServiceRequest: return services->customerService()->ask(principalId, payload);
+        case MessageType::LoadPredictionRequest: return services->analytics()->predictions(payload);
+        case MessageType::StationRecommendationRequest: return services->analytics()->recommendations(payload);
+        case MessageType::LoadWarningRequest: return services->analytics()->warnings(payload);
+        case MessageType::AnalyticsStatusRequest: return services->analytics()->status();
         case MessageType::AdminCommandRequest:
             return services->admin()->execute(principalId, requestId, payload, services->charging());
         default: {
