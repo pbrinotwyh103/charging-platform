@@ -24,9 +24,14 @@ def current_run_metadata(environment=None, clock: Callable[[], str] = _utc_now) 
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
+    files = [path] if path.is_file() else sorted(item for item in path.rglob("*") if item.is_file())
+    if not files:
+        raise FileNotFoundError(path)
+    for item in files:
+        digest.update(str(item.relative_to(path) if path.is_dir() else item.name).encode("utf-8"))
+        with item.open("rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
     return digest.hexdigest()
 
 
@@ -106,17 +111,32 @@ def _update_existing(root: Path, batch_id: str, status: str,
     return run.complete() if status == "complete" else run.fail(stage, message)
 
 
+def _publish_existing(root: Path, batch_id: str, layer: str,
+                      outputs: list[str], row_count: int) -> dict:
+    run = RunManifest(root, batch_id)
+    path = run.run_dir / "manifest.json"
+    run.manifest = json.loads(path.read_text("utf-8"))
+    return run.publish(layer, outputs, row_count)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("start", "complete", "fail"))
+    parser.add_argument("command", choices=("start", "publish", "complete", "fail"))
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--batch-id", required=True)
     parser.add_argument("--input", action="append", default=[])
     parser.add_argument("--stage", default="pipeline")
     parser.add_argument("--message", default="pipeline failed")
+    parser.add_argument("--layer")
+    parser.add_argument("--output", action="append", default=[])
+    parser.add_argument("--row-count", type=int, default=0)
     args = parser.parse_args()
     if args.command == "start":
         RunManifest(args.root, args.batch_id).start(args.input)
+    elif args.command == "publish":
+        if not args.layer or not args.output:
+            parser.error("publish requires --layer and at least one --output")
+        _publish_existing(args.root, args.batch_id, args.layer, args.output, args.row_count)
     else:
         _update_existing(args.root, args.batch_id, args.command, args.stage, args.message)
 

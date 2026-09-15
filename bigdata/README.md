@@ -111,7 +111,16 @@ export CHARGING_API_KEY='replace-with-a-random-secret' # 跨主机部署时 Flas
 ```bash
 python3 scripts/acceptance/run.py --verify-traceability
 CHARGING_ACCEPTANCE_PYTHON=/path/to/venv/bin/python python3 scripts/acceptance/run.py --profile local
-python3 scripts/acceptance/run.py --profile course-vm
+npm install
+npx playwright install chromium
+CHARGING_ACCEPTANCE_PYTHON=/path/to/venv/bin/python python3 scripts/acceptance/run.py --profile course-vm
+```
+
+若 Qt/macOS 与 Spark/HDFS 分布在不同验收机，可在 Linux 大数据节点单独生成运行时证据：
+
+```bash
+CHARGING_HDFS_BASE=hdfs://node100:9000/charging_platform \
+  python3 scripts/acceptance/run.py --profile linux-runtime --verify-all-passed
 ```
 
 输出位于 `artifacts/acceptance/<runId>/`。外部工具缺失时状态为 `not_run`，不计作通过；课程虚拟机须实际完成 Spark、HDFS 与浏览器检查。

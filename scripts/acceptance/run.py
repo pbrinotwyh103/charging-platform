@@ -11,7 +11,7 @@ from runner import ROOT, checks, load_requirements_map, run_check
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--profile", choices=("local", "course-vm"), default="local")
+    parser.add_argument("--profile", choices=("local", "course-vm", "linux-runtime"), default="local")
     parser.add_argument("--verify-traceability", action="store_true")
     parser.add_argument("--verify-all-passed", action="store_true")
     args = parser.parse_args()

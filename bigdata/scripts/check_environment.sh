@@ -7,6 +7,7 @@ java -version 2>&1 | head -1
 hadoop version | head -1
 spark-submit --version 2>&1 | grep -m1 'version' || true
 python3 --version
+python3 -c 'import numpy; print("NumPy", numpy.__version__)'
 
 echo "=== Java 服务进程 ==="
 jps -l

@@ -10,8 +10,14 @@ from bigdata.pipeline.quality_lineage import summarize_lineage
 from bigdata.pipeline.run_manifest import RunManifest
 from bigdata.pipeline.run_manifest import current_run_metadata
 
+BIGDATA_ROOT = Path(__file__).resolve().parents[1]
+
 
 class PipelineContractTest(unittest.TestCase):
+    def test_mllib_runtime_dependency_is_declared(self):
+        requirements = (BIGDATA_ROOT / "requirements.txt").read_text("utf-8")
+        self.assertIn("numpy==", requirements)
+
     def test_manifest_is_versioned_and_published_atomically(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -29,6 +35,20 @@ class PipelineContractTest(unittest.TestCase):
             current = json.loads((root / "warehouse" / "current.json").read_text("utf-8"))
             self.assertEqual(current, manifest)
             self.assertFalse((root / "warehouse" / ".current.json.tmp").exists())
+
+    def test_manifest_hashes_directory_outputs_deterministically(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "ads"
+            output.mkdir()
+            (output / "b.json").write_text("[]", encoding="utf-8")
+            (output / "a.json").write_text("{}", encoding="utf-8")
+            run = RunManifest(root / "manifests", "batch")
+            run.start([])
+            first = run.publish("ads", [output], row_count=2)
+            second = run.publish("ads", [output], row_count=2)
+            self.assertEqual(first["outputs"][0]["sha256"], second["outputs"][0]["sha256"])
+            self.assertEqual(len(first["outputs"][0]["sha256"]), 64)
 
     def test_failed_run_does_not_replace_last_successful_manifest(self):
         with tempfile.TemporaryDirectory() as directory:

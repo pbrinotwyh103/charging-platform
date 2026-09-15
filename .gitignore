@@ -32,3 +32,5 @@ bigdata/dashboard/__pycache__/
 bigdata/tests/__pycache__/
 artifacts/
 scripts/**/__pycache__/
+node_modules/
+test-results/

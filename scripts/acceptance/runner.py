@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -53,7 +54,13 @@ def run_check(name: str, command: list[str], artifact_dir: Path, *, cwd=ROOT):
 
 
 def checks(profile: str):
-    python = os.environ.get("CHARGING_ACCEPTANCE_PYTHON", "python3")
+    python = os.environ.get("CHARGING_ACCEPTANCE_PYTHON", sys.executable)
+    if profile == "linux-runtime":
+        return [
+            ("spark_pipeline", ["bash", str(ROOT / "bigdata/scripts/run_pipeline.sh"), "--local",
+                                "--seed", "20260916", "--batch-id", "acceptance-linux-runtime"]),
+            ("hdfs", ["hdfs", "dfs", "-ls", "-R", "/charging_platform"]),
+        ]
     local = [
         ("python", [python, "-m", "unittest", "discover", "-s", "bigdata/tests", "-v"]),
         ("protocol", [str(ROOT / "build/bin/protocol_tests"), "-o", "-,txt"]),
@@ -65,8 +72,8 @@ def checks(profile: str):
     ]
     if profile == "course-vm":
         local += [
-            ("spark_pipeline", [str(ROOT / "bigdata/scripts/run_pipeline.sh"), "--local", "--seed", "20260915", "--batch-id", "acceptance-course-vm"]),
+            ("spark_pipeline", ["bash", str(ROOT / "bigdata/scripts/run_pipeline.sh"), "--local", "--seed", "20260915", "--batch-id", "acceptance-course-vm"]),
             ("hdfs", ["hdfs", "dfs", "-ls", "/charging_platform/ads"]),
-            ("browser", ["npx", "playwright", "test", "bigdata/tests/browser/dashboard.spec.js"]),
+            ("browser", [python, str(ROOT / "scripts/acceptance/run_browser.py")]),
         ]
     return local
