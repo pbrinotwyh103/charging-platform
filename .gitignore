@@ -29,5 +29,6 @@ bigdata/data/
 bigdata/logs/
 bigdata/pipeline/__pycache__/
 bigdata/dashboard/__pycache__/
+bigdata/tests/__pycache__/
 artifacts/
 scripts/**/__pycache__/

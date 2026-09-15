@@ -15,3 +15,7 @@ class AcceptanceRunnerTest(unittest.TestCase):
         matrix = load_requirements_map()
         self.assertFalse([row for row in matrix if not row["implementation"] or not row["test"]])
         self.assertEqual(len({row["id"] for row in matrix}), len(matrix))
+        workspace = Path(__file__).resolve().parents[3]
+        missing = [row["implementation"] for row in matrix
+                   if not (workspace / row["implementation"]).exists()]
+        self.assertFalse(missing, f"implementation paths do not exist: {missing}")
