@@ -16,6 +16,7 @@
 #include "services/chargingservice.h"
 #include "services/adminservice.h"
 #include "services/statisticsservice.h"
+#include "services/analyticsservice.h"
 #include "protocol/packetcodec.h"
 #include <limits>
 #include <QBuffer>
@@ -45,6 +46,56 @@ QString imageBase64(const char *format = "PNG")
 }
 }
 
+void ServiceTest::analyticsRecommendationsAndFallback()
+{
+    bool offline = false;
+    AnalyticsService service([&offline](const QUrl &) {
+        if (offline)
+            return AnalyticsFetchResult{false, 0, {}, "offline"};
+        return AnalyticsFetchResult{
+            true, 200,
+            R"([{"stationId":1,"stationName":"中心站","horizonHours":1,"predictedSessions":9.5,"predictedAvailablePiles":1,"totalPiles":10,"forecastTime":"2026-09-15T11:00:00+08:00","generatedAt":"2026-09-15T10:00:00+08:00","modelVersion":"rf-1"},{"stationId":2,"stationName":"南站","horizonHours":1,"predictedSessions":2,"predictedAvailablePiles":6,"totalPiles":8,"forecastTime":"2026-09-15T11:00:00+08:00","generatedAt":"2026-09-15T10:00:00+08:00","modelVersion":"rf-1"}])",
+            {}};
+    });
+
+    const QJsonObject request{{"horizonHours", 1}, {"stationIds", QJsonArray{1, 2}}};
+    const auto first = service.recommendations(request);
+    QVERIFY(first.succeeded());
+    const auto items = first.payload.value("items").toArray();
+    QCOMPARE(items.size(), 2);
+    QCOMPARE(items.first().toObject().value("stationId").toInt(), 2);
+    QCOMPARE(items.first().toObject().value("warningLevel").toString(), QString("normal"));
+    QVERIFY(!first.payload.value("stale").toBool());
+
+    offline = true;
+    const auto cached = service.recommendations(request);
+    QVERIFY(cached.succeeded());
+    QVERIFY(cached.payload.value("stale").toBool());
+    QCOMPARE(cached.payload.value("items").toArray(), items);
+}
+
+void ServiceTest::analyticsValidationAndWarnings()
+{
+    AnalyticsFetchResult response;
+    AnalyticsService service([&response](const QUrl &) { return response; });
+    QCOMPARE(service.predictions({{"horizonHours", 2}}).error, ErrorCode::ValidationFailed);
+    QCOMPARE(service.recommendations({{"horizonHours", 1}, {"stationIds", QJsonArray{0}}}).error,
+             ErrorCode::ValidationFailed);
+    QCOMPARE(service.warnings({{"horizonHours", "6"}}).error, ErrorCode::ValidationFailed);
+
+    response = AnalyticsFetchResult{
+        true, 200,
+        R"([{"stationId":9,"stationName":"高负荷站","horizonHours":6,"predictedSessions":10,"predictedAvailablePiles":0,"totalPiles":10,"forecastTime":"2026-09-15T16:00:00+08:00","generatedAt":"2026-09-15T10:00:00+08:00","modelVersion":"rf-1"}])",
+        {}};
+    const auto warnings = service.warnings({{"horizonHours", 6}});
+    QVERIFY(warnings.succeeded());
+    const auto warning = warnings.payload.value("items").toArray().first().toObject();
+    QCOMPARE(warning.value("warningLevel").toString(), QString("severe"));
+    QCOMPARE(warning.value("predictedAvailablePiles").toInt(), 0);
+
+    response = AnalyticsFetchResult{true, 200, R"([{"stationId":"bad"}])", {}};
+    QCOMPARE(service.predictions({{"horizonHours", 1}}).error, ErrorCode::InvalidPacket);
+}
 void ServiceTest::initTestCase()
 {
     QVERIFY(m_directory.isValid());

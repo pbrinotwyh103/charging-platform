@@ -60,6 +60,8 @@ private slots:
     void adminStatisticsRejectsOverflow();
     void adminExportHonorsEncodedTransportLimit();
     void adminExportKeepsLargeIntegers();
+    void analyticsRecommendationsAndFallback();
+    void analyticsValidationAndWarnings();
 private:
     qint64 createUser(const QString &phone);
     QTemporaryDir m_directory;

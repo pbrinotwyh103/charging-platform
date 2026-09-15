@@ -1,4 +1,4 @@
-QT += core gui sql testlib
+QT += core gui network sql testlib
 CONFIG += console testcase c++17
 CONFIG -= app_bundle
 TEMPLATE = app
@@ -17,6 +17,7 @@ SOURCES += service_test.cpp \
     ../server/services/chargingservice.cpp \
     ../server/services/alarmservice.cpp \
     ../server/services/adminservice.cpp \
+    ../server/services/analyticsservice.cpp \
     ../server/services/statisticsservice.cpp \
     ../server/repositories/controlrecordrepository.cpp \
     ../server/repositories/alarmrepository.cpp \
