@@ -11,6 +11,7 @@ HEADERS += \
     charts/revenuechartwidget.h \
     controllers/admincontroller.h \
     pages/alarmspage.h \
+    pages/advicepage.h \
     pages/assetspage.h \
     pages/monitorpage.h \
     pages/overviewpage.h \
@@ -25,6 +26,7 @@ SOURCES += \
     charts/revenuechartwidget.cpp \
     controllers/admincontroller.cpp \
     pages/alarmspage.cpp \
+    pages/advicepage.cpp \
     pages/assetspage.cpp \
     pages/monitorpage.cpp \
     pages/overviewpage.cpp \

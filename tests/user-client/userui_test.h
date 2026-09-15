@@ -23,4 +23,5 @@ private slots:
     void customerServiceSubmitsQuestion();
     void compactAppVisualShellIsPresent();
     void homePageShowsForecastAndStaleState();
+    void forecastControlsChangeRequestAndExplainPrediction();
 };

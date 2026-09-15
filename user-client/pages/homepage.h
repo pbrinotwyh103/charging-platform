@@ -26,6 +26,7 @@ signals:
     void stationsRequested(const QString &, const QString &, double, double);
     void stationSelected(const QJsonObject &);
     void pileCodeRequested(const QString &pileCode);
+    void recommendationsRequested(const QJsonArray &stationIds, int horizonHours);
 
 private:
     void renderEmpty(const QString &text);
@@ -35,6 +36,8 @@ private:
     QLineEdit *m_address = nullptr;
     QLineEdit *m_pileCode = nullptr;
     QComboBox *m_region = nullptr;
+    QComboBox *m_horizon = nullptr;
+    QComboBox *m_sortMode = nullptr;
     QListWidget *m_list = nullptr;
     QNetworkAccessManager *m_network = nullptr;
     QNetworkReply *m_geocodingReply = nullptr;

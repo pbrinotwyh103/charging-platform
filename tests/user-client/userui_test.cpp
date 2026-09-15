@@ -9,6 +9,7 @@
 #include "ui/usermainwindow.h"
 
 #include <QDoubleSpinBox>
+#include <QComboBox>
 #include <QDir>
 #include <QFile>
 #include <QJsonArray>
@@ -35,6 +36,28 @@ void UserUiTest::homePageShowsForecastAndStaleState()
     QVERIFY(list);
     QVERIFY(list->item(0)->text().contains(QStringLiteral("预计空闲 5")));
     QVERIFY(list->item(0)->text().contains(QStringLiteral("缓存预测")));
+}
+
+void UserUiTest::forecastControlsChangeRequestAndExplainPrediction()
+{
+    HomePage page;
+    page.setStations(QJsonArray{QJsonObject{{"stationId", 1}, {"name", QStringLiteral("甲站")}, {"distanceKm", 1.0}},
+                                QJsonObject{{"stationId", 2}, {"name", QStringLiteral("乙站")}, {"distanceKm", 2.0}}});
+    QSignalSpy spy(&page, &HomePage::recommendationsRequested);
+    auto *horizon = page.findChild<QComboBox *>(QStringLiteral("forecastHorizon"));
+    auto *sort = page.findChild<QComboBox *>(QStringLiteral("stationSortMode"));
+    QVERIFY(horizon); QVERIFY(sort);
+    horizon->setCurrentIndex(horizon->findData(24));
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.takeFirst().at(1).toInt(), 24);
+    page.setRecommendations(QJsonObject{{"horizonHours", 24}, {"items", QJsonArray{
+        QJsonObject{{"stationId", 1}, {"predictedAvailablePiles", 1}, {"lowerBound", 4.0}, {"upperBound", 8.0}, {"warningLevel", "congested"}, {"generatedAt", "2026-09-15T10:00:00Z"}},
+        QJsonObject{{"stationId", 2}, {"predictedAvailablePiles", 6}, {"lowerBound", 1.0}, {"upperBound", 3.0}, {"warningLevel", "normal"}}}}});
+    sort->setCurrentIndex(sort->findData(QStringLiteral("congestion")));
+    auto *list = page.findChild<QListWidget *>(QStringLiteral("stationList"));
+    QVERIFY(list->item(0)->text().contains(QStringLiteral("乙站")));
+    QVERIFY(list->item(1)->text().contains(QStringLiteral("区间 4.0–8.0")));
+    QVERIFY(list->item(1)->text().contains(QStringLiteral("生成于")));
 }
 
 void UserUiTest::demoWorkspaceShowsCoreFeatures()

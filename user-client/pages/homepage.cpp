@@ -15,6 +15,7 @@
 #include <QVariant>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
+#include <algorithm>
 
 HomePage::HomePage(QWidget *parent)
     : QWidget(parent)
@@ -30,6 +31,19 @@ HomePage::HomePage(QWidget *parent)
     row->addWidget(m_region);
     row->addWidget(m_address, 1);
     layout->addLayout(row);
+
+    auto *forecastRow = new QHBoxLayout;
+    m_horizon = new QComboBox(this);
+    m_horizon->setObjectName(QStringLiteral("forecastHorizon"));
+    for (int hours : {1, 6, 24, 48, 72})
+        m_horizon->addItem(QStringLiteral("未来 %1 小时").arg(hours), hours);
+    m_sortMode = new QComboBox(this);
+    m_sortMode->setObjectName(QStringLiteral("stationSortMode"));
+    m_sortMode->addItem(QStringLiteral("距离优先"), QStringLiteral("distance"));
+    m_sortMode->addItem(QStringLiteral("低拥堵优先"), QStringLiteral("congestion"));
+    forecastRow->addWidget(m_horizon);
+    forecastRow->addWidget(m_sortMode);
+    layout->addLayout(forecastRow);
 
     auto *gps = new QPushButton(QStringLiteral("使用模拟定位（深圳）"), this);
     auto *search = new QPushButton(QStringLiteral("搜索附近充电站"), this);
@@ -72,6 +86,15 @@ HomePage::HomePage(QWidget *parent)
                 m_simulatedLocationActive = false;
             });
     connect(search, &QPushButton::clicked, this, &HomePage::requestStations);
+    connect(m_horizon, &QComboBox::currentIndexChanged, this, [this] {
+        QJsonArray ids;
+        for (const auto &value : m_stations)
+            ids.append(value.toObject().value(QStringLiteral("stationId")));
+        if (!ids.isEmpty()) emit recommendationsRequested(ids, m_horizon->currentData().toInt());
+    });
+    connect(m_sortMode, &QComboBox::currentIndexChanged, this, [this] {
+        if (!m_stations.isEmpty()) setStations(m_stations);
+    });
     const auto submitPileCode = [this] {
         const QString pileCode = m_pileCode->text().trimmed();
         if (pileCode.isEmpty()) {
@@ -171,7 +194,18 @@ void HomePage::setStations(const QJsonArray &stations)
     }
     const bool stale = m_recommendations.value(QStringLiteral("stale")).toBool();
     const int horizon = m_recommendations.value(QStringLiteral("horizonHours")).toInt(1);
-    const auto sorted = StationUtils::sortByDistance(stations, m_latitude, m_longitude);
+    auto sorted = StationUtils::sortByDistance(stations, m_latitude, m_longitude);
+    if (m_sortMode->currentData().toString() == QStringLiteral("congestion") && !forecasts.isEmpty()) {
+        QList<QJsonObject> values;
+        for (const auto &value : sorted) values.append(value.toObject());
+        std::stable_sort(values.begin(), values.end(), [&forecasts](const QJsonObject &left, const QJsonObject &right) {
+            const int leftIdle = forecasts.value(left.value("stationId").toInteger()).value("predictedAvailablePiles").toInt(-1);
+            const int rightIdle = forecasts.value(right.value("stationId").toInteger()).value("predictedAvailablePiles").toInt(-1);
+            return leftIdle > rightIdle;
+        });
+        sorted = {};
+        for (const auto &value : values) sorted.append(value);
+    }
     for (const auto &value : sorted) {
         const QJsonObject station = value.toObject();
         const double price = station.contains(QStringLiteral("priceCentsPerKwh"))
@@ -180,9 +214,14 @@ void HomePage::setStations(const QJsonArray &stations)
         QString forecastText;
         const QJsonObject forecast = forecasts.value(station.value(QStringLiteral("stationId")).toInteger());
         if (!forecast.isEmpty())
-            forecastText = QStringLiteral("    %1小时预计空闲 %2%3")
+            forecastText = QStringLiteral("    %1小时预计空闲 %2，区间 %3–%4；%5%6\n    生成于 %7")
                 .arg(horizon).arg(forecast.value(QStringLiteral("predictedAvailablePiles")).toInt())
-                .arg(stale ? QStringLiteral("（缓存预测）") : QString());
+                .arg(forecast.value(QStringLiteral("lowerBound")).toDouble(), 0, 'f', 1)
+                .arg(forecast.value(QStringLiteral("upperBound")).toDouble(), 0, 'f', 1)
+                .arg(forecast.value(QStringLiteral("warningLevel")).toString() == QStringLiteral("normal")
+                         ? QStringLiteral("预测较空闲") : QStringLiteral("预测较拥堵"))
+                .arg(stale ? QStringLiteral("（缓存预测）") : QString())
+                .arg(forecast.value(QStringLiteral("generatedAt")).toString(QStringLiteral("未知")));
         auto *item = new QListWidgetItem(
             QStringLiteral("%1  %2\n%3\n¥%4/度    空闲 %5/%6    %7 km%8")
                 .arg(station.value(QStringLiteral("favorited")).toBool() ? QStringLiteral("★") : QStringLiteral("⚡"),
@@ -190,10 +229,12 @@ void HomePage::setStations(const QJsonArray &stations)
                 .arg(price, 0, 'f', 2).arg(station.value(QStringLiteral("availablePiles")).toInt())
                 .arg(station.value(QStringLiteral("totalPiles")).toInt())
                 .arg(station.value(QStringLiteral("distanceKm")).toDouble(), 0, 'f', 1).arg(forecastText), m_list);
-        item->setSizeHint(QSize(0, forecastText.isEmpty() ? 92 : 108));
+        item->setSizeHint(QSize(0, forecastText.isEmpty() ? 92 : 132));
         item->setData(Qt::UserRole, QVariant::fromValue(station));
     }
-    m_status->setText(QStringLiteral("已找到 %1 个充电站，按距离为您排序").arg(sorted.size()));
+    m_status->setText(QStringLiteral("已找到 %1 个充电站，%2")
+        .arg(sorted.size()).arg(m_sortMode->currentData().toString() == QStringLiteral("congestion")
+            ? QStringLiteral("按低拥堵程度排序") : QStringLiteral("按距离排序")));
 }
 
 void HomePage::setRecommendations(const QJsonObject &recommendations)

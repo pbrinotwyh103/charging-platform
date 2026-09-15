@@ -99,6 +99,17 @@ void AdminController::requestAdminCommand(const QString &action,
     requestAnalyticsStatus();
     return;
   }
+  const QHash<QString, Charging::MessageType> analyticsTypes{
+      {QStringLiteral("analytics.modelComparison"), Charging::MessageType::ModelComparisonRequest},
+      {QStringLiteral("analytics.drift"), Charging::MessageType::ModelDriftRequest},
+      {QStringLiteral("analytics.scheduling"), Charging::MessageType::SchedulingAdviceRequest},
+      {QStringLiteral("analytics.maintenance"), Charging::MessageType::MaintenanceAdviceRequest},
+      {QStringLiteral("analytics.expansion"), Charging::MessageType::ExpansionAdviceRequest},
+      {QStringLiteral("analytics.regulator"), Charging::MessageType::RegulatorSummaryRequest}};
+  if (analyticsTypes.contains(normalizedAction)) {
+    requestAnalytics(normalizedAction, analyticsTypes.value(normalizedAction), parameters);
+    return;
+  }
   if (normalizedAction.isEmpty()) {
     emit commandFailed(action, QStringLiteral("管理员请求动作不能为空"),
                        static_cast<int>(Charging::ErrorCode::ValidationFailed));
@@ -285,7 +296,13 @@ void AdminController::handleMessage(const Charging::Message &message) {
       message.header.statusCode != Charging::ErrorCode::Success;
   const bool analyticsResponse =
       message.header.messageType == Charging::MessageType::LoadWarningResponse ||
-      message.header.messageType == Charging::MessageType::AnalyticsStatusResponse;
+      message.header.messageType == Charging::MessageType::AnalyticsStatusResponse ||
+      message.header.messageType == Charging::MessageType::ModelComparisonResponse ||
+      message.header.messageType == Charging::MessageType::ModelDriftResponse ||
+      message.header.messageType == Charging::MessageType::SchedulingAdviceResponse ||
+      message.header.messageType == Charging::MessageType::MaintenanceAdviceResponse ||
+      message.header.messageType == Charging::MessageType::ExpansionAdviceResponse ||
+      message.header.messageType == Charging::MessageType::RegulatorSummaryResponse;
   if (message.header.messageType == Charging::MessageType::AdminCommandResponse ||
       analyticsResponse ||
       legacyCommandError) {

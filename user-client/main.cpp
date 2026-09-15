@@ -52,6 +52,8 @@ int main(int argc, char *argv[])
                      &window, &UserMainWindow::showFeatureMessage);
     if (!parser.isSet(demoOption)) {
         QObject::connect(window.findChild<HomePage *>(), &HomePage::stationsRequested, &controller, &ClientApi::requestStations);
+        QObject::connect(window.findChild<HomePage *>(), &HomePage::recommendationsRequested,
+                         &controller, &ClientApi::requestStationRecommendations);
         QObject::connect(window.findChild<HomePage *>(), &HomePage::pileCodeRequested,
                          &controller, &ClientApi::requestPileByCode);
         QObject::connect(window.findChild<CustomerServicePage *>(),

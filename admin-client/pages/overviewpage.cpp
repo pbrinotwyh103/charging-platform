@@ -5,6 +5,8 @@
 #include "widgets/adminuihelpers.h"
 
 #include <QFrame>
+#include <QComboBox>
+#include <QHBoxLayout>
 #include <QGridLayout>
 #include <QJsonArray>
 #include <QLabel>
@@ -117,12 +119,34 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
   m_loadWarningSummary = new QLabel(QStringLiteral("等待预测数据"), warningCard);
   m_loadWarningSummary->setObjectName(QStringLiteral("loadWarningSummary"));
   m_loadWarningSummary->setWordWrap(true);
+  auto *filters = new QHBoxLayout;
+  m_warningHorizon = new QComboBox(warningCard);
+  m_warningHorizon->setObjectName(QStringLiteral("warningHorizonFilter"));
+  for (int value : {1, 6, 24, 48, 72}) m_warningHorizon->addItem(QStringLiteral("%1 小时").arg(value), value);
+  m_warningHorizon->setCurrentIndex(m_warningHorizon->findData(6));
+  m_warningLevel = new QComboBox(warningCard);
+  m_warningLevel->setObjectName(QStringLiteral("warningLevelFilter"));
+  m_warningLevel->addItem(QStringLiteral("全部等级"), QString());
+  m_warningLevel->addItem(QStringLiteral("严重"), QStringLiteral("severe"));
+  m_warningLevel->addItem(QStringLiteral("拥堵"), QStringLiteral("congested"));
+  m_warningLevel->addItem(QStringLiteral("关注"), QStringLiteral("attention"));
+  m_warningRegion = new QComboBox(warningCard);
+  m_warningRegion->setObjectName(QStringLiteral("warningRegionFilter"));
+  m_warningRegion->addItem(QStringLiteral("全部区域"), QString());
+  filters->addWidget(m_warningHorizon); filters->addWidget(m_warningLevel); filters->addWidget(m_warningRegion);
   m_analyticsStatus = new QLabel(QStringLiteral("分析服务状态未知"), warningCard);
   m_analyticsStatus->setObjectName(QStringLiteral("analyticsStatus"));
   warningLayout->addWidget(warningTitle);
+  warningLayout->addLayout(filters);
   warningLayout->addWidget(m_loadWarningSummary);
   warningLayout->addWidget(m_analyticsStatus);
   layout->addWidget(warningCard);
+  connect(m_warningHorizon, &QComboBox::currentIndexChanged, this, [this] {
+    emit commandRequested(QStringLiteral("analytics.warnings"),
+                          {{QStringLiteral("horizonHours"), m_warningHorizon->currentData().toInt()}});
+  });
+  connect(m_warningLevel, &QComboBox::currentIndexChanged, this, &OverviewPage::renderWarnings);
+  connect(m_warningRegion, &QComboBox::currentIndexChanged, this, &OverviewPage::renderWarnings);
 
   m_stateLabel = new QLabel(QStringLiteral("等待运营数据"), content);
   m_stateLabel->setObjectName(QStringLiteral("overviewStateLabel"));
@@ -141,16 +165,38 @@ void OverviewPage::requestRefresh() {
   emit commandRequested(QStringLiteral("report.revenue"),
                         {{QStringLiteral("days"), revenueDays()}});
   emit commandRequested(QStringLiteral("report.pileStates"), {});
-  emit commandRequested(QStringLiteral("analytics.warnings"), {{QStringLiteral("horizonHours"), 6}});
+  emit commandRequested(QStringLiteral("analytics.warnings"),
+                        {{QStringLiteral("horizonHours"), m_warningHorizon->currentData().toInt()}});
   emit commandRequested(QStringLiteral("analytics.status"), {});
 }
 
 void OverviewPage::setLoadWarnings(const QJsonObject &payload) {
   const QJsonArray items = payload.value(QStringLiteral("items")).toArray();
-  QStringList lines;
   for (const auto &value : items) {
-    const QJsonObject item = value.toObject();
+    const auto item = value.toObject();
+    const QString key = QStringLiteral("%1:%2:%3")
+        .arg(item.value("stationId").toInteger())
+        .arg(item.value("horizonHours").toInt(payload.value("horizonHours").toInt()))
+        .arg(item.value("modelVersion").toString());
+    m_warningItems.insert(key, item);
+    const QString region = item.value("region").toString();
+    if (!region.isEmpty() && m_warningRegion->findData(region) < 0) m_warningRegion->addItem(region, region);
+  }
+  renderWarnings();
+  if (payload.value(QStringLiteral("stale")).toBool())
+    m_loadWarningSummary->setText(m_loadWarningSummary->text() + QStringLiteral("\n当前展示缓存预测"));
+}
+
+void OverviewPage::renderWarnings() {
+  QStringList lines;
+  const QString levelFilter = m_warningLevel->currentData().toString();
+  const QString regionFilter = m_warningRegion->currentData().toString();
+  const int horizonFilter = m_warningHorizon->currentData().toInt();
+  for (const QJsonObject &item : m_warningItems) {
     const QString level = item.value(QStringLiteral("warningLevel")).toString();
+    if (item.contains("horizonHours") && item.value("horizonHours").toInt() != horizonFilter) continue;
+    if (!levelFilter.isEmpty() && level != levelFilter) continue;
+    if (!regionFilter.isEmpty() && item.value("region").toString() != regionFilter) continue;
     const QString localized = level == QStringLiteral("severe") ? QStringLiteral("严重")
         : level == QStringLiteral("congested") ? QStringLiteral("拥堵")
         : level == QStringLiteral("attention") ? QStringLiteral("关注") : QStringLiteral("正常");
@@ -160,8 +206,6 @@ void OverviewPage::setLoadWarnings(const QJsonObject &payload) {
              localized).arg(item.value(QStringLiteral("predictedAvailablePiles")).toInt()));
   }
   m_loadWarningSummary->setText(lines.isEmpty() ? QStringLiteral("未来时段暂无负荷预警") : lines.join('\n'));
-  if (payload.value(QStringLiteral("stale")).toBool())
-    m_loadWarningSummary->setText(m_loadWarningSummary->text() + QStringLiteral("\n当前展示缓存预测"));
 }
 
 void OverviewPage::setAnalyticsStatus(const QJsonObject &payload) {
