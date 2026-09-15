@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import random
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -12,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from common import RAW_ROOT, SOURCE_DB, SOURCE_SNAPSHOT_ROOT, ensure_local_directories, write_json
+from run_manifest import current_run_metadata
 
 
 RANDOM_SEED = 20260915
@@ -35,6 +37,18 @@ def write_csv(path: Path, rows: list[dict]) -> None:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
         writer.writeheader()
         writer.writerows(rows)
+
+
+def inject(rows: list[dict], index: int, field: str, value: Any) -> None:
+    if rows:
+        rows[index % len(rows)][field] = value
+
+
+def append_duplicate(rows: list[dict], index: int, prefix: str) -> None:
+    if rows:
+        duplicate = dict(rows[index % len(rows)])
+        duplicate["_row_id"] = row_id(prefix, len(rows) + 1)
+        rows.append(duplicate)
 
 
 def fetch_rows(conn: sqlite3.Connection, sql: str) -> list[dict]:
@@ -91,13 +105,11 @@ def build_users(conn: sqlite3.Connection | None, rng: random.Random, count: int)
         )
 
     # 场景化质量问题：空手机号、格式错误、负余额、非法状态、业务主键重复。
-    rows[4]["phone"] = ""
-    rows[11]["phone"] = "12345"
-    rows[18]["balance_cents"] = -5000
-    rows[27]["status"] = "deleted"
-    duplicate = dict(rows[35])
-    duplicate["_row_id"] = row_id("users", len(rows) + 1)
-    rows.append(duplicate)
+    inject(rows, 4, "phone", "")
+    inject(rows, 11, "phone", "12345")
+    inject(rows, 18, "balance_cents", -5000)
+    inject(rows, 27, "status", "deleted")
+    append_duplicate(rows, 35, "users")
     return rows
 
 
@@ -164,14 +176,12 @@ def build_stations(conn: sqlite3.Connection | None, rng: random.Random, count: i
                 }
             )
 
-    rows[3]["name"] = ""
-    rows[8]["longitude"] = 999
-    rows[13]["latitude"] = -999
-    rows[21]["price_cents_per_kwh"] = -120
-    rows[29]["status"] = "maintenance"
-    duplicate = dict(rows[34])
-    duplicate["_row_id"] = row_id("stations", len(rows) + 1)
-    rows.append(duplicate)
+    inject(rows, 3, "name", "")
+    inject(rows, 8, "longitude", 999)
+    inject(rows, 13, "latitude", -999)
+    inject(rows, 21, "price_cents_per_kwh", -120)
+    inject(rows, 29, "status", "maintenance")
+    append_duplicate(rows, 34, "stations")
     return rows
 
 
@@ -251,12 +261,12 @@ def build_piles(
             }
         )
 
-    rows[6]["station_id"] = 999999
-    rows[15]["pile_code"] = rows[14]["pile_code"]
-    rows[24]["power_kw"] = 0
-    rows[32]["charge_type"] = "super"
-    rows[41]["status"] = "unknown"
-    rows[49]["last_heartbeat_at"] = "not-a-time"
+    inject(rows, 6, "station_id", 999999)
+    if rows: inject(rows, 15, "pile_code", rows[14 % len(rows)]["pile_code"])
+    inject(rows, 24, "power_kw", 0)
+    inject(rows, 32, "charge_type", "super")
+    inject(rows, 41, "status", "unknown")
+    inject(rows, 49, "last_heartbeat_at", "not-a-time")
     return rows
 
 
@@ -275,11 +285,9 @@ def build_weather(rng: random.Random, start: datetime, days: int) -> list[dict]:
                 "is_holiday": 1 if day.weekday() >= 5 or rng.random() < 0.04 else 0,
             }
         )
-    rows[7]["temperature_c"] = 88
-    rows[19]["rainfall_mm"] = -10
-    duplicate = dict(rows[25])
-    duplicate["_row_id"] = row_id("weather", len(rows) + 1)
-    rows.append(duplicate)
+    inject(rows, 7, "temperature_c", 88)
+    inject(rows, 19, "rainfall_mm", -10)
+    append_duplicate(rows, 25, "weather")
     return rows
 
 
@@ -291,6 +299,7 @@ def build_orders(
     start: datetime,
     days: int,
     count: int,
+    weather: list[dict] | None = None,
 ) -> list[dict]:
     user_ids = [int(row["id"]) for row in users if str(row["id"]).isdigit()]
     station_lookup = {
@@ -300,11 +309,24 @@ def build_orders(
     }
     valid_piles = [row for row in piles if int(row.get("station_id") or -1) in station_lookup]
     rows: list[dict] = []
+    weather_by_date = {row["date"]: row for row in (weather or [])}
+    day_offsets = list(range(days))
+    day_weights = []
+    for offset in day_offsets:
+        day = (start + timedelta(days=offset)).date()
+        conditions = weather_by_date.get(day.isoformat(), {})
+        multiplier = 0.82 if day.weekday() >= 5 else 1.12
+        if float(conditions.get("rainfall_mm") or 0) > 0:
+            multiplier *= 1.18
+        if int(conditions.get("is_holiday") or 0):
+            multiplier *= 0.88
+        day_weights.append(multiplier)
+    pile_weights = [1.0 + (int(row["station_id"]) % 7) * 0.16 for row in valid_piles]
 
     for index in range(1, count + 1):
-        pile = rng.choice(valid_piles)
+        pile = rng.choices(valid_piles, weights=pile_weights)[0]
         station = station_lookup[int(pile["station_id"])]
-        day_offset = rng.randrange(days)
+        day_offset = rng.choices(day_offsets, weights=day_weights)[0]
         hour = rng.choices(
             range(24),
             weights=[2, 1, 1, 1, 1, 2, 5, 9, 12, 10, 7, 6, 7, 8, 8, 7, 8, 12, 14, 12, 9, 6, 4, 3],
@@ -347,21 +369,22 @@ def build_orders(
             }
         )
 
-    rows[9]["order_no"] = rows[8]["order_no"]
-    rows[39]["user_id"] = 999999
-    rows[79]["pile_id"] = 99999999
-    rows[119]["started_at"] = ""
-    rows[159]["stopped_at"] = rows[159]["started_at"]
-    rows[159]["duration_seconds"] = 3600
-    rows[199]["duration_seconds"] = -300
-    rows[239]["energy_wh"] = -12000
-    rows[279]["fee_cents"] = -100
-    rows[319]["status"] = "paid"
-    rows[359]["fee_cents"] = int(rows[359]["fee_cents"]) + 9999
-    rows[399]["energy_wh"] = 5_000_000
-    duplicate = dict(rows[499])
-    duplicate["_row_id"] = row_id("orders", len(rows) + 1)
-    rows.append(duplicate)
+    if rows: inject(rows, 9, "order_no", rows[8 % len(rows)]["order_no"])
+    inject(rows, 39, "user_id", 999999)
+    inject(rows, 79, "pile_id", 99999999)
+    inject(rows, 119, "started_at", "")
+    if rows:
+        target = rows[159 % len(rows)]
+        target["stopped_at"] = target["started_at"]
+        target["duration_seconds"] = 3600
+        fee_target = rows[359 % len(rows)]
+        fee_target["fee_cents"] = int(fee_target["fee_cents"]) + 9999
+    inject(rows, 199, "duration_seconds", -300)
+    inject(rows, 239, "energy_wh", -12000)
+    inject(rows, 279, "fee_cents", -100)
+    inject(rows, 319, "status", "paid")
+    inject(rows, 399, "energy_wh", 5_000_000)
+    append_duplicate(rows, 499, "orders")
     return rows
 
 
@@ -400,10 +423,10 @@ def build_alarms(
                 ),
             }
         )
-    rows[5]["pile_id"] = 99999999
-    rows[12]["severity"] = "fatal"
-    rows[20]["alarm_type"] = ""
-    rows[28]["occurred_at"] = "bad-time"
+    inject(rows, 5, "pile_id", 99999999)
+    inject(rows, 12, "severity", "fatal")
+    inject(rows, 20, "alarm_type", "")
+    inject(rows, 28, "occurred_at", "bad-time")
     return rows
 
 
@@ -415,13 +438,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--piles", type=int, default=3000)
     parser.add_argument("--orders", type=int, default=100000)
     parser.add_argument("--days", type=int, default=90)
+    parser.add_argument("--seed", type=int, default=RANDOM_SEED)
+    parser.add_argument("--batch-id", default=os.environ.get("CHARGING_BATCH_ID", "manual"))
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     ensure_local_directories()
-    rng = random.Random(RANDOM_SEED)
+    os.environ["CHARGING_BATCH_ID"] = args.batch_id
+    os.environ.setdefault("CHARGING_DATA_VERSION", args.batch_id)
+    rng = random.Random(args.seed)
     conn: sqlite3.Connection | None = None
     source_mode = "CSV compatibility snapshot"
     if args.source_db.exists():
@@ -445,7 +472,7 @@ def main() -> None:
     start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     start -= timedelta(days=args.days)
     weather = build_weather(rng, start, args.days)
-    orders = build_orders(rng, users, stations, piles, start, args.days, args.orders)
+    orders = build_orders(rng, users, stations, piles, start, args.days, args.orders, weather)
     alarms = build_alarms(rng, piles, orders, max(240, args.orders // 80))
 
     datasets = {
@@ -457,12 +484,15 @@ def main() -> None:
         "weather_daily": weather,
     }
     for name, rows in datasets.items():
+        for row in rows:
+            row.update(current_run_metadata())
         write_csv(RAW_ROOT / f"{name}.csv", rows)
 
     manifest = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "random_seed": RANDOM_SEED,
-        "source_database": str(args.source_db),
+        **current_run_metadata(),
+        "random_seed": args.seed,
+        "source_database": args.source_db.name,
         "source_mode": source_mode,
         "station_and_pile_source": "UrbanEV tables imported during phase one",
         "tables": {name: len(rows) for name, rows in datasets.items()},
@@ -476,6 +506,7 @@ def main() -> None:
             "充电金额与电量乘单价不一致",
             "能耗极端异常值",
         ],
+        "demand_patterns": ["早晚高峰", "工作日差异", "降雨影响", "节假日差异", "站点热度差异", "设备不可用"],
     }
     write_json(RAW_ROOT / "manifest.json", manifest)
     print(f"模拟数据已生成: {RAW_ROOT}")

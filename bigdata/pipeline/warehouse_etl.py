@@ -20,6 +20,7 @@ from common import (
     local_uri,
     read_json,
     write_json,
+    with_run_metadata,
 )
 
 
@@ -35,6 +36,7 @@ TABLES = (
 
 def write_layer(df: DataFrame, layer: str, table: str) -> None:
     local_target = WAREHOUSE_ROOT / layer / table
+    df = with_run_metadata(df)
     df.write.mode("overwrite").parquet(local_uri(local_target))
     df.write.mode("overwrite").parquet(hdfs_path(layer, table))
 

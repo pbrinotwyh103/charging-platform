@@ -8,6 +8,7 @@ from pyspark.sql import DataFrame, Window
 from pyspark.sql import functions as F
 
 from common import QUALITY_ROOT, RAW_ROOT, create_spark, ensure_local_directories, local_uri, write_json
+from run_manifest import current_run_metadata
 
 
 def load_raw(spark, table: str) -> DataFrame:
@@ -158,6 +159,7 @@ def main() -> None:
     summary = [row.asDict(recursive=True) for row in grouped]
     samples = [row.asDict(recursive=True) for row in all_issues.limit(100).collect()]
     report = {
+        **current_run_metadata(),
         "total_rows_scanned": total_rows,
         "total_issues": issue_count,
         "issue_rate_percent": round(issue_count * 100 / max(total_rows, 1), 4),

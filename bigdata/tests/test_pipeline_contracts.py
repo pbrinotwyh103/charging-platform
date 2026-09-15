@@ -1,10 +1,14 @@
 import json
 import tempfile
 import unittest
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from bigdata.pipeline.quality_lineage import summarize_lineage
 from bigdata.pipeline.run_manifest import RunManifest
+from bigdata.pipeline.run_manifest import current_run_metadata
 
 
 class PipelineContractTest(unittest.TestCase):
@@ -52,6 +56,27 @@ class PipelineContractTest(unittest.TestCase):
             {"ruleId": "PHONE", "issueCount": 1, "entityCount": 1,
              "affectedOutputs": ["dwd_users"]},
         ])
+
+    def test_current_run_metadata_requires_no_external_runtime(self):
+        metadata = current_run_metadata(
+            {"CHARGING_BATCH_ID": "batch-7", "CHARGING_DATA_VERSION": "data-3"},
+            clock=lambda: "2026-09-15T12:00:00Z")
+        self.assertEqual(metadata, {"batch_id": "batch-7", "data_version": "data-3",
+                                    "generated_at": "2026-09-15T12:00:00Z"})
+
+    def test_mock_generator_honors_small_configured_sizes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            environment = dict(os.environ, CHARGING_BIGDATA_DATA=directory)
+            result = subprocess.run([
+                sys.executable, "bigdata/pipeline/generate_mock_data.py",
+                "--source-db", f"{directory}/missing.db", "--users", "40",
+                "--stations", "10", "--piles", "20", "--orders", "50",
+                "--days", "10", "--seed", "9", "--batch-id", "small"],
+                cwd=Path(__file__).resolve().parents[2], env=environment,
+                capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            manifest = json.loads((Path(directory) / "ods_raw" / "manifest.json").read_text("utf-8"))
+            self.assertEqual(manifest["batch_id"], "small")
 
 
 if __name__ == "__main__":

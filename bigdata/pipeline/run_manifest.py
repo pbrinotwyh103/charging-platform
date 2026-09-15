@@ -8,10 +8,18 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable
+import argparse
 
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def current_run_metadata(environment=None, clock: Callable[[], str] = _utc_now) -> dict:
+    environment = os.environ if environment is None else environment
+    batch_id = environment.get("CHARGING_BATCH_ID", "manual").strip() or "manual"
+    data_version = environment.get("CHARGING_DATA_VERSION", batch_id).strip() or batch_id
+    return {"batch_id": batch_id, "data_version": data_version, "generated_at": clock()}
 
 
 def _sha256(path: Path) -> str:
@@ -88,3 +96,30 @@ class RunManifest:
         temporary = self.run_dir / ".manifest.json.tmp"
         temporary.write_text(json.dumps(self.manifest, ensure_ascii=False, indent=2), "utf-8")
         os.replace(temporary, target)
+
+
+def _update_existing(root: Path, batch_id: str, status: str,
+                     stage: str = "", message: str = "") -> dict:
+    run = RunManifest(root, batch_id)
+    path = run.run_dir / "manifest.json"
+    run.manifest = json.loads(path.read_text("utf-8"))
+    return run.complete() if status == "complete" else run.fail(stage, message)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=("start", "complete", "fail"))
+    parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument("--batch-id", required=True)
+    parser.add_argument("--input", action="append", default=[])
+    parser.add_argument("--stage", default="pipeline")
+    parser.add_argument("--message", default="pipeline failed")
+    args = parser.parse_args()
+    if args.command == "start":
+        RunManifest(args.root, args.batch_id).start(args.input)
+    else:
+        _update_existing(args.root, args.batch_id, args.command, args.stage, args.message)
+
+
+if __name__ == "__main__":
+    main()

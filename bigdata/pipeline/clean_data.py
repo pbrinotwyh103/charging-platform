@@ -7,7 +7,7 @@ from functools import reduce
 from pyspark.sql import DataFrame, Window
 from pyspark.sql import functions as F
 
-from common import CLEAN_ROOT, RAW_ROOT, create_spark, ensure_local_directories, local_uri, write_json
+from common import CLEAN_ROOT, RAW_ROOT, create_spark, ensure_local_directories, local_uri, write_json, with_run_metadata
 
 
 def load_raw(spark, table: str) -> DataFrame:
@@ -35,6 +35,7 @@ def quarantine(df: DataFrame, table: str, reason: str, condition) -> DataFrame:
 
 def write_clean(df: DataFrame, table: str) -> None:
     target = CLEAN_ROOT / table
+    df = with_run_metadata(df)
     df.write.mode("overwrite").parquet(local_uri(target / "parquet"))
     df.coalesce(1).write.mode("overwrite").option("header", True).csv(local_uri(target / "csv"))
 

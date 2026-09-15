@@ -83,3 +83,17 @@ def read_json(path: Path, default: Any) -> Any:
     if not path.exists():
         return default
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def with_run_metadata(dataframe: Any) -> Any:
+    """Append traceability fields without importing PySpark at module import time."""
+    from pyspark.sql import functions as F
+    try:
+        from .run_manifest import current_run_metadata
+    except ImportError:
+        from run_manifest import current_run_metadata
+
+    metadata = current_run_metadata()
+    return (dataframe.withColumn("batch_id", F.lit(metadata["batch_id"]))
+            .withColumn("data_version", F.lit(metadata["data_version"]))
+            .withColumn("generated_at", F.to_timestamp(F.lit(metadata["generated_at"]))))
