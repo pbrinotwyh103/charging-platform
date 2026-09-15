@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
 </head>
 <body>
+  {% raw %}
   <div id="app" v-cloak>
     <header class="topbar">
       <div>
@@ -22,6 +23,18 @@
     </header>
 
     <main>
+      <nav class="view-tabs" aria-label="专题视图">
+        <button data-view="operations" :class="{active: view === 'operations'}" @click="view = 'operations'">运营驾驶舱</button>
+        <button data-view="regulator" :class="{active: view === 'regulator'}" @click="view = 'regulator'">监管专题</button>
+        <button data-view="tenant" :class="{active: view === 'tenant'}" @click="view = 'tenant'">租户专题</button>
+        <button class="refresh" :disabled="refreshInFlight" @click="refresh">{{ refreshInFlight ? '刷新中…' : '立即刷新' }}</button>
+      </nav>
+      <div v-if="state === 'loading'" class="state-banner loading" role="status">正在加载分析数据…</div>
+      <div v-else-if="state === 'error'" class="state-banner error" role="alert">{{ errorMessage }}；已保留最近一次成功数据。<button @click="refresh">重试</button></div>
+      <div v-else-if="state === 'empty'" class="state-banner empty">当前筛选范围暂无数据。</div>
+      <div v-if="stale" class="state-banner stale">分析数据已过期，仅供参考；生成时间：{{ generatedAt || '未知' }}</div>
+
+      <div v-show="view === 'operations'" data-view="operations">
       <section class="kpi-grid">
         <article class="kpi"><span>累计营收</span><strong>¥{{ money(overview.total_revenue_yuan) }}</strong><small>已完成订单口径</small></article>
         <article class="kpi"><span>充电电量</span><strong>{{ number(overview.total_energy_kwh) }} kWh</strong><small>全部有效充电记录</small></article>
@@ -56,10 +69,14 @@
           <div class="panel-title"><h2>数据质量问题构成</h2><span>PySpark 自动检测</span></div>
           <div ref="qualityChart" class="chart"></div>
         </article>
+        <article class="panel">
+          <div class="panel-title"><h2>告警分布</h2><span>级别与处理状态</span></div>
+          <div ref="alarmChart" class="chart"></div>
+        </article>
         <article class="panel span-2">
           <div class="panel-title"><h2>未来负荷预测</h2><span>Spark MLlib RandomForest</span></div>
           <div class="prediction-tabs">
-            <button v-for="h in [1, 6, 24]" :key="h" :class="{active: horizon === h}" @click="horizon = h; renderPrediction()">未来 {{ h }} 小时</button>
+            <button v-for="h in [1, 6, 24, 48, 72]" :key="h" :class="{active: horizon === h}" @click="horizon = h; renderPrediction()">未来 {{ h }} 小时</button>
           </div>
           <div ref="predictionChart" class="chart prediction-chart"></div>
         </article>
@@ -71,25 +88,38 @@
           <table>
             <thead><tr><th>站点</th><th>预测时点</th><th>预测会话</th><th>预测空闲桩</th><th>总桩数</th><th>建议</th></tr></thead>
             <tbody>
-              <tr v-for="item in currentPredictions.slice(0, 10)" :key="item.station_id + item.forecast_horizon_hours">
-                <td>{{ item.station_name }}</td>
-                <td>{{ item.forecast_time.replace('T', ' ') }}</td>
-                <td>{{ number(item.predicted_sessions) }}</td>
-                <td>{{ integer(item.predicted_idle_piles) }}</td>
-                <td>{{ integer(item.pile_count) }}</td>
-                <td><span :class="['advice', item.predicted_idle_piles <= 2 ? 'hot' : 'normal']">{{ item.predicted_idle_piles <= 2 ? '提前调度与预警' : '正常值守' }}</span></td>
+              <tr v-for="item in currentPredictions.slice(0, 10)" :key="item.stationId + item.horizonHours">
+                <td>{{ item.stationName }}</td>
+                <td>{{ (item.forecastTime || '').replace('T', ' ') }}</td>
+                <td>{{ number(item.predictedSessions) }}</td>
+                <td>{{ integer(item.predictedAvailablePiles) }}</td>
+                <td>{{ integer(item.totalPiles) }}</td>
+                <td><span :class="['advice', item.predictedAvailablePiles <= 2 ? 'hot' : 'normal']">{{ item.predictedAvailablePiles <= 2 ? '提前调度与预警' : '正常值守' }}</span></td>
               </tr>
             </tbody>
           </table>
         </div>
       </section>
+      </div>
+
+      <section v-show="view === 'regulator'" data-view="regulator" class="topic-grid">
+        <article class="panel"><div class="panel-title"><h2>监管摘要</h2><span>聚合脱敏口径</span></div><pre>{{ pretty(regulator) }}</pre></article>
+        <article class="panel"><div class="panel-title"><h2>模型对比</h2><span>统一测试集</span></div><pre>{{ pretty(modelComparison) }}</pre></article>
+        <article class="panel"><div class="panel-title"><h2>模型漂移</h2><span>特征与误差监控</span></div><pre>{{ pretty(drift) }}</pre></article>
+      </section>
+
+      <section v-show="view === 'tenant'" data-view="tenant" class="topic-grid">
+        <article class="panel"><div class="panel-title"><h2>调度建议</h2><span>只读决策支持</span></div><pre>{{ pretty(scheduling) }}</pre></article>
+        <article class="panel"><div class="panel-title"><h2>维护建议</h2><span>不自动控制设备</span></div><pre>{{ pretty(maintenance) }}</pre></article>
+        <article class="panel"><div class="panel-title"><h2>扩容分析</h2><span>持续负荷证据</span></div><pre>{{ pretty(expansion) }}</pre></article>
+      </section>
     </main>
 
     <footer>数据链路：第一阶段 SQLite / UrbanEV → ODS → DWD → DWS → ADS → Flask API → Vue + ECharts</footer>
   </div>
+  {% endraw %}
   <script src="{{ url_for('static', filename='vendor/vue.global.prod.js') }}"></script>
   <script src="{{ url_for('static', filename='vendor/echarts.min.js') }}"></script>
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>
-

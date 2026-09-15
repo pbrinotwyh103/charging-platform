@@ -6,29 +6,34 @@ const palette = {
 const api = async (path) => {
   const response = await fetch(path);
   if (!response.ok) throw new Error(`${path}: ${response.status}`);
-  return response.json();
+  const body = await response.json();
+  return {data: Object.prototype.hasOwnProperty.call(body, 'data') ? body.data : body, meta: body.meta || {}};
 };
 
 Vue.createApp({
   data() {
     return {
       overview: {}, revenue: [], stationRank: [], hourly: [], pileStatus: [],
-      districts: [], quality: {}, predictions: [], model: {}, horizon: 1,
-      currentTime: '', charts: []
+      districts: [], alarms: [], quality: {}, predictions: [], model: {}, horizon: 1,
+      regulator: {}, modelComparison: {}, drift: {}, scheduling: [], maintenance: [], expansion: [],
+      currentTime: '', charts: [], view: 'operations', state: 'loading', stale: false,
+      generatedAt: '', errorMessage: '', refreshInFlight: false, refreshTimer: null, clockTimer: null
     };
   },
   computed: {
     currentPredictions() {
-      return this.predictions.filter(item => Number(item.forecast_horizon_hours) === this.horizon);
+      return this.predictions.filter(item => Number(item.horizonHours ?? item.forecast_horizon_hours) === this.horizon);
     }
   },
   methods: {
     number(value) { return Number(value || 0).toLocaleString('zh-CN', {maximumFractionDigits: 2}); },
     integer(value) { return Math.round(Number(value || 0)).toLocaleString('zh-CN'); },
     money(value) { return Number(value || 0).toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2}); },
+    pretty(value) { return JSON.stringify(value, null, 2); },
     chart(refName) {
-      const chart = echarts.init(this.$refs[refName]);
-      this.charts.push(chart);
+      const element = this.$refs[refName];
+      const chart = echarts.getInstanceByDom(element) || echarts.init(element);
+      if (!this.charts.includes(chart)) this.charts.push(chart);
       return chart;
     },
     baseOption() {
@@ -78,6 +83,11 @@ Vue.createApp({
         yAxis: {...this.baseOption().yAxis, type: 'category', data: Object.keys(categories)},
         series: [{type: 'bar', data: Object.values(categories), itemStyle: {color: palette.red, borderRadius: 6}, barWidth: 16}]
       });
+      this.chart('alarmChart').setOption({
+        tooltip: {trigger: 'item'}, legend: {bottom: 0, textStyle: {color: palette.text}},
+        series: [{type: 'pie', radius: ['42%', '70%'], label: {color: palette.text},
+          data: this.alarms.map(x => ({name: x.level || x.status || x.type, value: x.count}))}]
+      }, true);
       this.predictionChart = this.chart('predictionChart');
       this.renderPrediction();
     },
@@ -87,28 +97,55 @@ Vue.createApp({
       this.predictionChart.setOption({
         ...this.baseOption(), grid: {left: 118, right: 38, top: 28, bottom: 30},
         xAxis: {...this.baseOption().xAxis, type: 'value', name: '预测会话数'},
-        yAxis: {...this.baseOption().yAxis, type: 'category', inverse: true, data: rows.map(x => x.station_name)},
-        series: [{type: 'bar', data: rows.map(x => x.predicted_sessions), barWidth: 14,
+        yAxis: {...this.baseOption().yAxis, type: 'category', inverse: true, data: rows.map(x => x.stationName ?? x.station_name)},
+        series: [{type: 'bar', data: rows.map(x => x.predictedSessions ?? x.predicted_sessions), barWidth: 14,
           itemStyle: {color: new echarts.graphic.LinearGradient(0,0,1,0,[{offset:0,color:palette.purple},{offset:1,color:palette.red}]), borderRadius: 7}}]
       }, true);
+    },
+    async refresh() {
+      if (this.refreshInFlight) return;
+      this.refreshInFlight = true;
+      if (!this.overview || !Object.keys(this.overview).length) this.state = 'loading';
+      try {
+        const paths = [
+          '/api/overview', '/api/revenue-trend', '/api/station-rank', '/api/hourly-load',
+          '/api/pile-status', '/api/district-metrics', '/api/alarm-distribution', '/api/quality',
+          '/api/predictions', '/api/model-metrics', '/api/regulator', '/api/model-comparison',
+          '/api/drift', '/api/scheduling', '/api/maintenance', '/api/expansion'
+        ];
+        const results = await Promise.all(paths.map(api));
+        [this.overview, this.revenue, this.stationRank, this.hourly, this.pileStatus,
+          this.districts, this.alarms, this.quality, this.predictions, this.model,
+          this.regulator, this.modelComparison, this.drift, this.scheduling,
+          this.maintenance, this.expansion] = results.map(result => result.data);
+        const metas = results.map(result => result.meta);
+        this.stale = metas.some(meta => meta.stale);
+        this.generatedAt = (metas.find(meta => meta.generatedAt) || {}).generatedAt || '';
+        const hasData = results.some(result => Array.isArray(result.data) ? result.data.length : Object.keys(result.data || {}).length);
+        this.state = hasData ? 'ready' : 'empty';
+        this.errorMessage = '';
+        await this.$nextTick();
+        this.renderCharts();
+      } catch (error) {
+        this.errorMessage = '分析服务暂不可用';
+        this.state = 'error';
+        console.error('dashboard refresh failed', error.message);
+      } finally {
+        this.refreshInFlight = false;
+      }
     }
   },
   async mounted() {
     const updateTime = () => this.currentTime = new Date().toLocaleString('zh-CN', {hour12: false});
-    updateTime(); setInterval(updateTime, 1000);
-    try {
-      [this.overview, this.revenue, this.stationRank, this.hourly, this.pileStatus,
-       this.districts, this.quality, this.predictions, this.model] = await Promise.all([
-        api('/api/overview'), api('/api/revenue-trend'), api('/api/station-rank'), api('/api/hourly-load'),
-        api('/api/pile-status'), api('/api/district-metrics'), api('/api/quality'),
-        api('/api/predictions'), api('/api/model-metrics')
-      ]);
-      this.$nextTick(() => this.renderCharts());
-      window.addEventListener('resize', () => this.charts.forEach(chart => chart.resize()));
-    } catch (error) {
-      console.error(error);
-      alert('大屏数据加载失败，请先执行 run_pipeline.sh');
-    }
+    updateTime(); this.clockTimer = setInterval(updateTime, 1000);
+    this.resizeHandler = () => this.charts.forEach(chart => chart.resize());
+    window.addEventListener('resize', this.resizeHandler);
+    await this.refresh();
+    this.refreshTimer = setInterval(() => this.refresh(), 60000);
+  },
+  beforeUnmount() {
+    clearInterval(this.clockTimer); clearInterval(this.refreshTimer);
+    window.removeEventListener('resize', this.resizeHandler);
+    this.charts.forEach(chart => chart.dispose());
   }
 }).mount('#app');
-
