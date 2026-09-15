@@ -29,6 +29,17 @@
 #include <QTemporaryDir>
 #include <QtTest>
 
+void AdminUiTest::overviewShowsLoadWarnings() {
+  OverviewPage page;
+  page.setLoadWarnings(QJsonObject{{"horizonHours", 6}, {"items", QJsonArray{
+      QJsonObject{{"stationId", 9}, {"stationName", QStringLiteral("中心站")},
+                  {"warningLevel", QStringLiteral("severe")}, {"predictedAvailablePiles", 0}}}}});
+  auto *summary = page.findChild<QLabel *>(QStringLiteral("loadWarningSummary"));
+  QVERIFY(summary);
+  QVERIFY(summary->text().contains(QStringLiteral("中心站")));
+  QVERIFY(summary->text().contains(QStringLiteral("严重")));
+}
+
 void AdminUiTest::demoWorkspaceContainsAllModules() {
   AdminMainWindow window;
   window.showDemoWorkspace();

@@ -618,6 +618,10 @@ void AdminMainWindow::handleCommandSucceeded(const QString &action,
     m_overviewPage->setRevenue(payload);
   else if (action == QStringLiteral("report.pileStates"))
     m_overviewPage->setPileStatus(payload);
+  else if (action == QStringLiteral("analytics.warnings"))
+    m_overviewPage->setLoadWarnings(payload);
+  else if (action == QStringLiteral("analytics.status"))
+    m_overviewPage->setAnalyticsStatus(payload);
   else if (action == QStringLiteral("admin.monitor"))
     m_monitorPage->setChargingData(payload);
   else if (action == QStringLiteral("admin.alarms"))

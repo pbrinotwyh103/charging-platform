@@ -10,6 +10,7 @@
 #include <QLabel>
 #include <QScrollArea>
 #include <QStyle>
+#include <QStringList>
 #include <QVBoxLayout>
 
 namespace {
@@ -108,6 +109,21 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
   m_pileStatusChart = new PileStatusChartWidget(content);
   layout->addWidget(m_pileStatusChart);
 
+  auto *warningCard = new QFrame(content);
+  warningCard->setObjectName(QStringLiteral("loadWarningCard"));
+  auto *warningLayout = new QVBoxLayout(warningCard);
+  auto *warningTitle = new QLabel(QStringLiteral("智能负荷预警"), warningCard);
+  warningTitle->setObjectName(QStringLiteral("sectionTitle"));
+  m_loadWarningSummary = new QLabel(QStringLiteral("等待预测数据"), warningCard);
+  m_loadWarningSummary->setObjectName(QStringLiteral("loadWarningSummary"));
+  m_loadWarningSummary->setWordWrap(true);
+  m_analyticsStatus = new QLabel(QStringLiteral("分析服务状态未知"), warningCard);
+  m_analyticsStatus->setObjectName(QStringLiteral("analyticsStatus"));
+  warningLayout->addWidget(warningTitle);
+  warningLayout->addWidget(m_loadWarningSummary);
+  warningLayout->addWidget(m_analyticsStatus);
+  layout->addWidget(warningCard);
+
   m_stateLabel = new QLabel(QStringLiteral("等待运营数据"), content);
   m_stateLabel->setObjectName(QStringLiteral("overviewStateLabel"));
   m_stateLabel->setAlignment(Qt::AlignCenter);
@@ -125,6 +141,32 @@ void OverviewPage::requestRefresh() {
   emit commandRequested(QStringLiteral("report.revenue"),
                         {{QStringLiteral("days"), revenueDays()}});
   emit commandRequested(QStringLiteral("report.pileStates"), {});
+  emit commandRequested(QStringLiteral("analytics.warnings"), {{QStringLiteral("horizonHours"), 6}});
+  emit commandRequested(QStringLiteral("analytics.status"), {});
+}
+
+void OverviewPage::setLoadWarnings(const QJsonObject &payload) {
+  const QJsonArray items = payload.value(QStringLiteral("items")).toArray();
+  QStringList lines;
+  for (const auto &value : items) {
+    const QJsonObject item = value.toObject();
+    const QString level = item.value(QStringLiteral("warningLevel")).toString();
+    const QString localized = level == QStringLiteral("severe") ? QStringLiteral("严重")
+        : level == QStringLiteral("congested") ? QStringLiteral("拥堵")
+        : level == QStringLiteral("attention") ? QStringLiteral("关注") : QStringLiteral("正常");
+    lines.append(QStringLiteral("%1：%2，预计空闲 %3 桩")
+        .arg(item.value(QStringLiteral("stationName")).toString(
+                 QStringLiteral("站点 %1").arg(item.value(QStringLiteral("stationId")).toInteger())),
+             localized).arg(item.value(QStringLiteral("predictedAvailablePiles")).toInt()));
+  }
+  m_loadWarningSummary->setText(lines.isEmpty() ? QStringLiteral("未来时段暂无负荷预警") : lines.join('\n'));
+  if (payload.value(QStringLiteral("stale")).toBool())
+    m_loadWarningSummary->setText(m_loadWarningSummary->text() + QStringLiteral("\n当前展示缓存预测"));
+}
+
+void OverviewPage::setAnalyticsStatus(const QJsonObject &payload) {
+  const bool available = payload.value(QStringLiteral("available")).toBool();
+  m_analyticsStatus->setText(available ? QStringLiteral("分析服务在线") : QStringLiteral("分析服务暂不可用，不影响基础运营功能"));
 }
 
 void OverviewPage::setSummary(const QJsonObject &payload) {
