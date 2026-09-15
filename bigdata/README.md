@@ -93,3 +93,13 @@ curl http://127.0.0.1:5000/api/model-metrics
 
 PyCharm 仅作为可选编辑器，不影响流水线和大屏运行。代码可直接通过 SSH、VS Code Remote 或命令行维护。
 
+## Qt 客户端接入
+
+先启动 Flask 大屏服务，再通过环境变量启动 Qt 服务端：
+
+```bash
+export CHARGING_ANALYTICS_URL=http://127.0.0.1:5000
+./build/bin/charging_server
+```
+
+服务端请求 Flask 的超时为 2 秒。请求成功后按查询条件缓存最后一次结果；Flask 暂时不可用时返回缓存并标记 `stale: true`。没有缓存时仅分析功能返回不可用，找桩、预约、充电、计费和设备控制不受影响。
