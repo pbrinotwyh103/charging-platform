@@ -29,6 +29,10 @@ def _sanitize(text: str) -> str:
 
 def run_check(name: str, command: list[str], artifact_dir: Path, *, cwd=ROOT):
     artifact_dir.mkdir(parents=True, exist_ok=True)
+    if name == "spark_pipeline" and not shutil.which("spark-submit"):
+        return {"name": name, "status": "not_run", "reason": "tool unavailable: spark-submit"}
+    if name == "browser" and not (ROOT / "node_modules" / "@playwright" / "test").exists():
+        return {"name": name, "status": "not_run", "reason": "dependency unavailable: @playwright/test"}
     executable = command[0]
     if not (Path(executable).is_file() or shutil.which(executable)):
         return {"name": name, "status": "not_run", "reason": f"tool unavailable: {Path(executable).name}"}
