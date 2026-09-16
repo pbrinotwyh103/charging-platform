@@ -17,4 +17,7 @@ private slots:
   void emptyListsShowStableEmptyState();
   void sessionExpiryReturnsToLoginWithReason();
   void dashboardVisualShellIsPresent();
+  void overviewShowsLoadWarnings();
+  void warningsFilterAndReplaceStableKeys();
+  void adviceNeverTriggersControlAutomatically();
 };

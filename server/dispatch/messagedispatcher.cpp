@@ -35,8 +35,36 @@ MessageType responseFor(MessageType request)
     case MessageType::ChargingStopRequest: return MessageType::ChargingStopResponse;
     case MessageType::ActiveOrderRequest: return MessageType::ActiveOrderResponse;
     case MessageType::CustomerServiceRequest: return MessageType::CustomerServiceResponse;
+    case MessageType::LoadPredictionRequest: return MessageType::LoadPredictionResponse;
+    case MessageType::StationRecommendationRequest: return MessageType::StationRecommendationResponse;
     case MessageType::AdminCommandRequest: return MessageType::AdminCommandResponse;
+    case MessageType::LoadWarningRequest: return MessageType::LoadWarningResponse;
+    case MessageType::AnalyticsStatusRequest: return MessageType::AnalyticsStatusResponse;
+    case MessageType::ModelComparisonRequest: return MessageType::ModelComparisonResponse;
+    case MessageType::ModelDriftRequest: return MessageType::ModelDriftResponse;
+    case MessageType::SchedulingAdviceRequest: return MessageType::SchedulingAdviceResponse;
+    case MessageType::MaintenanceAdviceRequest: return MessageType::MaintenanceAdviceResponse;
+    case MessageType::ExpansionAdviceRequest: return MessageType::ExpansionAdviceResponse;
+    case MessageType::RegulatorSummaryRequest: return MessageType::RegulatorSummaryResponse;
     default: return request;
+    }
+}
+
+Role requiredRoleFor(MessageType type)
+{
+    switch (type) {
+    case MessageType::AdminCommandRequest:
+    case MessageType::LoadWarningRequest:
+    case MessageType::AnalyticsStatusRequest:
+    case MessageType::ModelComparisonRequest:
+    case MessageType::ModelDriftRequest:
+    case MessageType::SchedulingAdviceRequest:
+    case MessageType::MaintenanceAdviceRequest:
+    case MessageType::ExpansionAdviceRequest:
+    case MessageType::RegulatorSummaryRequest:
+        return Role::Administrator;
+    default:
+        return Role::User;
     }
 }
 
@@ -166,7 +194,7 @@ void MessageDispatcher::dispatch(ClientSession *session, const Charging::Message
         sendError(session, response, requestId, ErrorCode::Unauthorized);
         return;
     }
-    const auto requiredRole = type == MessageType::AdminCommandRequest ? Role::Administrator : Role::User;
+    const auto requiredRole = requiredRoleFor(type);
     if (session->role() != requiredRole) {
         sendError(session, response, requestId, ErrorCode::Forbidden);
         return;
@@ -193,6 +221,16 @@ void MessageDispatcher::dispatch(ClientSession *session, const Charging::Message
         case MessageType::ChargingStopRequest: return services->charging()->stop(principalId, Role::User, payload);
         case MessageType::ActiveOrderRequest: return services->orders()->active(principalId);
         case MessageType::CustomerServiceRequest: return services->customerService()->ask(principalId, payload);
+        case MessageType::LoadPredictionRequest: return services->analytics()->predictions(payload);
+        case MessageType::StationRecommendationRequest: return services->analytics()->recommendations(payload);
+        case MessageType::LoadWarningRequest: return services->analytics()->warnings(payload);
+        case MessageType::AnalyticsStatusRequest: return services->analytics()->status();
+        case MessageType::ModelComparisonRequest: return services->analytics()->report("model-comparison", payload);
+        case MessageType::ModelDriftRequest: return services->analytics()->report("drift", payload);
+        case MessageType::SchedulingAdviceRequest: return services->analytics()->report("scheduling", payload);
+        case MessageType::MaintenanceAdviceRequest: return services->analytics()->report("maintenance", payload);
+        case MessageType::ExpansionAdviceRequest: return services->analytics()->report("expansion", payload);
+        case MessageType::RegulatorSummaryRequest: return services->analytics()->report("regulator", payload);
         case MessageType::AdminCommandRequest:
             return services->admin()->execute(principalId, requestId, payload, services->charging());
         default: {

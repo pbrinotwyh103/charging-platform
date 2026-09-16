@@ -91,6 +91,25 @@ void AdminController::logout() {
 void AdminController::requestAdminCommand(const QString &action,
                                           const QJsonObject &parameters) {
   const QString normalizedAction = action.trimmed();
+  if (normalizedAction == QStringLiteral("analytics.warnings")) {
+    requestLoadWarnings(parameters.value(QStringLiteral("horizonHours")).toInt(6));
+    return;
+  }
+  if (normalizedAction == QStringLiteral("analytics.status")) {
+    requestAnalyticsStatus();
+    return;
+  }
+  const QHash<QString, Charging::MessageType> analyticsTypes{
+      {QStringLiteral("analytics.modelComparison"), Charging::MessageType::ModelComparisonRequest},
+      {QStringLiteral("analytics.drift"), Charging::MessageType::ModelDriftRequest},
+      {QStringLiteral("analytics.scheduling"), Charging::MessageType::SchedulingAdviceRequest},
+      {QStringLiteral("analytics.maintenance"), Charging::MessageType::MaintenanceAdviceRequest},
+      {QStringLiteral("analytics.expansion"), Charging::MessageType::ExpansionAdviceRequest},
+      {QStringLiteral("analytics.regulator"), Charging::MessageType::RegulatorSummaryRequest}};
+  if (analyticsTypes.contains(normalizedAction)) {
+    requestAnalytics(normalizedAction, analyticsTypes.value(normalizedAction), parameters);
+    return;
+  }
   if (normalizedAction.isEmpty()) {
     emit commandFailed(action, QStringLiteral("管理员请求动作不能为空"),
                        static_cast<int>(Charging::ErrorCode::ValidationFailed));
@@ -198,6 +217,40 @@ void AdminController::requestAdminCommand(const QString &action,
   }
 }
 
+void AdminController::requestLoadWarnings(int horizonHours) {
+  requestAnalytics(QStringLiteral("analytics.warnings"),
+                   Charging::MessageType::LoadWarningRequest,
+                   {{QStringLiteral("horizonHours"), horizonHours}});
+}
+
+void AdminController::requestAnalyticsStatus() {
+  requestAnalytics(QStringLiteral("analytics.status"),
+                   Charging::MessageType::AnalyticsStatusRequest);
+}
+
+void AdminController::requestAnalytics(const QString &action,
+                                       Charging::MessageType type,
+                                       const QJsonObject &payload) {
+  if (!m_loggedIn || !m_connection.isConnected()) {
+    emit commandFailed(action, QStringLiteral("管理员登录或服务器连接不可用"),
+                       static_cast<int>(Charging::ErrorCode::Unauthorized));
+    return;
+  }
+  const quint32 requestId = m_connection.nextRequestId();
+  const quint32 previous = m_latestRequestByAction.value(action, 0);
+  if (previous) m_pendingRequests.remove(previous);
+  m_pendingRequests.insert(requestId, {action, QDateTime::currentMSecsSinceEpoch() + m_requestTimeoutMilliseconds});
+  m_latestRequestByAction.insert(action, requestId);
+  emit commandBusyChanged(action, true);
+  if (!m_connection.send(type, requestId, payload)) {
+    m_pendingRequests.remove(requestId);
+    m_latestRequestByAction.remove(action);
+    emit commandBusyChanged(action, false);
+    emit commandFailed(action, QStringLiteral("请求发送失败"),
+                       static_cast<int>(Charging::ErrorCode::NetworkUnavailable));
+  }
+}
+
 void AdminController::sendPendingLogin() {
   if (m_pendingUsername.isEmpty() || m_pendingPassword.isEmpty() ||
       !m_connection.isConnected())
@@ -241,8 +294,17 @@ void AdminController::handleMessage(const Charging::Message &message) {
       message.header.messageType ==
           Charging::MessageType::AdminCommandRequest &&
       message.header.statusCode != Charging::ErrorCode::Success;
-  if (message.header.messageType ==
-          Charging::MessageType::AdminCommandResponse ||
+  const bool analyticsResponse =
+      message.header.messageType == Charging::MessageType::LoadWarningResponse ||
+      message.header.messageType == Charging::MessageType::AnalyticsStatusResponse ||
+      message.header.messageType == Charging::MessageType::ModelComparisonResponse ||
+      message.header.messageType == Charging::MessageType::ModelDriftResponse ||
+      message.header.messageType == Charging::MessageType::SchedulingAdviceResponse ||
+      message.header.messageType == Charging::MessageType::MaintenanceAdviceResponse ||
+      message.header.messageType == Charging::MessageType::ExpansionAdviceResponse ||
+      message.header.messageType == Charging::MessageType::RegulatorSummaryResponse;
+  if (message.header.messageType == Charging::MessageType::AdminCommandResponse ||
+      analyticsResponse ||
       legacyCommandError) {
     const auto pendingIt = m_pendingRequests.find(message.header.requestId);
     if (pendingIt == m_pendingRequests.end()) {
@@ -256,6 +318,10 @@ void AdminController::handleMessage(const Charging::Message &message) {
     m_latestRequestByAction.remove(action);
     emit commandBusyChanged(action, false);
     if (message.header.statusCode == Charging::ErrorCode::Success) {
+      if (message.header.messageType == Charging::MessageType::LoadWarningResponse)
+        emit loadWarningsReceived(message.payload);
+      else if (message.header.messageType == Charging::MessageType::AnalyticsStatusResponse)
+        emit analyticsStatusReceived(message.payload);
       emit commandSucceeded(action, message.payload);
     } else {
       const QString error = Charging::errorMessage(

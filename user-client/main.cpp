@@ -52,6 +52,8 @@ int main(int argc, char *argv[])
                      &window, &UserMainWindow::showFeatureMessage);
     if (!parser.isSet(demoOption)) {
         QObject::connect(window.findChild<HomePage *>(), &HomePage::stationsRequested, &controller, &ClientApi::requestStations);
+        QObject::connect(window.findChild<HomePage *>(), &HomePage::recommendationsRequested,
+                         &controller, &ClientApi::requestStationRecommendations);
         QObject::connect(window.findChild<HomePage *>(), &HomePage::pileCodeRequested,
                          &controller, &ClientApi::requestPileByCode);
         QObject::connect(window.findChild<CustomerServicePage *>(),
@@ -65,6 +67,7 @@ int main(int argc, char *argv[])
                          &controller, &ClientApi::requestActiveOrder);
     }
     QObject::connect(&controller, &ClientApi::stationsReceived, window.findChild<HomePage *>(), &HomePage::setStations);
+    QObject::connect(&controller, &ClientApi::recommendationsReceived, window.findChild<HomePage *>(), &HomePage::setRecommendations);
     QObject::connect(&controller, &ClientApi::pilesReceived, window.findChild<StationDetailPage *>(), &StationDetailPage::setPiles);
     QObject::connect(&controller, &ClientApi::pileCodeResolved,
                      &window, &UserMainWindow::showDirectPile);

@@ -22,4 +22,6 @@ private slots:
     void chargingEntryChecksActiveOrder();
     void customerServiceSubmitsQuestion();
     void compactAppVisualShellIsPresent();
+    void homePageShowsForecastAndStaleState();
+    void forecastControlsChangeRequestAndExplainPrediction();
 };

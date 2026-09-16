@@ -40,9 +40,28 @@ SOURCES += \
 RESOURCES += ../server/resources/database.qrc
 
 # ServiceRegistry and MessageDispatcher now link the complete business core.
-SOURCES -= ../server/services/authservice.cpp \
-    ../server/services/serviceregistry.cpp \
-    ../server/repositories/adminrepository.cpp \
-    ../server/repositories/userrepository.cpp
-SOURCES += $$files($$PWD/../server/services/*.cpp) \
-    $$files($$PWD/../server/repositories/*.cpp)
+# Keep this list explicit: qmake can de-duplicate wildcard entries that were
+# removed from SOURCES earlier, leaving an incomplete link on a clean build.
+SOURCES += \
+    ../server/repositories/alarmrepository.cpp \
+    ../server/repositories/controlrecordrepository.cpp \
+    ../server/repositories/favoriterepository.cpp \
+    ../server/repositories/orderrepository.cpp \
+    ../server/repositories/pilerepository.cpp \
+    ../server/repositories/pushrecordrepository.cpp \
+    ../server/repositories/reservationrepository.cpp \
+    ../server/repositories/stationrepository.cpp \
+    ../server/repositories/walletrepository.cpp \
+    ../server/services/adminservice.cpp \
+    ../server/services/alarmservice.cpp \
+    ../server/services/analyticsservice.cpp \
+    ../server/services/billingservice.cpp \
+    ../server/services/chargingservice.cpp \
+    ../server/services/customerserviceservice.cpp \
+    ../server/services/decisionservice.cpp \
+    ../server/services/orderservice.cpp \
+    ../server/services/pileservice.cpp \
+    ../server/services/reservationservice.cpp \
+    ../server/services/stationservice.cpp \
+    ../server/services/statisticsservice.cpp \
+    ../server/services/userservice.cpp

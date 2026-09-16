@@ -4,6 +4,7 @@
 #include <QMainWindow>
 
 class AlarmsPage;
+class AdvicePage;
 class AssetsPage;
 class MonitorPage;
 class OverviewPage;
@@ -71,4 +72,5 @@ private:
   AlarmsPage *m_alarmsPage = nullptr;
   AssetsPage *m_assetsPage = nullptr;
   RecordsPage *m_recordsPage = nullptr;
+  AdvicePage *m_advicePage = nullptr;
 };

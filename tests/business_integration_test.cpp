@@ -29,6 +29,18 @@ const QList<RequestPair> userPairs{
     {MessageType::ChargingStopRequest, MessageType::ChargingStopResponse},
     {MessageType::ActiveOrderRequest, MessageType::ActiveOrderResponse},
     {MessageType::CustomerServiceRequest, MessageType::CustomerServiceResponse}
+    ,{MessageType::LoadPredictionRequest, MessageType::LoadPredictionResponse}
+    ,{MessageType::StationRecommendationRequest, MessageType::StationRecommendationResponse}
+};
+const QList<RequestPair> analyticsAdminPairs{
+    {MessageType::LoadWarningRequest, MessageType::LoadWarningResponse},
+    {MessageType::AnalyticsStatusRequest, MessageType::AnalyticsStatusResponse},
+    {MessageType::ModelComparisonRequest, MessageType::ModelComparisonResponse},
+    {MessageType::ModelDriftRequest, MessageType::ModelDriftResponse},
+    {MessageType::SchedulingAdviceRequest, MessageType::SchedulingAdviceResponse},
+    {MessageType::MaintenanceAdviceRequest, MessageType::MaintenanceAdviceResponse},
+    {MessageType::ExpansionAdviceRequest, MessageType::ExpansionAdviceResponse},
+    {MessageType::RegulatorSummaryRequest, MessageType::RegulatorSummaryResponse}
 };
 
 // A byte sink replaces only the operating-system TCP transport. The real
@@ -228,6 +240,7 @@ void BusinessIntegrationTest::unauthorizedResponses_data()
     QTest::addColumn<int>("responseType");
     auto pairs = userPairs;
     pairs.append({MessageType::AdminCommandRequest, MessageType::AdminCommandResponse});
+    pairs.append(analyticsAdminPairs);
     pairs.append({MessageType::LogoutRequest, MessageType::LogoutResponse});
     for (const auto &pair : pairs)
         QTest::newRow(qPrintable(QString::number(int(pair.request)))) << int(pair.request) << int(pair.response);
@@ -256,6 +269,8 @@ void BusinessIntegrationTest::roleGuards()
         request(admin, pair.request, pair.response, {}, ErrorCode::Forbidden);
     request(user, MessageType::AdminCommandRequest, MessageType::AdminCommandResponse,
             {{"action", "dashboard.summary"}}, ErrorCode::Forbidden);
+    for (const auto &pair : analyticsAdminPairs)
+        request(user, pair.request, pair.response, {}, ErrorCode::Forbidden);
     request(user, MessageType::AdminLoginRequest, MessageType::AdminLoginResponse, {}, ErrorCode::Forbidden);
     request(admin, MessageType::UserLoginRequest, MessageType::UserLoginResponse, {}, ErrorCode::Forbidden);
     request(user, MessageType(65000), MessageType(65000), {}, ErrorCode::UnsupportedMessage);
@@ -285,6 +300,15 @@ void BusinessIntegrationTest::invalidFields_data()
     row("stop", MessageType::ChargingStopRequest, MessageType::ChargingStopResponse, {{"orderId", 0}});
     row("customer-service", MessageType::CustomerServiceRequest,
         MessageType::CustomerServiceResponse, {{"question", 123}});
+    row("load-prediction", MessageType::LoadPredictionRequest,
+        MessageType::LoadPredictionResponse, {{"horizonHours", 2}});
+    row("station-recommendation", MessageType::StationRecommendationRequest,
+        MessageType::StationRecommendationResponse,
+        {{"horizonHours", 1}, {"stationIds", QJsonArray{0}}});
+    row("load-warning", MessageType::LoadWarningRequest,
+        MessageType::LoadWarningResponse, {{"horizonHours", "6"}});
+    row("scheduling-advice", MessageType::SchedulingAdviceRequest,
+        MessageType::SchedulingAdviceResponse, {{"unexpected", true}});
     row("admin-fields", MessageType::AdminCommandRequest, MessageType::AdminCommandResponse, {{"action", 1}});
     row("admin-unknown", MessageType::AdminCommandRequest, MessageType::AdminCommandResponse, {{"action", "unknown.action"}}, ErrorCode::UnsupportedMessage);
 }
@@ -296,8 +320,13 @@ void BusinessIntegrationTest::invalidFields()
     QFETCH(QJsonObject, payload);
     QFETCH(int, status);
     ClientConnection client;
-    if (MessageType(requestType) == MessageType::AdminCommandRequest) loginAdmin(client);
-    else login(client);
+    if (MessageType(requestType) == MessageType::AdminCommandRequest
+        || MessageType(requestType) == MessageType::LoadWarningRequest
+        || MessageType(requestType) == MessageType::AnalyticsStatusRequest
+        || MessageType(requestType) == MessageType::SchedulingAdviceRequest)
+        loginAdmin(client);
+    else
+        login(client);
     request(client, MessageType(requestType), MessageType(responseType), payload, ErrorCode(status));
 }
 

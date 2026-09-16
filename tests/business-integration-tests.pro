@@ -8,19 +8,45 @@ DESTDIR = $$OUT_PWD/../bin
 include(../common/common.pri)
 INCLUDEPATH += ../server
 HEADERS += business_integration_test.h \
-    $$files($$PWD/../server/app/*.h) \
-    $$files($$PWD/../server/database/*.h) \
-    $$files($$PWD/../server/dispatch/*.h) \
-    $$files($$PWD/../server/jobs/*.h) \
-    $$files($$PWD/../server/network/*.h) \
-    $$files($$PWD/../server/services/*.h)
+    ../server/app/serverapplication.h \
+    ../server/database/databasemanager.h \
+    ../server/dispatch/messagedispatcher.h \
+    ../server/jobs/jobmanager.h \
+    ../server/network/clientsession.h \
+    ../server/network/tcpserver.h \
+    ../server/services/serviceregistry.h
 SOURCES += business_integration_test.cpp \
-    $$files($$PWD/../server/app/*.cpp) \
-    $$files($$PWD/../server/database/*.cpp) \
-    $$files($$PWD/../server/dispatch/*.cpp) \
-    $$files($$PWD/../server/jobs/*.cpp) \
-    $$files($$PWD/../server/network/*.cpp) \
-    $$files($$PWD/../server/repositories/*.cpp) \
-    $$files($$PWD/../server/security/*.cpp) \
-    $$files($$PWD/../server/services/*.cpp)
+    ../server/app/serverapplication.cpp \
+    ../server/database/databasemanager.cpp \
+    ../server/dispatch/messagedispatcher.cpp \
+    ../server/jobs/jobmanager.cpp \
+    ../server/network/clientsession.cpp \
+    ../server/network/tcpserver.cpp \
+    ../server/repositories/alarmrepository.cpp \
+    ../server/repositories/adminrepository.cpp \
+    ../server/repositories/controlrecordrepository.cpp \
+    ../server/repositories/favoriterepository.cpp \
+    ../server/repositories/orderrepository.cpp \
+    ../server/repositories/pilerepository.cpp \
+    ../server/repositories/pushrecordrepository.cpp \
+    ../server/repositories/reservationrepository.cpp \
+    ../server/repositories/stationrepository.cpp \
+    ../server/repositories/userrepository.cpp \
+    ../server/repositories/walletrepository.cpp \
+    ../server/security/passwordhasher.cpp \
+    ../server/services/adminservice.cpp \
+    ../server/services/alarmservice.cpp \
+    ../server/services/analyticsservice.cpp \
+    ../server/services/decisionservice.cpp \
+    ../server/services/authservice.cpp \
+    ../server/services/billingservice.cpp \
+    ../server/services/chargingservice.cpp \
+    ../server/services/customerserviceservice.cpp \
+    ../server/services/orderservice.cpp \
+    ../server/services/pileservice.cpp \
+    ../server/services/reservationservice.cpp \
+    ../server/services/serviceregistry.cpp \
+    ../server/services/stationservice.cpp \
+    ../server/services/statisticsservice.cpp \
+    ../server/services/userservice.cpp
 RESOURCES += ../server/resources/database.qrc

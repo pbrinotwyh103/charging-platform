@@ -2,6 +2,7 @@
 
 #include <QWidget>
 #include <QJsonArray>
+#include <QJsonObject>
 
 class QLabel;
 class QLineEdit;
@@ -17,6 +18,7 @@ class HomePage final : public QWidget
 public:
     explicit HomePage(QWidget *parent = nullptr);
     void setStations(const QJsonArray &stations);
+    void setRecommendations(const QJsonObject &recommendations);
     void showLoading();
     void showError(const QString &message);
     void showPileLookupError(const QString &message);
@@ -24,6 +26,7 @@ signals:
     void stationsRequested(const QString &, const QString &, double, double);
     void stationSelected(const QJsonObject &);
     void pileCodeRequested(const QString &pileCode);
+    void recommendationsRequested(const QJsonArray &stationIds, int horizonHours);
 
 private:
     void renderEmpty(const QString &text);
@@ -33,10 +36,14 @@ private:
     QLineEdit *m_address = nullptr;
     QLineEdit *m_pileCode = nullptr;
     QComboBox *m_region = nullptr;
+    QComboBox *m_horizon = nullptr;
+    QComboBox *m_sortMode = nullptr;
     QListWidget *m_list = nullptr;
     QNetworkAccessManager *m_network = nullptr;
     QNetworkReply *m_geocodingReply = nullptr;
     double m_latitude = 22.5431;
     double m_longitude = 114.0579;
     bool m_simulatedLocationActive = false;
+    QJsonArray m_stations;
+    QJsonObject m_recommendations;
 };

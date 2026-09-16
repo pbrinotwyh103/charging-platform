@@ -23,6 +23,8 @@ public slots:
   void logout();
   void requestAdminCommand(const QString &action,
                            const QJsonObject &parameters = {});
+  void requestLoadWarnings(int horizonHours = 6);
+  void requestAnalyticsStatus();
 
 signals:
   void statusTextChanged(const QString &text, bool connected);
@@ -35,6 +37,8 @@ signals:
   void commandFailed(const QString &action, const QString &message,
                      int errorCode);
   void pushReceived(quint16 messageType, const QJsonObject &payload);
+  void loadWarningsReceived(const QJsonObject &payload);
+  void analyticsStatusReceived(const QJsonObject &payload);
 
 private:
   struct PendingRequest {
@@ -47,6 +51,8 @@ private:
   void expireRequests();
   void failPendingRequests(const QString &message,
                            Charging::ErrorCode errorCode);
+  void requestAnalytics(const QString &action, Charging::MessageType type,
+                        const QJsonObject &payload = {});
 
   Charging::ClientConnection m_connection;
   QString m_pendingUsername;

@@ -12,6 +12,7 @@ HEADERS += \
     ../admin-client/charts/pilestatuschartwidget.h \
     ../admin-client/charts/revenuechartwidget.h \
     ../admin-client/pages/alarmspage.h \
+    ../admin-client/pages/advicepage.h \
     ../admin-client/pages/assetspage.h \
     ../admin-client/pages/monitorpage.h \
     ../admin-client/pages/overviewpage.h \
@@ -25,6 +26,7 @@ SOURCES += \
     ../admin-client/charts/pilestatuschartwidget.cpp \
     ../admin-client/charts/revenuechartwidget.cpp \
     ../admin-client/pages/alarmspage.cpp \
+    ../admin-client/pages/advicepage.cpp \
     ../admin-client/pages/assetspage.cpp \
     ../admin-client/pages/monitorpage.cpp \
     ../admin-client/pages/overviewpage.cpp \

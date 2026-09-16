@@ -2,6 +2,7 @@
 
 #include "app/appinfo.h"
 #include "pages/alarmspage.h"
+#include "pages/advicepage.h"
 #include "pages/assetspage.h"
 #include "pages/monitorpage.h"
 #include "pages/overviewpage.h"
@@ -268,11 +269,13 @@ QWidget *AdminMainWindow::createWorkspacePage() {
   m_alarmsPage = new AlarmsPage(m_contentPages);
   m_assetsPage = new AssetsPage(m_contentPages);
   m_recordsPage = new RecordsPage(m_contentPages);
+  m_advicePage = new AdvicePage(m_contentPages);
   m_contentPages->addWidget(m_overviewPage);
   m_contentPages->addWidget(m_monitorPage);
   m_contentPages->addWidget(m_alarmsPage);
   m_contentPages->addWidget(m_assetsPage);
   m_contentPages->addWidget(m_recordsPage);
+  m_contentPages->addWidget(m_advicePage);
   for (QLabel *title : m_contentPages->findChildren<QLabel *>(
            QStringLiteral("pageTitle"), Qt::FindChildrenRecursively)) {
     title->hide();
@@ -296,13 +299,15 @@ QWidget *AdminMainWindow::createWorkspacePage() {
   m_navigation->addTab(
       style()->standardIcon(QStyle::SP_FileDialogDetailedView),
       QStringLiteral("管理"));
+  m_navigation->addTab(style()->standardIcon(QStyle::SP_ComputerIcon),
+                       QStringLiteral("智能"));
   root->addWidget(m_navigation);
   connect(m_navigation, &QTabBar::currentChanged, this, [this](int index) {
     m_contentPages->setCurrentIndex(index);
     const QStringList titles = {
         QStringLiteral("运营概览"), QStringLiteral("实时充电"),
         QStringLiteral("异常告警"), QStringLiteral("站点资产"),
-        QStringLiteral("用户订单")};
+        QStringLiteral("用户订单"), QStringLiteral("智能决策")};
     if (index >= 0 && index < titles.size())
       m_workspaceTitleLabel->setText(titles.at(index));
     refreshCurrentPage();
@@ -317,6 +322,8 @@ QWidget *AdminMainWindow::createWorkspacePage() {
   connect(m_assetsPage, &AssetsPage::commandRequested, this,
           &AdminMainWindow::adminCommandRequested);
   connect(m_recordsPage, &RecordsPage::commandRequested, this,
+          &AdminMainWindow::adminCommandRequested);
+  connect(m_advicePage, &AdvicePage::commandRequested, this,
           &AdminMainWindow::adminCommandRequested);
   return page;
 }
@@ -608,6 +615,7 @@ void AdminMainWindow::setCommandBusy(const QString &action, bool busy) {
   m_alarmsPage->setLoading(action, busy);
   m_assetsPage->setLoading(action, busy);
   m_recordsPage->setLoading(action, busy);
+  m_advicePage->setLoading(action, busy);
 }
 
 void AdminMainWindow::handleCommandSucceeded(const QString &action,
@@ -618,6 +626,12 @@ void AdminMainWindow::handleCommandSucceeded(const QString &action,
     m_overviewPage->setRevenue(payload);
   else if (action == QStringLiteral("report.pileStates"))
     m_overviewPage->setPileStatus(payload);
+  else if (action == QStringLiteral("analytics.warnings"))
+    m_overviewPage->setLoadWarnings(payload);
+  else if (action == QStringLiteral("analytics.status"))
+    m_overviewPage->setAnalyticsStatus(payload);
+  else if (action.startsWith(QStringLiteral("analytics.")))
+    m_advicePage->setReport(action, payload);
   else if (action == QStringLiteral("admin.monitor"))
     m_monitorPage->setChargingData(payload);
   else if (action == QStringLiteral("admin.alarms"))
@@ -653,6 +667,8 @@ void AdminMainWindow::handleCommandFailed(const QString &action,
                                           int errorCode) {
   if (action.startsWith(QStringLiteral("report.")))
     m_overviewPage->setError(message);
+  else if (action.startsWith(QStringLiteral("analytics.")))
+    m_advicePage->setError(message);
   else if (action == QStringLiteral("admin.monitor"))
     m_monitorPage->setError(message);
   else if (action == QStringLiteral("admin.alarms"))
@@ -711,6 +727,9 @@ void AdminMainWindow::refreshCurrentPage() {
     break;
   case 4:
     m_recordsPage->requestRefresh();
+    break;
+  case 5:
+    m_advicePage->requestRefresh();
     break;
   default:
     break;

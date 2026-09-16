@@ -1,6 +1,7 @@
 #pragma once
 
 #include "services/adminservice.h"
+#include "services/analyticsservice.h"
 #include "services/alarmservice.h"
 #include "services/authservice.h"
 #include "services/billingservice.h"
@@ -38,6 +39,7 @@ public:
     StatisticsService *statistics() { return &m_statistics; }
     CustomerServiceService *customerService() { return &m_customerService; }
     AdminService *admin() { return &m_admin; }
+    AnalyticsService *analytics() { return &m_analytics; }
 
 private:
     DatabaseManager *m_database = nullptr;
@@ -53,4 +55,5 @@ private:
     StatisticsService m_statistics;
     CustomerServiceService m_customerService;
     AdminService m_admin;
+    AnalyticsService m_analytics;
 };

@@ -2,6 +2,7 @@
 
 #include "charts/revenuechartwidget.h"
 #include "pages/assetspage.h"
+#include "pages/advicepage.h"
 #include "pages/monitorpage.h"
 #include "pages/overviewpage.h"
 #include "pages/recordspage.h"
@@ -12,6 +13,7 @@
 #include <QFile>
 #include <QDateEdit>
 #include <QColor>
+#include <QComboBox>
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QDir>
@@ -29,6 +31,50 @@
 #include <QTemporaryDir>
 #include <QtTest>
 
+void AdminUiTest::overviewShowsLoadWarnings() {
+  OverviewPage page;
+  page.setLoadWarnings(QJsonObject{{"horizonHours", 6}, {"items", QJsonArray{
+      QJsonObject{{"stationId", 9}, {"stationName", QStringLiteral("中心站")},
+                  {"warningLevel", QStringLiteral("severe")}, {"predictedAvailablePiles", 0}}}}});
+  auto *summary = page.findChild<QLabel *>(QStringLiteral("loadWarningSummary"));
+  QVERIFY(summary);
+  QVERIFY(summary->text().contains(QStringLiteral("中心站")));
+  QVERIFY(summary->text().contains(QStringLiteral("严重")));
+}
+
+void AdminUiTest::warningsFilterAndReplaceStableKeys() {
+  OverviewPage page;
+  const QJsonObject first{{"stationId", 9}, {"stationName", QStringLiteral("中心站")},
+      {"horizonHours", 6}, {"modelVersion", "m1"}, {"region", QStringLiteral("南山")},
+      {"warningLevel", "severe"}, {"predictedAvailablePiles", 0}};
+  page.setLoadWarnings(QJsonObject{{"horizonHours", 6}, {"items", QJsonArray{first}}});
+  auto replacement = first; replacement.insert("predictedAvailablePiles", 2);
+  page.setLoadWarnings(QJsonObject{{"horizonHours", 6}, {"items", QJsonArray{replacement}}});
+  auto *summary = page.findChild<QLabel *>(QStringLiteral("loadWarningSummary"));
+  QCOMPARE(summary->text().count(QStringLiteral("中心站")), 1);
+  QVERIFY(summary->text().contains(QStringLiteral("预计空闲 2")));
+  auto *level = page.findChild<QComboBox *>(QStringLiteral("warningLevelFilter"));
+  level->setCurrentIndex(level->findData(QStringLiteral("attention")));
+  QVERIFY(summary->text().contains(QStringLiteral("暂无负荷预警")));
+  auto *horizon = page.findChild<QComboBox *>(QStringLiteral("warningHorizonFilter"));
+  QSignalSpy spy(&page, &OverviewPage::commandRequested);
+  horizon->setCurrentIndex(horizon->findData(24));
+  QCOMPARE(spy.takeLast().at(1).toJsonObject().value("horizonHours").toInt(), 24);
+}
+
+void AdminUiTest::adviceNeverTriggersControlAutomatically() {
+  AdvicePage page;
+  QSignalSpy spy(&page, &AdvicePage::commandRequested);
+  page.setReport(QStringLiteral("analytics.scheduling"),
+      QJsonObject{{"data", QJsonArray{QJsonObject{{"adviceId", "a1"}, {"readOnly", true}, {"stationId", 9}}}},
+                  {"meta", QJsonObject{{"stale", false}}}});
+  QCOMPARE(spy.count(), 0);
+  auto *notice = page.findChild<QLabel *>(QStringLiteral("adviceReadOnlyNotice"));
+  QVERIFY(notice && notice->text().contains(QStringLiteral("不会自动控制")));
+  auto *label = page.findChild<QLabel *>(QStringLiteral("schedulingAdvice"));
+  QVERIFY(label && label->text().contains(QStringLiteral("a1")));
+}
+
 void AdminUiTest::demoWorkspaceContainsAllModules() {
   AdminMainWindow window;
   window.showDemoWorkspace();
@@ -41,7 +87,7 @@ void AdminUiTest::demoWorkspaceContainsAllModules() {
   QVERIFY(pages);
   QVERIFY(navigation);
   QCOMPARE(pages->currentIndex(), 1);
-  QCOMPARE(navigation->count(), 5);
+  QCOMPARE(navigation->count(), 6);
   QCOMPARE(window.minimumWidth(), 360);
   QCOMPARE(window.findChild<QTableWidget *>(QStringLiteral("chargingTable"))
                ->rowCount(),
