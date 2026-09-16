@@ -7,111 +7,167 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
 </head>
 <body>
+  <a class="skip-link" href="#main-content">跳到主要内容</a>
   {% raw %}
-  <div id="app" v-cloak>
+  <div id="app" class="app-shell" v-cloak>
     <header class="topbar">
-      <div>
+      <div class="brand">
         <p class="eyebrow">CHARGING OPERATIONS DATA CENTER</p>
         <h1>深圳充电运营大数据中心</h1>
         <p class="subtitle">UrbanEV 数据底座 · SparkSQL 四层数仓 · MLlib 负荷预测</p>
       </div>
-      <div class="status">
-        <span class="status-dot"></span>
+      <div class="status" aria-live="polite">
+        <span class="status-dot" aria-hidden="true"></span>
         数据服务在线
         <small>{{ currentTime }}</small>
       </div>
     </header>
 
-    <main>
-      <nav class="view-tabs" aria-label="专题视图">
-        <button data-view="operations" :class="{active: view === 'operations'}" @click="view = 'operations'">运营驾驶舱</button>
-        <button data-view="regulator" :class="{active: view === 'regulator'}" @click="view = 'regulator'">监管专题</button>
-        <button data-view="tenant" :class="{active: view === 'tenant'}" @click="view = 'tenant'">租户专题</button>
+    <main id="main-content" class="page-container" tabindex="-1">
+      <nav class="view-tabs" aria-label="专题视图" role="tablist" @keydown="handleViewTabKeydown($event)">
+        <button role="tab" data-view="operations" :aria-selected="view === 'operations'" :tabindex="view === 'operations' ? 0 : -1" :class="{active: view === 'operations'}" @click="view = 'operations'">运营驾驶舱</button>
+        <button role="tab" data-view="regulator" :aria-selected="view === 'regulator'" :tabindex="view === 'regulator' ? 0 : -1" :class="{active: view === 'regulator'}" @click="view = 'regulator'">监管专题</button>
+        <button role="tab" data-view="tenant" :aria-selected="view === 'tenant'" :tabindex="view === 'tenant' ? 0 : -1" :class="{active: view === 'tenant'}" @click="view = 'tenant'">租户专题</button>
         <button class="refresh" :disabled="refreshInFlight" @click="refresh">{{ refreshInFlight ? '刷新中…' : '立即刷新' }}</button>
       </nav>
-      <div v-if="state === 'loading'" class="state-banner loading" role="status">正在加载分析数据…</div>
-      <div v-else-if="state === 'error'" class="state-banner error" role="alert">{{ errorMessage }}；已保留最近一次成功数据。<button @click="refresh">重试</button></div>
-      <div v-else-if="state === 'empty'" class="state-banner empty">当前筛选范围暂无数据。</div>
-      <div v-if="stale" class="state-banner stale">分析数据已过期，仅供参考；生成时间：{{ generatedAt || '未知' }}</div>
 
-      <div v-show="view === 'operations'" data-view="operations">
-      <section class="kpi-grid">
-        <article class="kpi"><span>累计营收</span><strong>¥{{ money(overview.total_revenue_yuan) }}</strong><small>已完成订单口径</small></article>
-        <article class="kpi"><span>充电电量</span><strong>{{ number(overview.total_energy_kwh) }} kWh</strong><small>全部有效充电记录</small></article>
-        <article class="kpi"><span>充电订单</span><strong>{{ integer(overview.order_count) }}</strong><small>完成率 {{ number(overview.completion_rate_percent) }}%</small></article>
-        <article class="kpi"><span>站点与电桩</span><strong>{{ integer(overview.station_count) }} / {{ integer(overview.pile_count) }}</strong><small>UrbanEV 深圳站点</small></article>
-        <article class="kpi warning"><span>原始质量问题</span><strong>{{ integer(quality.total_issues) }}</strong><small>问题率 {{ number(quality.issue_rate_percent) }}%</small></article>
-        <article class="kpi prediction"><span>模型 RMSE</span><strong>{{ number(model.rmse) }}</strong><small>R² {{ number(model.r2) }}</small></article>
-      </section>
-
-      <section class="dashboard-grid">
-        <article class="panel span-2">
-          <div class="panel-title"><h2>近 30 日营收与订单趋势</h2><span>ADS revenue_trend</span></div>
-          <div ref="revenueChart" class="chart"></div>
-        </article>
-        <article class="panel">
-          <div class="panel-title"><h2>充电桩状态分布</h2><span>实时资产快照</span></div>
-          <div ref="pileChart" class="chart"></div>
-        </article>
-        <article class="panel">
-          <div class="panel-title"><h2>全天充电负荷</h2><span>小时平均会话数</span></div>
-          <div ref="hourChart" class="chart"></div>
-        </article>
-        <article class="panel span-2">
-          <div class="panel-title"><h2>高营收站点 TOP 10</h2><span>站点经营排名</span></div>
-          <div ref="stationChart" class="chart"></div>
-        </article>
-        <article class="panel">
-          <div class="panel-title"><h2>区域经营贡献</h2><span>深圳各区营收</span></div>
-          <div ref="districtChart" class="chart"></div>
-        </article>
-        <article class="panel">
-          <div class="panel-title"><h2>数据质量问题构成</h2><span>PySpark 自动检测</span></div>
-          <div ref="qualityChart" class="chart"></div>
-        </article>
-        <article class="panel">
-          <div class="panel-title"><h2>告警分布</h2><span>级别与处理状态</span></div>
-          <div ref="alarmChart" class="chart"></div>
-        </article>
-        <article class="panel span-2">
-          <div class="panel-title"><h2>未来负荷预测</h2><span>Spark MLlib RandomForest</span></div>
-          <div class="prediction-tabs">
-            <button v-for="h in [1, 6, 24, 48, 72]" :key="h" :class="{active: horizon === h}" @click="horizon = h; renderPrediction()">未来 {{ h }} 小时</button>
-          </div>
-          <div ref="predictionChart" class="chart prediction-chart"></div>
-        </article>
-      </section>
-
-      <section class="panel table-panel">
-        <div class="panel-title"><h2>预测调度建议</h2><span>优先关注预计繁忙且空闲桩较少的站点</span></div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>站点</th><th>预测时点</th><th>预测会话</th><th>预测空闲桩</th><th>总桩数</th><th>建议</th></tr></thead>
-            <tbody>
-              <tr v-for="item in currentPredictions.slice(0, 10)" :key="item.stationId + item.horizonHours">
-                <td>{{ item.stationName }}</td>
-                <td>{{ (item.forecastTime || '').replace('T', ' ') }}</td>
-                <td>{{ number(item.predictedSessions) }}</td>
-                <td>{{ integer(item.predictedAvailablePiles) }}</td>
-                <td>{{ integer(item.totalPiles) }}</td>
-                <td><span :class="['advice', item.predictedAvailablePiles <= 2 ? 'hot' : 'normal']">{{ item.predictedAvailablePiles <= 2 ? '提前调度与预警' : '正常值守' }}</span></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <div class="state-stack" aria-live="polite" aria-atomic="true">
+        <div v-if="state === 'loading'" class="state-banner loading" role="status">正在加载分析数据…</div>
+        <div v-else-if="state === 'error'" class="state-banner error" role="alert">{{ errorMessage }}；已保留最近一次成功数据。<button @click="refresh">重试</button></div>
+        <div v-else-if="state === 'empty'" class="state-banner empty" role="status">当前数据源暂无分析结果，请确认数仓任务已完成。</div>
+        <div v-if="stale" class="state-banner stale" role="status">分析数据已过期，仅供参考；生成时间：{{ generatedAt || '未知' }}</div>
       </div>
 
-      <section v-show="view === 'regulator'" data-view="regulator" class="topic-grid">
-        <article class="panel"><div class="panel-title"><h2>监管摘要</h2><span>聚合脱敏口径</span></div><pre>{{ pretty(regulator) }}</pre></article>
-        <article class="panel"><div class="panel-title"><h2>模型对比</h2><span>统一测试集</span></div><pre>{{ pretty(modelComparison) }}</pre></article>
-        <article class="panel"><div class="panel-title"><h2>模型漂移</h2><span>特征与误差监控</span></div><pre>{{ pretty(drift) }}</pre></article>
+      <section v-show="view === 'operations'" data-view="operations" role="tabpanel" aria-label="运营驾驶舱">
+        <header class="view-heading">
+          <div><p class="breadcrumb">专题视图 / 运营驾驶舱</p><h2>运营总览</h2><p>聚焦负荷、预测、收益、设备状态与调度建议。</p></div>
+          <div class="context-meta"><span>数据范围：近 30 日</span><span>预测周期：未来 {{ horizon }} 小时</span><span>更新：{{ generatedAt || '等待数据' }}</span></div>
+        </header>
+
+        <section class="metric-strip" aria-label="关键运营指标">
+          <article class="metric-item"><span>累计营收</span><strong>¥{{ money(overview.total_revenue_yuan) }}</strong><small>已完成订单口径</small></article>
+          <article class="metric-item"><span>充电电量</span><strong>{{ number(overview.total_energy_kwh) }} <em>kWh</em></strong><small>全部有效充电记录</small></article>
+          <article class="metric-item"><span>充电订单</span><strong>{{ integer(overview.order_count) }}</strong><small>完成率 {{ number(overview.completion_rate_percent) }}%</small></article>
+          <article class="metric-item"><span>站点 / 电桩</span><strong>{{ integer(overview.station_count) }} / {{ integer(overview.pile_count) }}</strong><small>UrbanEV 深圳站点</small></article>
+          <article class="metric-item danger"><span>原始质量问题</span><strong>{{ integer(quality.total_issues) }}</strong><small>问题率 {{ number(quality.issue_rate_percent) }}%</small></article>
+          <article class="metric-item prediction"><span>模型 RMSE</span><strong>{{ number(model.rmse) }}</strong><small>R² {{ number(model.r2) }}</small></article>
+        </section>
+
+        <section class="dashboard-grid analytics-grid">
+          <article class="panel span-2 primary-analysis">
+            <div class="panel-title"><div><h2>全天充电负荷</h2><p class="chart-summary">比较各小时平均会话数，识别日内负荷高峰。</p></div><span>单位：平均会话数</span></div>
+            <div class="chart-frame"><div ref="hourChart" class="chart chart-large" role="img" aria-label="全天各小时平均充电会话数折线图"></div><div v-if="!hourly.length" class="chart-empty">暂无小时负荷数据</div></div>
+          </article>
+          <article class="panel primary-analysis">
+            <div class="panel-title"><div><h2>未来负荷预测</h2><p class="chart-summary">按站点比较预测会话及模型区间。</p></div><span>预测起点：{{ generatedAt || '未知' }}</span></div>
+            <div class="prediction-tabs" role="group" aria-label="预测周期">
+              <button v-for="h in [1, 6, 24, 48, 72]" :key="h" :aria-pressed="horizon === h" :class="{active: horizon === h}" @click="horizon = h; renderPrediction()">{{ h }}h</button>
+            </div>
+            <div class="chart-frame"><div ref="predictionChart" class="chart prediction-chart" role="img" :aria-label="`未来 ${horizon} 小时各站点预测会话数`"></div><div v-if="!currentPredictions.length" class="chart-empty">当前周期暂无预测数据</div></div>
+          </article>
+
+          <article class="panel span-2">
+            <div class="panel-title"><div><h2>近 30 日营收与订单趋势</h2><p class="chart-summary">营收折线与订单柱形使用独立数轴。</p></div><span>日粒度</span></div>
+            <div class="chart-frame"><div ref="revenueChart" class="chart" role="img" aria-label="近30日营收与订单趋势组合图"></div><div v-if="!revenue.length" class="chart-empty">暂无营收趋势数据</div></div>
+          </article>
+          <article class="panel">
+            <div class="panel-title"><div><h2>充电桩状态分布</h2><p class="chart-summary">资产实时状态构成。</p></div><span>实时快照</span></div>
+            <div class="chart-frame compact"><div ref="pileChart" class="chart" role="img" aria-label="充电桩状态分布环形图"></div><div v-if="!pileStatus.length" class="chart-empty">暂无设备状态数据</div></div>
+            <ul v-if="pileStatus.length" class="composition-list" aria-label="充电桩状态数值">
+              <li v-for="item in pileStatus" :key="item.status"><span>{{ item.status }}</span><strong>{{ integer(item.count) }}</strong></li>
+            </ul>
+          </article>
+
+          <article class="panel span-2">
+            <div class="panel-title"><div><h2>高营收站点 TOP 10</h2><p class="chart-summary">按营收从高到低比较站点经营表现。</p></div><span>单位：元</span></div>
+            <div class="chart-frame"><div ref="stationChart" class="chart" role="img" aria-label="高营收站点前十名水平条形图"></div><div v-if="!stationRank.length" class="chart-empty">暂无站点排名数据</div></div>
+          </article>
+          <article class="panel">
+            <div class="panel-title"><div><h2>区域经营贡献</h2><p class="chart-summary">深圳各区营收降序比较。</p></div><span>单位：元</span></div>
+            <div class="chart-frame"><div ref="districtChart" class="chart" role="img" aria-label="深圳各区营收水平条形图"></div><div v-if="!districts.length" class="chart-empty">暂无区域经营数据</div></div>
+          </article>
+          <article class="panel">
+            <div class="panel-title"><div><h2>数据质量问题构成</h2><p class="chart-summary">按规则类别汇总原始质量问题。</p></div><span>单位：条</span></div>
+            <div class="chart-frame"><div ref="qualityChart" class="chart" role="img" aria-label="数据质量问题类别水平条形图"></div><div v-if="!(quality.rule_summary || []).length" class="chart-empty">暂无质量问题数据</div></div>
+          </article>
+          <article class="panel">
+            <div class="panel-title"><div><h2>告警分布</h2><p class="chart-summary">按级别或处理状态汇总告警。</p></div><span>实时告警</span></div>
+            <div class="chart-frame"><div ref="alarmChart" class="chart" role="img" aria-label="告警分布环形图"></div><div v-if="!alarms.length" class="chart-empty">暂无告警数据</div></div>
+          </article>
+        </section>
+
+        <section class="panel table-panel">
+          <div class="panel-title"><div><h2>预测调度建议</h2><p class="chart-summary">优先关注预计繁忙且空闲桩较少的站点。</p></div><span>显示 {{ Math.min(currentPredictions.length, 10) }} / {{ currentPredictions.length }} 条</span></div>
+          <div class="table-wrap">
+            <table>
+              <caption>未来 {{ horizon }} 小时站点负荷预测明细</caption>
+              <thead><tr><th aria-sort="none">站点</th><th>预测时点</th><th class="numeric">预测会话</th><th class="numeric">模型区间</th><th class="numeric">预测空闲桩</th><th class="numeric">总桩数</th><th>建议</th></tr></thead>
+              <tbody v-if="currentPredictions.length">
+                <tr v-for="item in currentPredictions.slice(0, 10)" :key="item.stationId + '-' + item.horizonHours">
+                  <td class="primary-cell">{{ item.stationName || '未命名站点' }}</td>
+                  <td>{{ formatDateTime(item.forecastTime) }}</td>
+                  <td class="numeric">{{ number(item.predictedSessions) }}</td>
+                  <td class="numeric">{{ interval(item) }}</td>
+                  <td class="numeric">{{ integer(item.predictedAvailablePiles) }}</td>
+                  <td class="numeric">{{ integer(item.totalPiles) }}</td>
+                  <td><span :class="['advice', item.predictedAvailablePiles <= 2 ? 'hot' : 'normal']">{{ item.predictedAvailablePiles <= 2 ? '提前调度与预警' : '正常值守' }}</span></td>
+                </tr>
+              </tbody>
+              <tbody v-else><tr><td colspan="7" class="table-empty">当前预测周期暂无调度建议</td></tr></tbody>
+            </table>
+          </div>
+        </section>
       </section>
 
-      <section v-show="view === 'tenant'" data-view="tenant" class="topic-grid">
-        <article class="panel"><div class="panel-title"><h2>调度建议</h2><span>只读决策支持</span></div><pre>{{ pretty(scheduling) }}</pre></article>
-        <article class="panel"><div class="panel-title"><h2>维护建议</h2><span>不自动控制设备</span></div><pre>{{ pretty(maintenance) }}</pre></article>
-        <article class="panel"><div class="panel-title"><h2>扩容分析</h2><span>持续负荷证据</span></div><pre>{{ pretty(expansion) }}</pre></article>
+      <section v-show="view === 'regulator'" data-view="regulator" role="tabpanel" aria-label="监管专题">
+        <header class="view-heading">
+          <div><p class="breadcrumb">专题视图 / 监管专题</p><h2>监管与模型治理</h2><p>查看聚合脱敏口径、模型选择依据和漂移风险。</p></div>
+          <div class="context-meta"><span>个人数据：{{ regulator.containsPersonalData ? '包含' : '不包含' }}</span><span>更新：{{ regulator.generatedAt || generatedAt || '等待数据' }}</span></div>
+        </header>
+
+        <section class="regulator-summary metric-strip" aria-label="监管摘要">
+          <article class="metric-item"><span>纳管站点</span><strong>{{ integer(regulator.stationCount) }}</strong><small>聚合站点数量</small></article>
+          <article class="metric-item"><span>预测记录</span><strong>{{ integer(regulator.predictionCount) }}</strong><small>当前发布批次</small></article>
+          <article class="metric-item"><span>数据版本</span><strong class="text-value">{{ regulator.dataVersion || '—' }}</strong><small>数仓发布版本</small></article>
+          <article class="metric-item" :class="severityClass(drift.level)"><span>模型漂移</span><strong class="text-value">{{ severityLabel(drift.level) }}</strong><small>PSI {{ number(drift.score) }}</small></article>
+        </section>
+
+        <section class="governance-grid">
+          <article class="panel model-comparison-table">
+            <div class="panel-title"><div><h2>模型对比</h2><p class="chart-summary">统一测试集下的候选模型指标。</p></div><span>已选：{{ modelComparison.selected || '—' }}</span></div>
+            <div class="table-wrap">
+              <table><caption>候选模型评估指标</caption><thead><tr><th>模型</th><th class="numeric">RMSE</th><th class="numeric">MAE</th><th class="numeric">R²</th><th>状态</th></tr></thead>
+                <tbody v-if="list(modelComparison.candidates).length"><tr v-for="candidate in list(modelComparison.candidates)" :key="candidate.name"><td class="primary-cell">{{ candidate.name || '未命名模型' }}</td><td class="numeric">{{ number(candidate.rmse) }}</td><td class="numeric">{{ number(candidate.mae) }}</td><td class="numeric">{{ number(candidate.r2) }}</td><td><span :class="['advice', candidate.name === modelComparison.selected ? 'normal' : 'neutral']">{{ candidate.name === modelComparison.selected ? '当前模型' : '候选' }}</span></td></tr></tbody>
+                <tbody v-else><tr><td colspan="5" class="table-empty">暂无模型对比数据</td></tr></tbody>
+              </table>
+            </div>
+          </article>
+          <article class="panel drift-summary">
+            <div class="panel-title"><div><h2>模型漂移</h2><p class="chart-summary">特征分布与误差变化监控。</p></div><span :class="['status-badge', severityClass(drift.level)]">{{ severityLabel(drift.level) }}</span></div>
+            <dl class="definition-grid"><div><dt>综合漂移分数</dt><dd>{{ number(drift.score) }}</dd></div><div><dt>误差比率</dt><dd>{{ number(drift.errorRatio) }}</dd></div><div><dt>模型版本</dt><dd>{{ drift.modelVersion || '—' }}</dd></div><div><dt>生成时间</dt><dd>{{ formatDateTime(drift.generatedAt) }}</dd></div></dl>
+            <div class="table-wrap compact-table"><table><caption>特征漂移分数</caption><thead><tr><th>特征</th><th class="numeric">PSI</th></tr></thead><tbody v-if="entries(drift.featureScores).length"><tr v-for="entry in entries(drift.featureScores)" :key="entry[0]"><td>{{ entry[0] }}</td><td class="numeric">{{ number(entry[1]) }}</td></tr></tbody><tbody v-else><tr><td colspan="2" class="table-empty">暂无特征漂移数据</td></tr></tbody></table></div>
+          </article>
+        </section>
+        <details class="raw-data"><summary>查看监管原始数据（排障）</summary><div class="raw-data-grid"><pre>{{ pretty(regulator) }}</pre><pre>{{ pretty(modelComparison) }}</pre><pre>{{ pretty(drift) }}</pre></div></details>
+      </section>
+
+      <section v-show="view === 'tenant'" data-view="tenant" role="tabpanel" aria-label="租户专题">
+        <header class="view-heading">
+          <div><p class="breadcrumb">专题视图 / 租户专题</p><h2>运营决策建议</h2><p>按调度、维护和扩容场景提供只读决策支持，不自动控制设备。</p></div>
+          <div class="context-meta"><span>调度 {{ list(scheduling).length }} 条</span><span>维护 {{ list(maintenance).length }} 条</span><span>扩容 {{ list(expansion).length }} 条</span></div>
+        </header>
+        <section class="tenant-overview metric-strip" aria-label="建议摘要">
+          <article class="metric-item danger"><span>严重建议</span><strong>{{ adviceCount('severe') }}</strong><small>需要优先人工确认</small></article>
+          <article class="metric-item warning"><span>关注建议</span><strong>{{ adviceCount('attention') }}</strong><small>纳入近期计划</small></article>
+          <article class="metric-item"><span>普通建议</span><strong>{{ adviceCount('normal') }}</strong><small>持续观察</small></article>
+          <article class="metric-item"><span>决策模式</span><strong class="text-value">只读</strong><small>不自动下发设备控制</small></article>
+        </section>
+        <section class="advice-grid">
+          <advice-table title="调度建议" description="结合预测会话与空闲桩安排值守和资源调度。" :items="list(scheduling)"></advice-table>
+          <advice-table title="维护建议" description="结合设备可用性和预测负荷安排人工巡检。" :items="list(maintenance)"></advice-table>
+          <advice-table title="扩容分析" description="基于持续利用率与排队压力复核扩容需求。" :items="list(expansion)"></advice-table>
+        </section>
+        <details class="raw-data"><summary>查看建议原始数据（排障）</summary><div class="raw-data-grid"><pre>{{ pretty(scheduling) }}</pre><pre>{{ pretty(maintenance) }}</pre><pre>{{ pretty(expansion) }}</pre></div></details>
       </section>
     </main>
 
